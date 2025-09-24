@@ -4,6 +4,7 @@ import StudentLogin from "@/components/StudentLogin";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import { Settings } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 interface Student {
   id: string;
@@ -34,8 +35,8 @@ const Index = () => {
     }
   }, [sessionStartTime, timeLimit, isTimeUp]);
 
-  const handleMarkAttendance = (studentId: string, cohort: string) => {
-    // Check if student already marked attendance
+  const handleMarkAttendance = async (studentId: string, cohort: string) => {
+    // Check if student already marked attendance locally
     if (presentStudents.find(s => s.id === studentId)) {
       return;
     }
@@ -46,7 +47,15 @@ const Index = () => {
       timestamp: new Date()
     };
 
+    // Optimistic update
     setPresentStudents(prev => [...prev, newStudent]);
+
+    // Persist to Supabase
+    await supabase.from('present_students').insert({
+      student_id: studentId,
+      cohort,
+      timestamp: newStudent.timestamp.toISOString(),
+    });
   };
 
   const handleSetPin = (newPin: string) => {
@@ -83,6 +92,18 @@ const Index = () => {
     if (!sessionStartTime) {
       setSessionStartTime(new Date());
     }
+
+    // Load attendance from Supabase
+    (async () => {
+      const { data } = await supabase
+        .from('present_students')
+        .select('student_id, cohort, timestamp')
+        .order('timestamp', { ascending: true });
+      if (data) {
+        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp) }));
+        setPresentStudents(restored);
+      }
+    })();
   }, []);
 
   const getTimeLeft = () => {
@@ -90,6 +111,8 @@ const Index = () => {
     const elapsed = Math.floor((Date.now() - sessionStartTime.getTime()) / 1000);
     return Math.max(0, timeLimit - elapsed);
   };
+
+  // No localStorage persistence now that Supabase is connected
 
   if (isTA) {
     return (
