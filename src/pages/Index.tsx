@@ -53,12 +53,16 @@ const Index = () => {
     setPresentStudents(prev => [...prev, newStudent]);
 
     // Persist to Supabase
-    await supabase.from('present_students').insert({
+    const { error } = await supabase.from('present_students').insert({
       student_id: studentId,
       cohort,
       timestamp: newStudent.timestamp.toISOString(),
-      session_date: newStudent.sessionDate,
     });
+    if (error) {
+      // Rollback optimistic update if desired, but for now just log
+      // setPresentStudents(prev => prev.filter(s => s.id !== studentId));
+      console.error('Failed to insert attendance:', error);
+    }
   };
 
   const handleSetPin = (newPin: string) => {
@@ -96,16 +100,24 @@ const Index = () => {
       setSessionStartTime(new Date());
     }
 
-    // Load today's attendance from Supabase
+    // Load today's attendance from Supabase using timestamp range (independent of session_date)
     (async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const { data } = await supabase
+      const now = new Date();
+      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+
+      const { data, error } = await supabase
         .from('present_students')
-        .select('student_id, cohort, timestamp, session_date')
-        .eq('session_date', today)
+        .select('student_id, cohort, timestamp')
+        .gte('timestamp', start.toISOString())
+        .lt('timestamp', end.toISOString())
         .order('timestamp', { ascending: true });
+      if (error) {
+        console.error('Failed to load attendance:', error);
+        return;
+      }
       if (data) {
-        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp), sessionDate: row.session_date }));
+        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp) }));
         setPresentStudents(restored);
       }
     })();
