@@ -10,6 +10,7 @@ interface Student {
   id: string;
   cohort: string;
   timestamp: Date;
+  sessionDate?: string; // YYYY-MM-DD
 }
 
 const Index = () => {
@@ -44,7 +45,8 @@ const Index = () => {
     const newStudent: Student = {
       id: studentId,
       cohort,
-      timestamp: new Date()
+      timestamp: new Date(),
+      sessionDate: new Date().toISOString().slice(0, 10),
     };
 
     // Optimistic update
@@ -55,6 +57,7 @@ const Index = () => {
       student_id: studentId,
       cohort,
       timestamp: newStudent.timestamp.toISOString(),
+      session_date: newStudent.sessionDate,
     });
   };
 
@@ -93,14 +96,16 @@ const Index = () => {
       setSessionStartTime(new Date());
     }
 
-    // Load attendance from Supabase
+    // Load today's attendance from Supabase
     (async () => {
+      const today = new Date().toISOString().slice(0, 10);
       const { data } = await supabase
         .from('present_students')
-        .select('student_id, cohort, timestamp')
+        .select('student_id, cohort, timestamp, session_date')
+        .eq('session_date', today)
         .order('timestamp', { ascending: true });
       if (data) {
-        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp) }));
+        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp), sessionDate: row.session_date }));
         setPresentStudents(restored);
       }
     })();
