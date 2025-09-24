@@ -22,10 +22,11 @@ const Index = () => {
   const [showTALogin, setShowTALogin] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
 
   // Timer management
   useEffect(() => {
-    if (sessionStartTime && !isTimeUp) {
+    if (sessionStartTime && isOpen && !isTimeUp) {
       const timer = setInterval(() => {
         const elapsed = Math.floor((Date.now() - sessionStartTime.getTime()) / 1000);
         if (elapsed >= timeLimit) {
@@ -35,7 +36,7 @@ const Index = () => {
 
       return () => clearInterval(timer);
     }
-  }, [sessionStartTime, timeLimit, isTimeUp]);
+  }, [sessionStartTime, timeLimit, isTimeUp, isOpen]);
 
   const handleMarkAttendance = async (studentId: string, cohort: string) => {
     // Check if student already marked attendance locally
@@ -85,6 +86,7 @@ const Index = () => {
       setCurrentPin(data.pin);
       setTimeLimit(data.time_limit_seconds);
       setSessionStartTime(new Date(data.session_start));
+      setIsOpen(!!data.is_open);
       setIsTimeUp(false);
       setSessionId(data.id);
     }
@@ -108,6 +110,7 @@ const Index = () => {
       setCurrentPin(data.pin);
       setTimeLimit(data.time_limit_seconds);
       setSessionStartTime(new Date(data.session_start));
+      setIsOpen(!!data.is_open);
       setIsTimeUp(false);
       setSessionId(data.id);
     }
@@ -146,7 +149,7 @@ const Index = () => {
         const nowIso = new Date().toISOString();
         const { data: created } = await supabase
           .from('session_state')
-          .insert({ id: 1, pin: currentPin, time_limit_seconds: timeLimit, session_start: nowIso, is_open: true })
+          .insert({ id: 1, pin: currentPin, time_limit_seconds: timeLimit, session_start: nowIso, is_open: false })
           .select()
           .single();
         if (created) {
@@ -154,14 +157,18 @@ const Index = () => {
           setCurrentPin(created.pin);
           setTimeLimit(created.time_limit_seconds);
           setSessionStartTime(new Date(created.session_start));
-          setIsTimeUp(false);
+          setIsOpen(!!created.is_open);
+          setIsTimeUp(!created.is_open);
         }
       } else {
         setSessionId(ss.id);
         setCurrentPin(ss.pin);
         setTimeLimit(ss.time_limit_seconds);
         setSessionStartTime(new Date(ss.session_start));
-        setIsTimeUp(false);
+        setIsOpen(!!ss.is_open);
+        // If closed, mark as time up; otherwise compute remaining time
+        const elapsed = Math.floor((Date.now() - new Date(ss.session_start).getTime()) / 1000);
+        setIsTimeUp(!ss.is_open || elapsed >= ss.time_limit_seconds);
       }
 
       // Load today's attendance from Supabase using timestamp range (independent of session_date)
@@ -194,7 +201,9 @@ const Index = () => {
           setCurrentPin(row.pin);
           setTimeLimit(row.time_limit_seconds);
           setSessionStartTime(new Date(row.session_start));
-          setIsTimeUp(false);
+          setIsOpen(!!row.is_open);
+          const elapsed = Math.floor((Date.now() - new Date(row.session_start).getTime()) / 1000);
+          setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
         }
       })
       .subscribe();
