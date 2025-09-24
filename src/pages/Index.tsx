@@ -21,6 +21,7 @@ const Index = () => {
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
+  const [sessionId, setSessionId] = useState<number | null>(null);
 
   // Timer management
   useEffect(() => {
@@ -65,18 +66,51 @@ const Index = () => {
     }
   };
 
-  const handleSetPin = (newPin: string) => {
-    setCurrentPin(newPin);
-    // Reset timer when PIN changes
-    setSessionStartTime(new Date());
-    setIsTimeUp(false);
+  const handleSetPin = async (newPin: string) => {
+    const nowIso = new Date().toISOString();
+    // Upsert shared session state
+    const { data, error } = await supabase
+      .from('session_state')
+      .upsert({
+        id: 1,
+        pin: newPin,
+        time_limit_seconds: timeLimit,
+        session_start: nowIso,
+        is_open: true,
+      }, { onConflict: 'id' })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCurrentPin(data.pin);
+      setTimeLimit(data.time_limit_seconds);
+      setSessionStartTime(new Date(data.session_start));
+      setIsTimeUp(false);
+      setSessionId(data.id);
+    }
   };
 
-  const handleSetTimeLimit = (seconds: number) => {
-    setTimeLimit(seconds);
-    // Reset timer when time limit changes
-    setSessionStartTime(new Date());
-    setIsTimeUp(false);
+  const handleSetTimeLimit = async (seconds: number) => {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('session_state')
+      .upsert({
+        id: 1,
+        pin: currentPin,
+        time_limit_seconds: seconds,
+        session_start: nowIso,
+        is_open: true,
+      }, { onConflict: 'id' })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCurrentPin(data.pin);
+      setTimeLimit(data.time_limit_seconds);
+      setSessionStartTime(new Date(data.session_start));
+      setIsTimeUp(false);
+      setSessionId(data.id);
+    }
   };
 
   const handleResetAttendance = () => {
@@ -96,12 +130,41 @@ const Index = () => {
 
   // Initialize session on first load
   useEffect(() => {
-    if (!sessionStartTime) {
-      setSessionStartTime(new Date());
-    }
-
-    // Load today's attendance from Supabase using timestamp range (independent of session_date)
+    // Load shared session state (create default if missing)
     (async () => {
+      const { data: ss, error: ssError } = await supabase
+        .from('session_state')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (ssError) {
+        console.error('Failed to load session_state:', ssError);
+      }
+
+      if (!ss) {
+        const nowIso = new Date().toISOString();
+        const { data: created } = await supabase
+          .from('session_state')
+          .insert({ id: 1, pin: currentPin, time_limit_seconds: timeLimit, session_start: nowIso, is_open: true })
+          .select()
+          .single();
+        if (created) {
+          setSessionId(created.id);
+          setCurrentPin(created.pin);
+          setTimeLimit(created.time_limit_seconds);
+          setSessionStartTime(new Date(created.session_start));
+          setIsTimeUp(false);
+        }
+      } else {
+        setSessionId(ss.id);
+        setCurrentPin(ss.pin);
+        setTimeLimit(ss.time_limit_seconds);
+        setSessionStartTime(new Date(ss.session_start));
+        setIsTimeUp(false);
+      }
+
+      // Load today's attendance from Supabase using timestamp range (independent of session_date)
       const now = new Date();
       const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
       const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
@@ -121,6 +184,24 @@ const Index = () => {
         setPresentStudents(restored);
       }
     })();
+
+    // Subscribe to realtime changes on session_state to sync timer across clients
+    const channel = supabase
+      .channel('session_state_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_state' }, (payload) => {
+        const row: any = payload.new || payload.record;
+        if (row) {
+          setCurrentPin(row.pin);
+          setTimeLimit(row.time_limit_seconds);
+          setSessionStartTime(new Date(row.session_start));
+          setIsTimeUp(false);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const getTimeLeft = () => {
