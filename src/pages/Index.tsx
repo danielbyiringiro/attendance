@@ -133,7 +133,7 @@ const Index = () => {
 
   // Initialize session on first load
   useEffect(() => {
-    // Load shared session state (create default if missing)
+    // Load shared session state (do not create/modify on load)
     (async () => {
       const { data: ss, error: ssError } = await supabase
         .from('session_state')
@@ -145,22 +145,7 @@ const Index = () => {
         console.error('Failed to load session_state:', ssError);
       }
 
-      if (!ss) {
-        const nowIso = new Date().toISOString();
-        const { data: created } = await supabase
-          .from('session_state')
-          .insert({ id: 1, pin: currentPin, time_limit_seconds: timeLimit, session_start: nowIso, is_open: false })
-          .select()
-          .single();
-        if (created) {
-          setSessionId(created.id);
-          setCurrentPin(created.pin);
-          setTimeLimit(created.time_limit_seconds);
-          setSessionStartTime(new Date(created.session_start));
-          setIsOpen(!!created.is_open);
-          setIsTimeUp(!created.is_open);
-        }
-      } else {
+      if (ss) {
         setSessionId(ss.id);
         setCurrentPin(ss.pin);
         setTimeLimit(ss.time_limit_seconds);
