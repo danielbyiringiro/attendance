@@ -16,7 +16,7 @@ interface Student {
 const Index = () => {
   const [currentPin, setCurrentPin] = useState("1234");
   const [timeLimit, setTimeLimit] = useState(300); // 5 minutes in seconds
-  const [isTimeUp, setIsTimeUp] = useState(false);
+  const [isTimeUp, setIsTimeUp] = useState(true);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
@@ -214,7 +214,7 @@ const Index = () => {
   }, []);
 
   const getTimeLeft = () => {
-    if (!sessionStartTime) return timeLimit;
+    if (!isOpen || !sessionStartTime) return 0;
     const elapsed = Math.floor((Date.now() - sessionStartTime.getTime()) / 1000);
     return Math.max(0, timeLimit - elapsed);
   };
