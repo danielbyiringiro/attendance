@@ -300,26 +300,18 @@ const TADashboard = ({
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {isLoadingRoster ? (
                         <p className="text-center text-muted-foreground py-8">Loading roster...</p>
-                      ) : (
-                      {filteredPresentStudents.length === 0 ? (
-                        <p className="text-center text-muted-foreground py-8">
-                          No students marked present yet
-                        </p>
+                      ) : filteredPresentStudents.length === 0 ? (
+                        <p className="text-center text-muted-foreground py-8">No students marked present yet</p>
                       ) : (
                         filteredPresentStudents.map((student) => (
                           <div key={student.id} className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg">
                             <span className="font-medium">{student.id}</span>
                             <div className="flex items-center space-x-2">
-                              <Badge variant="outline" className="text-xs">
-                                Cohort {student.cohort}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground">
-                                {student.timestamp.toLocaleTimeString()}
-                              </span>
+                              <Badge variant="outline" className="text-xs">Cohort {student.cohort}</Badge>
+                              <span className="text-xs text-muted-foreground">{student.timestamp.toLocaleTimeString()}</span>
                             </div>
                           </div>
                         ))
-                      )}
                       )}
                     </div>
                   </TabsContent>
@@ -328,11 +320,8 @@ const TADashboard = ({
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {isLoadingRoster ? (
                         <p className="text-center text-muted-foreground py-8">Loading roster...</p>
-                      ) : (
-                      {filteredAbsentStudents.length === 0 ? (
-                        <p className="text-center text-muted-foreground py-8">
-                          All students are present!
-                        </p>
+                      ) : filteredAbsentStudents.length === 0 ? (
+                        <p className="text-center text-muted-foreground py-8">All students are present!</p>
                       ) : (
                         filteredAbsentStudents.map((studentId) => {
                           const rosterEntry = roster.find(r => r.student_id === studentId);
@@ -340,13 +329,10 @@ const TADashboard = ({
                           return (
                             <div key={studentId} className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg">
                               <span className="font-medium">{studentId}</span>
-                              <Badge variant="outline" className="text-xs">
-                                Cohort {cohort}
-                              </Badge>
+                              <Badge variant="outline" className="text-xs">Cohort {cohort}</Badge>
                             </div>
                           );
                         })
-                      )}
                       )}
                     </div>
                   </TabsContent>
