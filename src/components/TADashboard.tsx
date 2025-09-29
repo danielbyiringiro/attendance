@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { supabase } from "@/lib/supabase";
 import { 
   Settings, 
   Users, 
@@ -48,14 +49,30 @@ const TADashboard = ({
   const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
+  const [roster, setRoster] = useState<Array<{ student_id: string; cohort: 'B' | 'C' }>>([]);
+  const [isLoadingRoster, setIsLoadingRoster] = useState(false);
 
-  // Sample student roster (in a real app, this would come from a database)
-  const allStudents = [
-    "STUDENT-B001", "STUDENT-B002", "STUDENT-B003", "STUDENT-B004", "STUDENT-B005",
-    "STUDENT-B006", "STUDENT-B007", "STUDENT-B008", "STUDENT-B009", "STUDENT-B010",
-    "STUDENT-C001", "STUDENT-C002", "STUDENT-C003", "STUDENT-C004", "STUDENT-C005",
-    "STUDENT-C006", "STUDENT-C007", "STUDENT-C008", "STUDENT-C009", "STUDENT-C010"
-  ];
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      setIsLoadingRoster(true);
+      const { data, error } = await supabase
+        .from('students')
+        .select('student_id, cohort')
+        .order('student_id', { ascending: true });
+      if (error) {
+        console.error('Failed to load students roster:', error);
+      }
+      if (isMounted && data) {
+        const normalized = data.map((row: any) => ({ student_id: String(row.student_id), cohort: (String(row.cohort).toUpperCase() === 'C' ? 'C' : 'B') as 'B' | 'C' }));
+        setRoster(normalized);
+      }
+      if (isMounted) setIsLoadingRoster(false);
+    })();
+    return () => { isMounted = false; };
+  }, []);
+
+  const allStudents = roster.map(r => r.student_id);
 
   const handleSetPin = () => {
     if (newPin.length < 3) {
@@ -107,8 +124,8 @@ const TADashboard = ({
 
   const cohortBPresent = presentStudents.filter(s => s.cohort === 'B').length;
   const cohortCPresent = presentStudents.filter(s => s.cohort === 'C').length;
-  const cohortBTotal = allStudents.filter(id => id.includes('B')).length;
-  const cohortCTotal = allStudents.filter(id => id.includes('C')).length;
+  const cohortBTotal = roster.filter(r => r.cohort === 'B').length;
+  const cohortCTotal = roster.filter(r => r.cohort === 'C').length;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
@@ -281,6 +298,9 @@ const TADashboard = ({
                   
                   <TabsContent value="present" className="mt-4">
                     <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {isLoadingRoster ? (
+                        <p className="text-center text-muted-foreground py-8">Loading roster...</p>
+                      ) : (
                       {filteredPresentStudents.length === 0 ? (
                         <p className="text-center text-muted-foreground py-8">
                           No students marked present yet
@@ -300,18 +320,23 @@ const TADashboard = ({
                           </div>
                         ))
                       )}
+                      )}
                     </div>
                   </TabsContent>
                   
                   <TabsContent value="absent" className="mt-4">
                     <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {isLoadingRoster ? (
+                        <p className="text-center text-muted-foreground py-8">Loading roster...</p>
+                      ) : (
                       {filteredAbsentStudents.length === 0 ? (
                         <p className="text-center text-muted-foreground py-8">
                           All students are present!
                         </p>
                       ) : (
                         filteredAbsentStudents.map((studentId) => {
-                          const cohort = studentId.includes('C') ? 'C' : 'B';
+                          const rosterEntry = roster.find(r => r.student_id === studentId);
+                          const cohort = rosterEntry ? rosterEntry.cohort : (studentId.includes('C') ? 'C' : 'B');
                           return (
                             <div key={studentId} className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg">
                               <span className="font-medium">{studentId}</span>
@@ -321,6 +346,7 @@ const TADashboard = ({
                             </div>
                           );
                         })
+                      )}
                       )}
                     </div>
                   </TabsContent>
