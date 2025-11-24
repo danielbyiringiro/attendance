@@ -217,6 +217,7 @@ const Index = () => {
         onSetTimeLimit={handleSetTimeLimit}
         onResetAttendance={handleResetAttendance}
         onLogout={handleTALogout}
+        onMarkAttendance={handleMarkAttendance}
       />
     );
   }
