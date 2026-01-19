@@ -18,7 +18,7 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
   const [studentId, setStudentId] = useState("");
   const [pin, setPin] = useState("");
   const [timeLeft, setTimeLeft] = useState(timeLimit);
-  const [cohort, setCohort] = useState<"B" | "C" | "">("");
+  const [cohort, setCohort] = useState<"A" | "B" | "">("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -67,7 +67,7 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
     if (!cohort) {
       toast({
         title: "Cohort Required",
-        description: "Please select your cohort (B or C).",
+        description: "Please select your cohort (A or B).",
         variant: "destructive",
       });
       return;
@@ -156,13 +156,13 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
               
               <div className="space-y-2">
                 <label className="text-sm font-medium">Cohort</label>
-                <Select value={cohort} onValueChange={(value) => setCohort(value as "B" | "C")} disabled={isExpired}>
+                <Select value={cohort} onValueChange={(value) => setCohort(value as "A" | "B")} disabled={isExpired}>
                   <SelectTrigger className="h-12">
                     <SelectValue placeholder="Select your cohort" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="A">Cohort A</SelectItem>
                     <SelectItem value="B">Cohort B</SelectItem>
-                    <SelectItem value="C">Cohort C</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -200,8 +200,8 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
 
         {/* Cohort Info */}
         <div className="flex justify-center space-x-2">
+          <Badge variant={cohort === "A" ? "default" : "outline"} className="px-3 py-1">Cohort A</Badge>
           <Badge variant={cohort === "B" ? "default" : "outline"} className="px-3 py-1">Cohort B</Badge>
-          <Badge variant={cohort === "C" ? "default" : "outline"} className="px-3 py-1">Cohort C</Badge>
         </div>
       </div>
     </div>

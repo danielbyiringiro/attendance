@@ -11,7 +11,7 @@ if (!url || !key) {
 const supabase = createClient(url, key)
 
 const studentId = `TEST_${Math.random().toString(36).slice(2, 8).toUpperCase()}`
-const cohort = Math.random() > 0.5 ? 'B' : 'C'
+const cohort = Math.random() > 0.5 ? 'A' : 'B'
 const timestamp = new Date().toISOString()
 
 try {
