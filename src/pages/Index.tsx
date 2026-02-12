@@ -28,7 +28,9 @@ const Index = () => {
   useEffect(() => {
     if (sessionStartTime && isOpen && !isTimeUp) {
       const timer = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - sessionStartTime.getTime()) / 1000);
+        const elapsed = Math.floor(
+          (Date.now() - sessionStartTime.getTime()) / 1000,
+        );
         if (elapsed >= timeLimit) {
           setIsTimeUp(true);
         }
@@ -38,10 +40,39 @@ const Index = () => {
     }
   }, [sessionStartTime, timeLimit, isTimeUp, isOpen]);
 
-  const handleMarkAttendance = async (studentId: string, cohort: string) => {
+  const handleMarkAttendance = async (
+    studentId: string,
+    cohort: string,
+  ): Promise<{ success: boolean; error?: string }> => {
     // Check if student already marked attendance locally
-    if (presentStudents.find(s => s.id === studentId)) {
-      return;
+    if (presentStudents.find((s) => s.id === studentId)) {
+      return {
+        success: false,
+        error: "You have already marked your attendance.",
+      };
+    }
+
+    // Verify the student exists in the roster
+    const { data: rosterEntry, error: rosterError } = await supabase
+      .from("students")
+      .select("student_id")
+      .eq("student_id", studentId)
+      .maybeSingle();
+
+    if (rosterError) {
+      console.error("Failed to verify student:", rosterError);
+      return {
+        success: false,
+        error: "Something went wrong. Please try again.",
+      };
+    }
+
+    if (!rosterEntry) {
+      return {
+        success: false,
+        error:
+          "You are not registered for this course. Please contact your TA.",
+      };
     }
 
     const newStudent: Student = {
@@ -52,33 +83,42 @@ const Index = () => {
     };
 
     // Optimistic update
-    setPresentStudents(prev => [...prev, newStudent]);
+    setPresentStudents((prev) => [...prev, newStudent]);
 
     // Persist to Supabase
-    const { error } = await supabase.from('present_students').insert({
+    const { error } = await supabase.from("present_students").insert({
       student_id: studentId,
       cohort,
       timestamp: newStudent.timestamp.toISOString(),
     });
     if (error) {
-      // Rollback optimistic update if desired, but for now just log
-      // setPresentStudents(prev => prev.filter(s => s.id !== studentId));
-      console.error('Failed to insert attendance:', error);
+      // Rollback optimistic update on failure
+      setPresentStudents((prev) => prev.filter((s) => s.id !== studentId));
+      console.error("Failed to insert attendance:", error);
+      return {
+        success: false,
+        error: "Failed to record attendance. Please try again.",
+      };
     }
+
+    return { success: true };
   };
 
   const handleSetPin = async (newPin: string) => {
     const nowIso = new Date().toISOString();
     // Upsert shared session state
     const { data, error } = await supabase
-      .from('session_state')
-      .upsert({
-        id: 1,
-        pin: newPin,
-        time_limit_seconds: timeLimit,
-        session_start: nowIso,
-        is_open: true,
-      }, { onConflict: 'id' })
+      .from("session_state")
+      .upsert(
+        {
+          id: 1,
+          pin: newPin,
+          time_limit_seconds: timeLimit,
+          session_start: nowIso,
+          is_open: true,
+        },
+        { onConflict: "id" },
+      )
       .select()
       .single();
 
@@ -95,14 +135,17 @@ const Index = () => {
   const handleSetTimeLimit = async (seconds: number) => {
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase
-      .from('session_state')
-      .upsert({
-        id: 1,
-        pin: currentPin,
-        time_limit_seconds: seconds,
-        session_start: nowIso,
-        is_open: true,
-      }, { onConflict: 'id' })
+      .from("session_state")
+      .upsert(
+        {
+          id: 1,
+          pin: currentPin,
+          time_limit_seconds: seconds,
+          session_start: nowIso,
+          is_open: true,
+        },
+        { onConflict: "id" },
+      )
       .select()
       .single();
 
@@ -136,13 +179,13 @@ const Index = () => {
     // Load shared session state (do not create/modify on load)
     (async () => {
       const { data: ss, error: ssError } = await supabase
-        .from('session_state')
-        .select('*')
-        .eq('id', 1)
+        .from("session_state")
+        .select("*")
+        .eq("id", 1)
         .maybeSingle();
 
       if (ssError) {
-        console.error('Failed to load session_state:', ssError);
+        console.error("Failed to load session_state:", ssError);
       }
 
       if (ss) {
@@ -152,45 +195,75 @@ const Index = () => {
         setSessionStartTime(new Date(ss.session_start));
         setIsOpen(!!ss.is_open);
         // If closed, mark as time up; otherwise compute remaining time
-        const elapsed = Math.floor((Date.now() - new Date(ss.session_start).getTime()) / 1000);
+        const elapsed = Math.floor(
+          (Date.now() - new Date(ss.session_start).getTime()) / 1000,
+        );
         setIsTimeUp(!ss.is_open || elapsed >= ss.time_limit_seconds);
       }
 
       // Load today's attendance from Supabase using timestamp range (independent of session_date)
       const now = new Date();
-      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
-      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+      const start = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0,
+          0,
+          0,
+        ),
+      );
+      const end = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() + 1,
+          0,
+          0,
+          0,
+        ),
+      );
 
       const { data, error } = await supabase
-        .from('present_students')
-        .select('student_id, cohort, timestamp')
-        .gte('timestamp', start.toISOString())
-        .lt('timestamp', end.toISOString())
-        .order('timestamp', { ascending: true });
+        .from("present_students")
+        .select("student_id, cohort, timestamp")
+        .gte("timestamp", start.toISOString())
+        .lt("timestamp", end.toISOString())
+        .order("timestamp", { ascending: true });
       if (error) {
-        console.error('Failed to load attendance:', error);
+        console.error("Failed to load attendance:", error);
         return;
       }
       if (data) {
-        const restored: Student[] = data.map((row: any) => ({ id: row.student_id, cohort: row.cohort, timestamp: new Date(row.timestamp) }));
+        const restored: Student[] = data.map((row: any) => ({
+          id: row.student_id,
+          cohort: row.cohort,
+          timestamp: new Date(row.timestamp),
+        }));
         setPresentStudents(restored);
       }
     })();
 
     // Subscribe to realtime changes on session_state to sync timer across clients
     const channel = supabase
-      .channel('session_state_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_state' }, (payload) => {
-        const row: any = payload.new || payload.record;
-        if (row) {
-          setCurrentPin(row.pin);
-          setTimeLimit(row.time_limit_seconds);
-          setSessionStartTime(new Date(row.session_start));
-          setIsOpen(!!row.is_open);
-          const elapsed = Math.floor((Date.now() - new Date(row.session_start).getTime()) / 1000);
-          setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
-        }
-      })
+      .channel("session_state_changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "session_state" },
+        (payload) => {
+          const row: any = payload.new || payload.record;
+          if (row) {
+            setCurrentPin(row.pin);
+            setTimeLimit(row.time_limit_seconds);
+            setSessionStartTime(new Date(row.session_start));
+            setIsOpen(!!row.is_open);
+            const elapsed = Math.floor(
+              (Date.now() - new Date(row.session_start).getTime()) / 1000,
+            );
+            setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
+          }
+        },
+      )
       .subscribe();
 
     return () => {
@@ -200,7 +273,9 @@ const Index = () => {
 
   const getTimeLeft = () => {
     if (!isOpen || !sessionStartTime) return 0;
-    const elapsed = Math.floor((Date.now() - sessionStartTime.getTime()) / 1000);
+    const elapsed = Math.floor(
+      (Date.now() - sessionStartTime.getTime()) / 1000,
+    );
     return Math.max(0, timeLimit - elapsed);
   };
 
@@ -230,7 +305,7 @@ const Index = () => {
         isTimeUp={isTimeUp}
         onMarkAttendance={handleMarkAttendance}
       />
-      
+
       {/* TA Access Button */}
       <Button
         onClick={() => setShowTALogin(true)}
@@ -242,9 +317,7 @@ const Index = () => {
       </Button>
 
       {/* TA Login Modal */}
-      {showTALogin && (
-        <TALogin onLogin={handleTALogin} />
-      )}
+      {showTALogin && <TALogin onLogin={handleTALogin} />}
     </div>
   );
 };
