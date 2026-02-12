@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Clock, Users, CheckCircle2 } from "lucide-react";
@@ -11,10 +17,18 @@ interface StudentLoginProps {
   currentPin: string;
   timeLimit: number;
   isTimeUp: boolean;
-  onMarkAttendance: (studentId: string, cohort: string) => void;
+  onMarkAttendance: (
+    studentId: string,
+    cohort: string,
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
-const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: StudentLoginProps) => {
+const StudentLogin = ({
+  currentPin,
+  timeLimit,
+  isTimeUp,
+  onMarkAttendance,
+}: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
   const [pin, setPin] = useState("");
   const [timeLeft, setTimeLeft] = useState(timeLimit);
@@ -28,15 +42,15 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
   useEffect(() => {
     if (timeLeft > 0 && !isTimeUp) {
       const timer = setInterval(() => {
-        setTimeLeft(prev => Math.max(0, prev - 1));
+        setTimeLeft((prev) => Math.max(0, prev - 1));
       }, 1000);
       return () => clearInterval(timer);
     }
   }, [timeLeft, isTimeUp]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (isTimeUp || timeLeft === 0) {
       toast({
         title: "Time's Up!",
@@ -72,9 +86,18 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
       });
       return;
     }
-    
-    onMarkAttendance(studentId, cohort);
-    
+
+    const result = await onMarkAttendance(studentId, cohort);
+
+    if (!result.success) {
+      toast({
+        title: "Attendance Failed",
+        description: result.error || "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     toast({
       title: "Attendance Marked!",
       description: `Welcome, ${studentId}! Your attendance has been recorded.`,
@@ -90,7 +113,7 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   const isExpired = isTimeUp || timeLeft === 0;
@@ -105,25 +128,33 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
               <Users className="h-8 w-8 text-primary-foreground" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Attendance Check-In</h1>
-          <p className="text-muted-foreground">Enter your Student ID and PIN to mark attendance</p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Attendance Check-In
+          </h1>
+          <p className="text-muted-foreground">
+            Enter your Student ID and PIN to mark attendance
+          </p>
         </div>
 
         {/* Time Display */}
         <Card className="border-2 shadow-soft">
           <CardContent className="pt-6">
             <div className="flex items-center justify-center space-x-3">
-              <Clock className={`h-5 w-5 ${isExpired ? 'text-destructive' : 'text-primary'}`} />
+              <Clock
+                className={`h-5 w-5 ${isExpired ? "text-destructive" : "text-primary"}`}
+              />
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">Time Remaining</p>
-                <p className={`text-2xl font-bold ${isExpired ? 'text-destructive' : 'text-primary'}`}>
+                <p
+                  className={`text-2xl font-bold ${isExpired ? "text-destructive" : "text-primary"}`}
+                >
                   {isExpired ? "CLOSED" : formatTime(timeLeft)}
                 </p>
               </div>
             </div>
             {!isExpired && (
               <div className="mt-4 bg-secondary rounded-full h-2 overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-1000"
                   style={{ width: `${(timeLeft / timeLimit) * 100}%` }}
                 />
@@ -153,10 +184,14 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
                   className="h-12"
                 />
               </div>
-              
+
               <div className="space-y-2">
                 <label className="text-sm font-medium">Cohort</label>
-                <Select value={cohort} onValueChange={(value) => setCohort(value as "A" | "B")} disabled={isExpired}>
+                <Select
+                  value={cohort}
+                  onValueChange={(value) => setCohort(value as "A" | "B")}
+                  disabled={isExpired}
+                >
                   <SelectTrigger className="h-12">
                     <SelectValue placeholder="Select your cohort" />
                   </SelectTrigger>
@@ -179,8 +214,8 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
                 />
               </div>
 
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 className="w-full h-12 bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all duration-300"
                 disabled={isExpired}
               >
@@ -200,8 +235,18 @@ const StudentLogin = ({ currentPin, timeLimit, isTimeUp, onMarkAttendance }: Stu
 
         {/* Cohort Info */}
         <div className="flex justify-center space-x-2">
-          <Badge variant={cohort === "A" ? "default" : "outline"} className="px-3 py-1">Cohort A</Badge>
-          <Badge variant={cohort === "B" ? "default" : "outline"} className="px-3 py-1">Cohort B</Badge>
+          <Badge
+            variant={cohort === "A" ? "default" : "outline"}
+            className="px-3 py-1"
+          >
+            Cohort A
+          </Badge>
+          <Badge
+            variant={cohort === "B" ? "default" : "outline"}
+            className="px-3 py-1"
+          >
+            Cohort B
+          </Badge>
         </div>
       </div>
     </div>
