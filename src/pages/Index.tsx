@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import StudentLogin from "@/components/StudentLogin";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
-import { Settings } from "lucide-react";
+import StudentDashboard from "@/components/StudentDashboard";
+import { Settings, History } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 interface Student {
@@ -20,6 +21,7 @@ const Index = () => {
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
+  const [showStudentDashboard, setShowStudentDashboard] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -297,6 +299,10 @@ const Index = () => {
     );
   }
 
+  if (showStudentDashboard) {
+    return <StudentDashboard onBack={() => setShowStudentDashboard(false)} />;
+  }
+
   return (
     <div className="relative">
       <StudentLogin
@@ -305,6 +311,17 @@ const Index = () => {
         isTimeUp={isTimeUp}
         onMarkAttendance={handleMarkAttendance}
       />
+
+      {/* Student History Button */}
+      <Button
+        onClick={() => setShowStudentDashboard(true)}
+        variant="outline"
+        size="sm"
+        className="fixed top-4 left-4 opacity-70 hover:opacity-100 transition-opacity"
+      >
+        <History className="h-4 w-4 mr-2" />
+        History
+      </Button>
 
       {/* TA Access Button */}
       <Button

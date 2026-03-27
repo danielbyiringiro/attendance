@@ -50,12 +50,12 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
 // Semester start date — attendance is only tracked from this date forward
-const SEMESTER_START = new Date(Date.UTC(2025, 0, 19)); // January 19, 2025
+const SEMESTER_START = new Date(Date.UTC(2026, 0, 26)); // January 26, 2026
 
-// Only Monday (1), Wednesday (3), Friday (5) are valid class days
-const VALID_CLASS_DAYS = new Set([1, 3, 5]);
-const isValidClassDay = (date: Date): boolean =>
-  VALID_CLASS_DAYS.has(date.getUTCDay());
+export const isValidClassDay = (date: Date): boolean => {
+  const day = date.getDay();
+  return day === 1 || day === 3 || day === 5;
+};
 
 interface Student {
   id: string;
@@ -202,7 +202,10 @@ const TADashboard = ({
       isMounted = false;
     };
   }, []);
-
+  const isValidClassDay = (date: Date): boolean => {
+    const day = date.getDay();
+    return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
+  };
   const allStudents = roster.map((r) => r.student_id);
   const inferCohort = (id: string): "A" | "B" =>
     id.toUpperCase().includes("A") ? "A" : "B";
@@ -304,8 +307,8 @@ const TADashboard = ({
 
       // Load actual class dates
       const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_dates")
-        .select("date, cohort");
+        .from("class_schedule")
+        .select("day_of_week, cohort");
       if (classDatesError && classDatesError.code !== "PGRST116") {
         console.error("Failed to load class dates:", classDatesError);
       } else if (classDatesData) {
@@ -470,14 +473,12 @@ const TADashboard = ({
   };
 
   // Filtered roster for the remove dialog search
-  // Compute Monday of the week containing a given date
+  // Compute Monday of the week containing a given date (local time)
   const getMonday = (date: Date): Date => {
-    const d = new Date(
-      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()),
-    );
-    const day = d.getUTCDay(); // 0=Sun … 6=Sat
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const day = d.getDay(); // 0=Sun … 6=Sat
     const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-    d.setUTCDate(d.getUTCDate() + diff);
+    d.setDate(d.getDate() + diff);
     return d;
   };
 
@@ -489,17 +490,19 @@ const TADashboard = ({
     try {
       const monday = getMonday(date);
       const saturday = new Date(monday);
-      saturday.setUTCDate(saturday.getUTCDate() + 5); // Saturday (exclusive upper bound for the query)
-
+      saturday.setDate(saturday.getDate() + 5); // Saturday (exclusive upper bound for the query)
+      const todayStr = new Date().toISOString().split("T")[0];
       // Valid class days in this week (Mon=1, Wed=3, Fri=5)
       const classDaysInWeek: Date[] = [];
-      for (let offset of [0, 2, 4]) {
-        // Mon +0, Wed +2, Fri +4
-        const d = new Date(monday);
-        d.setUTCDate(d.getUTCDate() + offset);
-        // Must be on or after semester start and not in the future
-        if (d >= SEMESTER_START && d <= new Date()) {
-          classDaysInWeek.push(d);
+
+      for (let d = new Date(monday); d < saturday; d.setDate(d.getDate() + 1)) {
+        if (!isValidClassDay(d)) continue;
+
+        const dateStr = d.toISOString().split("T")[0];
+
+        // Only include days up to today
+        if (dateStr <= todayStr && d >= SEMESTER_START) {
+          classDaysInWeek.push(new Date(d));
         }
       }
 
@@ -508,16 +511,22 @@ const TADashboard = ({
         return;
       }
 
-      const classDayStrings = classDaysInWeek.map(
-        (d) => d.toISOString().split("T")[0],
-      );
+      // Format dates as YYYY-MM-DD in local time (avoids UTC shift)
+      const toDateStr = (d: Date): string => {
+        return d.toISOString().split("T")[0];
+      };
+
+      const classDayStrings = classDaysInWeek.map(toDateStr);
+
+      const mondayStr = toDateStr(monday);
+      const saturdayStr = toDateStr(saturday);
 
       // Get attendance records for the week
       const { data: attendanceData, error: attendanceError } = await supabase
         .from("present_students")
         .select("student_id, cohort, timestamp")
-        .gte("timestamp", monday.toISOString())
-        .lt("timestamp", saturday.toISOString());
+        .gte("timestamp", mondayStr + "T00:00:00")
+        .lt("timestamp", saturdayStr + "T00:00:00");
 
       if (attendanceError) {
         console.error("Failed to load weekly attendance:", attendanceError);
@@ -536,7 +545,7 @@ const TADashboard = ({
       const cancelledSet = new Set<string>();
       if (cancelledData) {
         cancelledData.forEach((row: any) => {
-          cancelledSet.add(`${row.date}-${row.cohort}`);
+          cancelledSet.add(row.date);
         });
       }
 
@@ -544,9 +553,8 @@ const TADashboard = ({
       const presentSet = new Set<string>();
       if (attendanceData) {
         attendanceData.forEach((record: any) => {
-          const recordDate = new Date(record.timestamp)
-            .toISOString()
-            .split("T")[0];
+          const d = new Date(record.timestamp);
+          const recordDate = toDateStr(d);
           presentSet.add(`${record.student_id}-${recordDate}`);
         });
       }
@@ -564,12 +572,9 @@ const TADashboard = ({
 
       roster.forEach((student) => {
         classDayStrings.forEach((dateStr) => {
-          const cancelledKey = `${dateStr}-${student.cohort}`;
-          if (cancelledSet.has(cancelledKey)) return; // class was cancelled
-
+          if (cancelledSet.has(dateStr)) return; // ignore any cancelled session
           const presentKey = `${student.student_id}-${dateStr}`;
           if (!presentSet.has(presentKey)) {
-            // Student was absent on this day
             if (!absenceMap.has(student.student_id)) {
               absenceMap.set(student.student_id, {
                 student_id: student.student_id,
@@ -698,7 +703,7 @@ const TADashboard = ({
       const cancelledSessionsMap = new Map<string, boolean>();
       if (cancelledData) {
         cancelledData.forEach((session: any) => {
-          const key = `${session.date}-${session.cohort}`;
+          const key = session.date;
           cancelledSessionsMap.set(key, true);
         });
       }
@@ -731,7 +736,7 @@ const TADashboard = ({
       if (classDatesData) {
         classDatesData.forEach((row: any) => {
           // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00Z");
+          const d = new Date(row.date + "T00:00:00");
           if (!isValidClassDay(d)) return;
           const key = `${row.date}-${row.cohort}`;
           classDatesMap.set(key, true);
@@ -799,7 +804,7 @@ const TADashboard = ({
           const isClassDate = classDatesMap.has(classDateKey);
 
           // Check if class was cancelled for this cohort on this date
-          const wasCancelled = cancelledSessionsMap.get(classDateKey) || false;
+          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
 
           if (isClassDate && !presentOnDate.has(studentId) && !wasCancelled) {
             absences.push({
@@ -1051,7 +1056,7 @@ const TADashboard = ({
       const cancelledSessionsMap = new Map<string, boolean>();
       if (cancelledData) {
         cancelledData.forEach((session: any) => {
-          const key = `${session.date}-${session.cohort}`;
+          const key = session.date;
           cancelledSessionsMap.set(key, true);
         });
       }
@@ -1085,7 +1090,7 @@ const TADashboard = ({
       if (classDatesData) {
         classDatesData.forEach((row: any) => {
           // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00Z");
+          const d = new Date(row.date + "T00:00:00");
           if (!isValidClassDay(d)) return;
           const key = `${row.date}-${row.cohort}`;
           classDatesMap.set(key, true);
@@ -1149,7 +1154,7 @@ const TADashboard = ({
             false;
           const classDateKey = `${dateStr}-${student.cohort}`;
           const isClassDate = classDatesMap.has(classDateKey);
-          const wasCancelled = cancelledSessionsMap.get(classDateKey) || false;
+          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
 
           if (isClassDate && !presentOnDate && !wasCancelled) {
             absences.push({
@@ -1577,7 +1582,7 @@ const TADashboard = ({
             <DialogTitle>Absence History</DialogTitle>
             <DialogDescription>
               View students who missed class on specific days. Select a date to
-              filter, or view all absences since January 19.
+              filter, or view all absences since January 26.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -2278,7 +2283,7 @@ const TADashboard = ({
                   {format(
                     (() => {
                       const fri = getMonday(weeklyAbsenceDate);
-                      fri.setUTCDate(fri.getUTCDate() + 4);
+                      fri.setDate(fri.getDate() + 4);
                       return fri;
                     })(),
                     "MMM dd, yyyy",
@@ -2336,7 +2341,7 @@ const TADashboard = ({
                     </div>
                     <div className="flex gap-1 flex-wrap">
                       {absence.absentDays.map((d) => {
-                        const dayDate = new Date(d + "T00:00:00Z");
+                        const dayDate = new Date(d + "T00:00:00");
                         const dayName = [
                           "Sun",
                           "Mon",
@@ -2345,7 +2350,7 @@ const TADashboard = ({
                           "Thu",
                           "Fri",
                           "Sat",
-                        ][dayDate.getUTCDay()];
+                        ][dayDate.getDay()];
                         return (
                           <Badge key={d} variant="outline" className="text-xs">
                             {dayName} {format(dayDate, "MMM dd")}
