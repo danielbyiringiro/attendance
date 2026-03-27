@@ -44,6 +44,7 @@ import {
   UserPlus,
   UserMinus,
   CalendarDays,
+  Flag,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -107,6 +108,14 @@ interface WeeklyAbsence {
   name?: string;
   absentDays: string[]; // YYYY-MM-DD dates they were absent
   frequency: number;
+}
+
+interface FlaggedRecord {
+  id: string;
+  student_id: string;
+  session_date: string;
+  status: string;
+  created_at: string;
 }
 
 const TADashboard = ({
@@ -173,6 +182,10 @@ const TADashboard = ({
     name?: string;
   } | null>(null);
 
+  const [showFlaggedDialog, setShowFlaggedDialog] = useState(false);
+  const [flaggedRecords, setFlaggedRecords] = useState<FlaggedRecord[]>([]);
+  const [isLoadingFlagged, setIsLoadingFlagged] = useState(false);
+
   useEffect(() => {
     let isMounted = true;
     (async () => {
@@ -209,6 +222,78 @@ const TADashboard = ({
   const allStudents = roster.map((r) => r.student_id);
   const inferCohort = (id: string): "A" | "B" =>
     id.toUpperCase().includes("A") ? "A" : "B";
+
+  const loadFlaggedRecords = async () => {
+    setIsLoadingFlagged(true);
+    const { data, error } = await supabase
+      .from("flagged")
+      .select("*")
+      .eq("status", "flagged")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Failed to load flagged records:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load flagged records",
+        variant: "destructive",
+      });
+    } else {
+      setFlaggedRecords(data || []);
+    }
+    setIsLoadingFlagged(false);
+  };
+
+  const handleResolveFlag = async (
+    record: FlaggedRecord,
+    resolution: "accepted" | "denied",
+  ) => {
+    try {
+      if (resolution === "accepted") {
+        const studentEntry = roster.find(
+          (r) => r.student_id === record.student_id,
+        );
+        const cohort = studentEntry
+          ? studentEntry.cohort
+          : inferCohort(record.student_id);
+        // Assume the session was at noon on the local date to ensure UTC mapping matches date
+        const sessionTimestamp = new Date(
+          `${record.session_date}T12:00:00Z`,
+        ).toISOString();
+
+        const { error: insertError } = await supabase
+          .from("present_students")
+          .insert([
+            {
+              student_id: record.student_id,
+              cohort,
+              timestamp: sessionTimestamp,
+            },
+          ]);
+        if (insertError) throw insertError;
+      }
+
+      const { error: updateError } = await supabase
+        .from("flagged")
+        .update({ status: resolution })
+        .eq("id", record.id);
+
+      if (updateError) throw updateError;
+
+      toast({
+        title: "Success",
+        description: `Record marked as ${resolution}.`,
+      });
+      loadFlaggedRecords();
+    } catch (error) {
+      console.error("Error resolving flag:", error);
+      toast({
+        title: "Error",
+        description: "Failed to resolve flag.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleSetPin = () => {
     if (newPin.length < 3) {
@@ -1366,6 +1451,17 @@ const TADashboard = ({
             <Settings className="h-4 w-4" />
             Class Schedule
           </Button>
+          <Button
+            onClick={() => {
+              setShowFlaggedDialog(true);
+              loadFlaggedRecords();
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <Flag className="h-4 w-4" />
+            Review Flags
+          </Button>
         </div>
 
         {/* Controls and Student Lists */}
@@ -1687,6 +1783,77 @@ const TADashboard = ({
           </div>
           <DialogFooter>
             <Button onClick={() => setShowHistoryDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Flagged Records Dialog */}
+      <Dialog open={showFlaggedDialog} onOpenChange={setShowFlaggedDialog}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Flagged Attendance Records</DialogTitle>
+            <DialogDescription>
+              Review attendance records flagged by students.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            {isLoadingFlagged ? (
+              <p className="text-center text-muted-foreground py-8">
+                Loading flagged records...
+              </p>
+            ) : flaggedRecords.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No flagged records to review.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {flaggedRecords.map((record) => (
+                  <div
+                    key={record.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-muted/50 rounded-lg border gap-4"
+                  >
+                    <div>
+                      <p className="font-semibold">{record.student_id}</p>
+                      <p className="text-sm text-muted-foreground">
+                        Disputed Date:{" "}
+                        {format(new Date(record.session_date), "MMM d, yyyy")}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Flagged on:{" "}
+                        {format(
+                          new Date(record.created_at),
+                          "MMM d, yyyy h:mm a",
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => handleResolveFlag(record, "accepted")}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        Approve
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleResolveFlag(record, "denied")}
+                      >
+                        <XCircle className="h-4 w-4 mr-2" />
+                        Deny
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setShowFlaggedDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
