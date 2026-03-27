@@ -1,0 +1,330 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Search,
+  History,
+  ArrowLeft,
+  UserCheck,
+  UserX,
+  CalendarDays,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { format, parseISO } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
+
+interface AttendanceRecord {
+  date: string;
+  status: "Present" | "Absent";
+  timestamp?: string;
+}
+
+interface StudentDashboardProps {
+  onBack: () => void;
+}
+
+const SEMESTER_START = new Date(Date.UTC(2026, 0, 26)); // January 26, 2026
+
+const isValidClassDay = (date: Date): boolean => {
+  const day = date.getDay();
+  return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
+};
+
+const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
+  const [studentId, setStudentId] = useState("");
+  const [history, setHistory] = useState<AttendanceRecord[]>([]);
+  const [stats, setStats] = useState({ present: 0, absent: 0, total: 0 });
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const { toast } = useToast();
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!studentId.trim()) {
+      toast({
+        title: "Student ID Required",
+        description: "Please enter your student ID to view history.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setHasSearched(true);
+
+    try {
+      // Fetch all attendance records for this student
+      const { data: presentData, error: presentError } = await supabase
+        .from("present_students")
+        .select("timestamp, cohort")
+        .eq("student_id", studentId)
+        .order("timestamp", { ascending: false });
+
+      if (presentError) {
+        throw presentError;
+      }
+
+      if (!presentData || presentData.length === 0) {
+        setHistory([]);
+        setStats({ present: 0, absent: 0, total: 0 });
+        toast({
+          title: "No Records Found",
+          description: `No attendance records found for ID: ${studentId}`,
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Infer cohort from the most recent attendance record
+      const cohort = presentData[0].cohort;
+
+      // Fetch cancelled sessions for the cohort to accurately determine absences
+      const { data: cancelledData, error: cancelledError } = await supabase
+        .from("cancelled_sessions")
+        .select("date")
+        .eq("is_cancelled", true);
+
+      if (cancelledError && cancelledError.code !== "PGRST116") {
+        console.error("Failed to load cancelled sessions:", cancelledError);
+      }
+
+      const cancelledDates = new Set<string>();
+      if (cancelledData) {
+        cancelledData.forEach((row: any) => cancelledDates.add(row.date));
+      }
+
+      // Track present dates
+      const presentDatesMap = new Map<string, string>();
+      presentData.forEach((record: any) => {
+        const d = new Date(record.timestamp);
+        const localDateStr = d.toISOString().split("T")[0];
+        presentDatesMap.set(localDateStr, record.timestamp);
+      });
+
+      const historyList: AttendanceRecord[] = [];
+      let presentCount = 0;
+      let absentCount = 0;
+
+      const currentDate = new Date(SEMESTER_START);
+      const today = new Date();
+      // Normalize today's date so we check until the end of today
+      today.setHours(23, 59, 59, 999);
+
+      while (currentDate <= today) {
+        if (isValidClassDay(currentDate)) {
+          const dateStr = currentDate.toISOString().split("T")[0];
+
+          // If the class wasn't cancelled, it was an expected class day
+          if (!cancelledDates.has(dateStr)) {
+            if (presentDatesMap.has(dateStr)) {
+              historyList.push({
+                date: dateStr,
+                status: "Present",
+                timestamp: presentDatesMap.get(dateStr),
+              });
+              presentCount++;
+            } else {
+              // Only mark absent if the class day has mostly passed
+              // (Simplification: if it's today and not present, might be absent or just hasn't happened yet.
+              // Assuming absent if checked.)
+              historyList.push({
+                date: dateStr,
+                status: "Absent",
+              });
+              absentCount++;
+            }
+          }
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      // Catch any edge cases where a student was present on a day not typically considered a class day
+      presentDatesMap.forEach((timestamp, dateStr) => {
+        if (!historyList.find((h) => h.date === dateStr)) {
+          historyList.push({
+            date: dateStr,
+            status: "Present",
+            timestamp,
+          });
+          presentCount++;
+        }
+      });
+
+      // Sort by date descending
+      historyList.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+
+      setHistory(historyList);
+      setStats({
+        present: presentCount,
+        absent: absentCount,
+        total: presentCount + absentCount,
+      });
+    } catch (error) {
+      console.error("Error fetching history:", error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch attendance history.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 md:p-8">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <Button variant="ghost" onClick={onBack} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Check-in
+        </Button>
+
+        <Card className="border-2 shadow-medium">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-2xl">
+              <History className="h-6 w-6 text-primary" />
+              My Attendance History
+            </CardTitle>
+            <CardDescription>
+              Enter your student ID to view your attendance statistics and
+              history.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSearch} className="flex gap-4 mb-8">
+              <Input
+                type="text"
+                placeholder="Enter Student ID"
+                value={studentId}
+                onChange={(e) => setStudentId(e.target.value)}
+                className="max-w-md h-12"
+              />
+              <Button type="submit" className="h-12" disabled={isLoading}>
+                {isLoading ? (
+                  "Searching..."
+                ) : (
+                  <>
+                    <Search className="mr-2 h-4 w-4" />
+                    View Details
+                  </>
+                )}
+              </Button>
+            </form>
+
+            {hasSearched && (
+              <div className="space-y-6">
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Card className="bg-primary/5 border-primary/20">
+                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
+                      <CalendarDays className="h-8 w-8 text-primary mb-2" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Total Classes
+                      </p>
+                      <p className="text-3xl font-bold text-primary">
+                        {stats.total}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-green-500/5 border-green-500/20">
+                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
+                      <UserCheck className="h-8 w-8 text-green-600 mb-2" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Days Present
+                      </p>
+                      <p className="text-3xl font-bold text-green-600">
+                        {stats.present}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-destructive/5 border-destructive/20">
+                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
+                      <UserX className="h-8 w-8 text-destructive mb-2" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Days Absent
+                      </p>
+                      <p className="text-3xl font-bold text-destructive">
+                        {stats.absent}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* History Table */}
+                <div className="rounded-md border bg-card">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Time Recorded</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {history.length > 0 ? (
+                        history.map((record, index) => (
+                          <TableRow key={`${record.date}-${index}`}>
+                            <TableCell className="font-medium">
+                              {format(parseISO(record.date), "MMM d, yyyy")}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {record.timestamp
+                                ? format(new Date(record.timestamp), "h:mm a")
+                                : "-"}
+                            </TableCell>
+                            <TableCell>
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                  record.status === "Present"
+                                    ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                    : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                }`}
+                              >
+                                {record.status}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell
+                            colSpan={3}
+                            className="text-center py-8 text-muted-foreground"
+                          >
+                            No class records to display.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+export default StudentDashboard;
