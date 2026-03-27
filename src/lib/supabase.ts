@@ -12,3 +12,11 @@ export const supabaseServiceRole = createClient(
   supabaseUrl,
   supabase_service_role,
 );
+
+const { data, error } = await supabaseServiceRole
+  .from("present_students")
+  .delete()
+  .eq("student_id", "81482026")
+  .eq("session_date", "2026-02-16");
+console.log(data);
+console.log(error);

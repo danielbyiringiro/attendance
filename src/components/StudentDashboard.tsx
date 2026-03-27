@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,6 +24,7 @@ import {
   UserX,
   CalendarDays,
   Flag,
+  CheckCircle2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { format, parseISO } from "date-fns";
@@ -33,6 +34,8 @@ interface AttendanceRecord {
   date: string;
   status: "Present" | "Absent";
   timestamp?: string;
+  isFlagged?: boolean;
+  flagStatus?: "flagged" | "accepted" | "denied" | null; // Track the flag status
 }
 
 interface StudentDashboardProps {
@@ -52,11 +55,62 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [stats, setStats] = useState({ present: 0, absent: 0, total: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [flaggingInProgress, setFlaggingInProgress] = useState<string | null>(
+    null,
+  );
   const { toast } = useToast();
 
+  // Fetch flag status for specific date
+  const getFlagStatusForDate = async (studentId: string, date: string) => {
+    const { data } = await supabase
+      .from("flagged")
+      .select("status")
+      .eq("student_id", studentId)
+      .eq("session_date", date)
+      .single();
+
+    return data?.status || null;
+  };
+
   const handleFlag = async (date: string) => {
+    if (flaggingInProgress === date) return; // Prevent double submission
+
+    setFlaggingInProgress(date);
+
     try {
-      const { error } = await supabase.from("flagged").insert([
+      // First check if there's already a flag for this date
+      const { data: existingFlag, error: checkError } = await supabase
+        .from("flagged")
+        .select("status")
+        .eq("student_id", studentId)
+        .eq("session_date", date)
+        .maybeSingle(); // Use maybeSingle to handle no rows
+
+      if (checkError) throw checkError;
+
+      // If there's already a flag that's not "denied", prevent new flag
+      if (existingFlag && existingFlag.status !== "denied") {
+        toast({
+          title: "Already Flagged",
+          description: `This record has already been flagged and is pending review.`,
+          variant: "default",
+        });
+        return;
+      }
+
+      // If there's a denied flag, prevent flagging again
+      if (existingFlag && existingFlag.status === "denied") {
+        toast({
+          title: "Cannot Flag",
+          description:
+            "This record has already been reviewed and denied. Please contact your TA if you believe this is an error.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Insert new flag (or update if exists but was denied - though we prevented above)
+      const { error: insertError } = await supabase.from("flagged").insert([
         {
           student_id: studentId,
           session_date: date,
@@ -64,19 +118,31 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         },
       ]);
 
-      if (error) throw error;
+      if (insertError) throw insertError;
+
+      // Update local state
+      setHistory((prev) =>
+        prev.map((record) =>
+          record.date === date
+            ? { ...record, isFlagged: true, flagStatus: "flagged" }
+            : record,
+        ),
+      );
 
       toast({
         title: "Record Flagged",
-        description: "This attendance record has been flagged for review.",
+        description:
+          "This attendance record has been flagged for review. Your TA will review it shortly.",
       });
     } catch (error) {
       console.error("Error flagging record:", error);
       toast({
         title: "Error",
-        description: "Failed to flag record.",
+        description: "Failed to flag record. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setFlaggingInProgress(null);
     }
   };
 
@@ -121,7 +187,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       // Infer cohort from the most recent attendance record
       const cohort = presentData[0].cohort;
 
-      // Fetch cancelled sessions for the cohort to accurately determine absences
+      // Fetch cancelled sessions for the cohort
       const { data: cancelledData, error: cancelledError } = await supabase
         .from("cancelled_sessions")
         .select("date")
@@ -134,6 +200,19 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       const cancelledDates = new Set<string>();
       if (cancelledData) {
         cancelledData.forEach((row: any) => cancelledDates.add(row.date));
+      }
+
+      // Fetch flagged records for this student (including all statuses)
+      const { data: flaggedData } = await supabase
+        .from("flagged")
+        .select("session_date, status")
+        .eq("student_id", studentId);
+
+      const flaggedMap = new Map<string, string>();
+      if (flaggedData) {
+        flaggedData.forEach((row: any) => {
+          flaggedMap.set(row.session_date, row.status);
+        });
       }
 
       // Track present dates
@@ -150,7 +229,6 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
       const currentDate = new Date(SEMESTER_START);
       const today = new Date();
-      // Normalize today's date so we check until the end of today
       today.setHours(23, 59, 59, 999);
 
       while (currentDate <= today) {
@@ -159,20 +237,23 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
           // If the class wasn't cancelled, it was an expected class day
           if (!cancelledDates.has(dateStr)) {
+            const flagStatus = flaggedMap.get(dateStr);
+
             if (presentDatesMap.has(dateStr)) {
               historyList.push({
                 date: dateStr,
                 status: "Present",
                 timestamp: presentDatesMap.get(dateStr),
+                isFlagged: flagStatus === "flagged", // Only show as flagged if pending
+                flagStatus: flagStatus || null,
               });
               presentCount++;
             } else {
-              // Only mark absent if the class day has mostly passed
-              // (Simplification: if it's today and not present, might be absent or just hasn't happened yet.
-              // Assuming absent if checked.)
               historyList.push({
                 date: dateStr,
                 status: "Absent",
+                isFlagged: flagStatus === "flagged",
+                flagStatus: flagStatus || null,
               });
               absentCount++;
             }
@@ -184,10 +265,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       // Catch any edge cases where a student was present on a day not typically considered a class day
       presentDatesMap.forEach((timestamp, dateStr) => {
         if (!historyList.find((h) => h.date === dateStr)) {
+          const flagStatus = flaggedMap.get(dateStr);
           historyList.push({
             date: dateStr,
             status: "Present",
             timestamp,
+            isFlagged: flagStatus === "flagged",
+            flagStatus: flagStatus || null,
           });
           presentCount++;
         }
@@ -216,6 +300,42 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
     }
   };
 
+  // Helper function to get button state
+  const getFlagButtonState = (record: AttendanceRecord) => {
+    if (record.flagStatus === "accepted") {
+      return {
+        disabled: true,
+        title: "Flag was accepted - attendance has been recorded",
+        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />,
+        variant: "ghost" as const,
+      };
+    }
+    if (record.flagStatus === "denied") {
+      return {
+        disabled: true,
+        title: "Flag was denied - cannot flag again",
+        icon: <Flag className="h-4 w-4 text-muted-foreground/50" />,
+        variant: "ghost" as const,
+      };
+    }
+    if (record.isFlagged) {
+      return {
+        disabled: true,
+        title: "Flag pending review",
+        icon: <Flag className="h-4 w-4 text-orange-500 fill-orange-500" />,
+        variant: "ghost" as const,
+      };
+    }
+    return {
+      disabled: false,
+      title: "Flag as incorrect",
+      icon: (
+        <Flag className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+      ),
+      variant: "ghost" as const,
+    };
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -232,7 +352,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
             </CardTitle>
             <CardDescription>
               Enter your student ID to view your attendance statistics and
-              history.
+              history. If you see an error, you can flag it for review.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -310,43 +430,61 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                     </TableHeader>
                     <TableBody>
                       {history.length > 0 ? (
-                        history.map((record, index) => (
-                          <TableRow key={`${record.date}-${index}`}>
-                            <TableCell className="font-medium">
-                              {format(parseISO(record.date), "MMM d, yyyy")}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {record.timestamp
-                                ? format(new Date(record.timestamp), "h:mm a")
-                                : "-"}
-                            </TableCell>
-                            <TableCell>
-                              <span
-                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                  record.status === "Present"
-                                    ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                    : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
-                                }`}
-                              >
-                                {record.status}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleFlag(record.date)}
-                                title="Flag as incorrect"
-                              >
-                                <Flag className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
+                        history.map((record, index) => {
+                          const buttonState = getFlagButtonState(record);
+
+                          return (
+                            <TableRow key={`${record.date}-${index}`}>
+                              <TableCell className="font-medium">
+                                {format(parseISO(record.date), "MMM d, yyyy")}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {record.timestamp
+                                  ? format(new Date(record.timestamp), "h:mm a")
+                                  : "-"}
+                              </TableCell>
+                              <TableCell>
+                                <span
+                                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                    record.status === "Present"
+                                      ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                      : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                  }`}
+                                >
+                                  {record.status}
+                                </span>
+                                {record.flagStatus === "accepted" && (
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                    Flag Accepted
+                                  </span>
+                                )}
+                                {record.flagStatus === "denied" && (
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400">
+                                    Flag Denied
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  variant={buttonState.variant}
+                                  size="sm"
+                                  onClick={() => handleFlag(record.date)}
+                                  title={buttonState.title}
+                                  disabled={
+                                    buttonState.disabled ||
+                                    flaggingInProgress === record.date
+                                  }
+                                >
+                                  {buttonState.icon}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
                       ) : (
                         <TableRow>
                           <TableCell
-                            colSpan={3}
+                            colSpan={4}
                             className="text-center py-8 text-muted-foreground"
                           >
                             No class records to display.
@@ -356,6 +494,27 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                     </TableBody>
                   </Table>
                 </div>
+
+                {/* Legend for flag statuses */}
+                {history.some((r) => r.flagStatus) && (
+                  <div className="text-sm text-muted-foreground border-t pt-4">
+                    <p className="font-medium mb-2">Flag Status Legend:</p>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="flex items-center gap-2">
+                        <Flag className="h-4 w-4 text-orange-500 fill-orange-500" />
+                        <span>Pending Review</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <span>Accepted - Attendance Recorded</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Flag className="h-4 w-4 text-muted-foreground/50" />
+                        <span>Denied - Cannot Flag Again</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
