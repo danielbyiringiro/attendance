@@ -12,21 +12,3 @@ export const supabaseServiceRole = createClient(
   supabaseUrl,
   supabase_service_role,
 );
-
-const cohort = "C"; // replace with your actual cohort
-
-const datesToCancel = ["2026-03-18"];
-
-const insertData = datesToCancel.map((date) => ({
-  cohort,
-  date,
-  is_cancelled: true,
-}));
-
-const { data, error } = await supabaseServiceRole
-  .from("students")
-  .select("*")
-  .ilike("name", "daisy*");
-
-console.log("upserted cancelled sessions:", data);
-console.log("error:", error);

@@ -23,6 +23,7 @@ import {
   UserCheck,
   UserX,
   CalendarDays,
+  Flag,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { format, parseISO } from "date-fns";
@@ -52,6 +53,32 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const { toast } = useToast();
+
+  const handleFlag = async (date: string) => {
+    try {
+      const { error } = await supabase.from("flagged").insert([
+        {
+          student_id: studentId,
+          session_date: date,
+          status: "flagged",
+        },
+      ]);
+
+      if (error) throw error;
+
+      toast({
+        title: "Record Flagged",
+        description: "This attendance record has been flagged for review.",
+      });
+    } catch (error) {
+      console.error("Error flagging record:", error);
+      toast({
+        title: "Error",
+        description: "Failed to flag record.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -278,6 +305,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                         <TableHead>Date</TableHead>
                         <TableHead>Time Recorded</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -302,6 +330,16 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                               >
                                 {record.status}
                               </span>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleFlag(record.date)}
+                                title="Flag as incorrect"
+                              >
+                                <Flag className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))
