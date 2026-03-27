@@ -284,7 +284,7 @@ const TADashboard = ({
         title: "Success",
         description: `Record marked as ${resolution}.`,
       });
-      loadFlaggedRecords();
+      await loadFlaggedRecords();
     } catch (error) {
       console.error("Error resolving flag:", error);
       toast({
@@ -1808,46 +1808,55 @@ const TADashboard = ({
               </p>
             ) : (
               <div className="space-y-3">
-                {flaggedRecords.map((record) => (
-                  <div
-                    key={record.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-muted/50 rounded-lg border gap-4"
-                  >
-                    <div>
-                      <p className="font-semibold">{record.student_id}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Disputed Date:{" "}
-                        {format(new Date(record.session_date), "MMM d, yyyy")}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Flagged on:{" "}
-                        {format(
-                          new Date(record.created_at),
-                          "MMM d, yyyy h:mm a",
-                        )}
-                      </p>
+                {flaggedRecords.map((record) => {
+                  const student = roster.find(
+                    (r) => r.student_id === record.student_id,
+                  );
+                  return (
+                    <div
+                      key={record.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-muted/50 rounded-lg border gap-4"
+                    >
+                      <div>
+                        <p className="font-semibold">
+                          {student?.name
+                            ? `${student.name} (${record.student_id})`
+                            : record.student_id}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Disputed Date:{" "}
+                          {format(new Date(record.session_date), "MMM d, yyyy")}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Flagged on:{" "}
+                          {format(
+                            new Date(record.created_at),
+                            "MMM d, yyyy h:mm a",
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                          onClick={() => handleResolveFlag(record, "accepted")}
+                        >
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleResolveFlag(record, "denied")}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Deny
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white"
-                        onClick={() => handleResolveFlag(record, "accepted")}
-                      >
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
-                        Approve
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleResolveFlag(record, "denied")}
-                      >
-                        <XCircle className="h-4 w-4 mr-2" />
-                        Deny
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
