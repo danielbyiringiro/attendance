@@ -1,15 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Clock, Users, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -19,7 +11,6 @@ interface StudentLoginProps {
   isTimeUp: boolean;
   onMarkAttendance: (
     studentId: string,
-    cohort: string,
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -32,7 +23,6 @@ const StudentLogin = ({
   const [studentId, setStudentId] = useState("");
   const [pin, setPin] = useState("");
   const [timeLeft, setTimeLeft] = useState(timeLimit);
-  const [cohort, setCohort] = useState<"A" | "B" | "">("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -78,16 +68,7 @@ const StudentLogin = ({
       return;
     }
 
-    if (!cohort) {
-      toast({
-        title: "Cohort Required",
-        description: "Please select your cohort (A or B).",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const result = await onMarkAttendance(studentId, cohort);
+    const result = await onMarkAttendance(studentId);
 
     if (!result.success) {
       toast({
@@ -100,14 +81,13 @@ const StudentLogin = ({
 
     toast({
       title: "Attendance Marked!",
-      description: `Welcome, ${studentId}! Your attendance has been recorded.`,
+      description: `Welcome, ${result.error}! Your attendance has been recorded.`,
       variant: "default",
     });
 
     // Clear form
     setStudentId("");
     setPin("");
-    setCohort("");
   };
 
   const formatTime = (seconds: number) => {
@@ -186,23 +166,6 @@ const StudentLogin = ({
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Cohort</label>
-                <Select
-                  value={cohort}
-                  onValueChange={(value) => setCohort(value as "A" | "B")}
-                  disabled={isExpired}
-                >
-                  <SelectTrigger className="h-12">
-                    <SelectValue placeholder="Select your cohort" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="A">Cohort A</SelectItem>
-                    <SelectItem value="B">Cohort B</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
                 <label className="text-sm font-medium">PIN</label>
                 <Input
                   type="password"
@@ -232,22 +195,6 @@ const StudentLogin = ({
             )}
           </CardContent>
         </Card>
-
-        {/* Cohort Info */}
-        <div className="flex justify-center space-x-2">
-          <Badge
-            variant={cohort === "A" ? "default" : "outline"}
-            className="px-3 py-1"
-          >
-            Cohort A
-          </Badge>
-          <Badge
-            variant={cohort === "B" ? "default" : "outline"}
-            className="px-3 py-1"
-          >
-            Cohort B
-          </Badge>
-        </div>
       </div>
     </div>
   );

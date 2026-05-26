@@ -42,11 +42,11 @@ interface StudentDashboardProps {
   onBack: () => void;
 }
 
-const SEMESTER_START = new Date(Date.UTC(2026, 0, 26)); // January 26, 2026
+const SEMESTER_START = new Date(Date.UTC(2026, 4, 26)); // May 26, 2026
 
 const isValidClassDay = (date: Date): boolean => {
   const day = date.getDay();
-  return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
+  return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
 };
 
 const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
