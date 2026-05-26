@@ -44,7 +44,6 @@ const Index = () => {
 
   const handleMarkAttendance = async (
     studentId: string,
-    cohort: string,
   ): Promise<{ success: boolean; error?: string }> => {
     // Check if student already marked attendance locally
     if (presentStudents.find((s) => s.id === studentId)) {
@@ -57,7 +56,7 @@ const Index = () => {
     // Verify the student exists in the roster
     const { data: rosterEntry, error: rosterError } = await supabase
       .from("students")
-      .select("student_id")
+      .select("*")
       .eq("student_id", studentId)
       .maybeSingle();
 
@@ -79,18 +78,18 @@ const Index = () => {
 
     const newStudent: Student = {
       id: studentId,
-      cohort,
+      cohort: rosterEntry.cohort,
       timestamp: new Date(),
       sessionDate: new Date().toISOString().slice(0, 10),
     };
 
     // Optimistic update
-    setPresentStudents((prev) => [...prev, newStudent]);
+    // setPresentStudents((prev) => [...prev, newStudent]);
 
     // Persist to Supabase
     const { error } = await supabase.from("present_students").insert({
       student_id: studentId,
-      cohort,
+      cohort: rosterEntry.cohort,
       timestamp: newStudent.timestamp.toISOString(),
     });
     if (error) {
@@ -103,7 +102,7 @@ const Index = () => {
       };
     }
 
-    return { success: true };
+    return { success: true, error: rosterEntry.name };
   };
 
   const handleSetPin = async (newPin: string) => {

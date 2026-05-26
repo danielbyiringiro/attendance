@@ -55,13 +55,14 @@ const SEMESTER_START = new Date(Date.UTC(2026, 0, 26)); // January 26, 2026
 
 export const isValidClassDay = (date: Date): boolean => {
   const day = date.getDay();
-  return day === 1 || day === 3 || day === 5;
+  return day === 2 || day === 3 || day === 4;
 };
 
 interface Student {
   id: string;
   cohort: string;
   timestamp: Date;
+  name: string;
 }
 
 interface TADashboardProps {
@@ -88,23 +89,23 @@ interface AbsenceHistory {
 
 interface ClassSession {
   date: string;
-  cohort: "A" | "B";
+  cohort: "A" | "B" | "C";
   is_cancelled: boolean;
 }
 
 interface ClassSchedule {
-  cohort: "A" | "B";
+  cohort: "A" | "B" | "C";
   day_of_week: number; // 0 = Sunday, 1 = Monday, etc.
 }
 
 interface ClassDate {
   date: string;
-  cohort: "A" | "B";
+  cohort: "A" | "B" | "C";
 }
 
 interface WeeklyAbsence {
   student_id: string;
-  cohort: "A" | "B";
+  cohort: "A" | "B" | "C";
   name?: string;
   absentDays: string[]; // YYYY-MM-DD dates they were absent
   frequency: number;
@@ -134,7 +135,7 @@ const TADashboard = ({
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
   const [roster, setRoster] = useState<
-    Array<{ student_id: string; cohort: "A" | "B"; name?: string }>
+    Array<{ student_id: string; cohort: "A" | "B" | "C"; name?: string }>
   >([]);
   const [isLoadingRoster, setIsLoadingRoster] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
@@ -146,7 +147,7 @@ const TADashboard = ({
   );
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [cancelDate, setCancelDate] = useState<Date | undefined>(undefined);
-  const [cancelCohort, setCancelCohort] = useState<"A" | "B" | "">("");
+  const [cancelCohort, setCancelCohort] = useState<"A" | "B" | "C" | "">("");
   const [showSearchDialog, setShowSearchDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [studentAbsenceHistory, setStudentAbsenceHistory] = useState<
@@ -156,7 +157,9 @@ const TADashboard = ({
   const [classDates, setClassDates] = useState<Map<string, boolean>>(new Map()); // key: "YYYY-MM-DD-cohort"
   const [classSchedule, setClassSchedule] = useState<ClassSchedule[]>([]);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [scheduleCohort, setScheduleCohort] = useState<"A" | "B" | "">("");
+  const [scheduleCohort, setScheduleCohort] = useState<"A" | "B" | "C" | "">(
+    "",
+  );
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
 
   // Weekly absence search state
@@ -173,12 +176,14 @@ const TADashboard = ({
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
   const [addStudentId, setAddStudentId] = useState("");
   const [addStudentName, setAddStudentName] = useState("");
-  const [addStudentCohort, setAddStudentCohort] = useState<"A" | "B" | "">("");
+  const [addStudentCohort, setAddStudentCohort] = useState<
+    "A" | "B" | "C" | ""
+  >("");
   const [showRemoveStudentDialog, setShowRemoveStudentDialog] = useState(false);
   const [removeSearchQuery, setRemoveSearchQuery] = useState("");
   const [studentToRemove, setStudentToRemove] = useState<{
     student_id: string;
-    cohort: "A" | "B";
+    cohort: "A" | "B" | "C";
     name?: string;
   } | null>(null);
 
@@ -200,10 +205,10 @@ const TADashboard = ({
       if (isMounted && data) {
         const normalized = data.map((row: any) => {
           const normalizedCohort = String(row.cohort).toUpperCase();
-          const cohort = normalizedCohort === "B" ? "B" : "A";
+          const cohort = normalizedCohort;
           return {
             student_id: String(row.student_id),
-            cohort: cohort as "A" | "B",
+            cohort: cohort as "A" | "B" | "C",
             name: row.name || undefined,
           };
         });
@@ -220,8 +225,8 @@ const TADashboard = ({
     return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
   };
   const allStudents = roster.map((r) => r.student_id);
-  const inferCohort = (id: string): "A" | "B" =>
-    id.toUpperCase().includes("A") ? "A" : "B";
+  const inferCohort = (id: string): "A" | "B" | "C" =>
+    id.toUpperCase().includes("A") ? "A" : "B" ? "B" : "C";
 
   const loadFlaggedRecords = async () => {
     setIsLoadingFlagged(true);
@@ -352,8 +357,10 @@ const TADashboard = ({
 
   const cohortAPresent = presentStudents.filter((s) => s.cohort === "A").length;
   const cohortBPresent = presentStudents.filter((s) => s.cohort === "B").length;
+  const cohortCPresent = presentStudents.filter((s) => s.cohort === "C").length;
   const cohortATotal = roster.filter((r) => r.cohort === "A").length;
   const cohortBTotal = roster.filter((r) => r.cohort === "B").length;
+  const cohortCTotal = roster.filter((r) => r.cohort === "C").length;
 
   // Load cancelled sessions and class dates
   useEffect(() => {
@@ -408,7 +415,7 @@ const TADashboard = ({
   }, []);
 
   // Helper function to check if a date is a class day
-  const isClassDay = (date: Date, cohort: "A" | "B"): boolean => {
+  const isClassDay = (date: Date, cohort: "A" | "B" | "C"): boolean => {
     // Only Mon/Wed/Fri count as class days
     if (!isValidClassDay(date)) {
       return false;
@@ -476,7 +483,7 @@ const TADashboard = ({
 
     const newStudent = {
       student_id: addStudentId.trim(),
-      cohort: addStudentCohort as "A" | "B",
+      cohort: addStudentCohort as "A" | "B" | "C",
       name: addStudentName.trim() || null,
     };
 
@@ -915,7 +922,7 @@ const TADashboard = ({
   const generateClassDates = async (
     startDate: Date,
     endDate: Date,
-    cohorts: ("A" | "B")[],
+    cohorts: ("A" | "B" | "C")[],
   ) => {
     try {
       const datesToInsert: Array<{ date: string; cohort: "A" | "B" }> = [];
@@ -988,7 +995,7 @@ const TADashboard = ({
   };
 
   const handleSaveSchedule = async (
-    cohort: "A" | "B",
+    cohort: "A" | "B" | "C",
     daysOfWeek: number[],
   ) => {
     try {
@@ -1369,6 +1376,20 @@ const TADashboard = ({
               </div>
             </CardContent>
           </Card>
+
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-accent" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {cohortCPresent}/{cohortCTotal}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Cohort C</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Action Buttons */}
@@ -1551,6 +1572,7 @@ const TADashboard = ({
                       <SelectItem value="all">All Cohorts</SelectItem>
                       <SelectItem value="a">Cohort A</SelectItem>
                       <SelectItem value="b">Cohort B</SelectItem>
+                      <SelectItem value="c">Cohort C</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1590,12 +1612,25 @@ const TADashboard = ({
                             key={student.id}
                             className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg"
                           >
-                            <span className="font-medium">{student.id}</span>
-                            <div className="flex items-center space-x-2">
+                            {/* Left Side: ID and Name */}
+                            <div className="flex flex-col">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-medium">
+                                  {student.id}
+                                </span>
+                              </div>
+                              <span className="text-sm text-muted-foreground mt-1">
+                                {roster.find((r) => r.student_id === student.id)
+                                  ?.name || "Unknown Student"}
+                              </span>
+                            </div>
+
+                            {/* Right Side: Cohort and Timestamp stacked vertically */}
+                            <div className="flex flex-col items-end space-y-1 ml-4">
                               <Badge variant="outline" className="text-xs">
                                 Cohort {student.cohort}
                               </Badge>
-                              <span className="text-xs text-muted-foreground">
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
                                 {student.timestamp.toLocaleTimeString()}
                               </span>
                             </div>
@@ -1638,11 +1673,9 @@ const TADashboard = ({
                                     Cohort {cohort}
                                   </Badge>
                                 </div>
-                                {studentName && (
-                                  <span className="text-sm text-muted-foreground mt-1">
-                                    {studentName}
-                                  </span>
-                                )}
+                                <span className="text-sm text-muted-foreground mt-1">
+                                  {studentName}
+                                </span>
                               </div>
                               <Button
                                 size="sm"
@@ -1908,7 +1941,9 @@ const TADashboard = ({
               <label className="text-sm font-medium">Cohort</label>
               <Select
                 value={cancelCohort}
-                onValueChange={(value) => setCancelCohort(value as "A" | "B")}
+                onValueChange={(value) =>
+                  setCancelCohort(value as "A" | "B" | "C")
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select cohort" />
@@ -1916,6 +1951,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
+                  <SelectItem value="C">Cohort C</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2060,7 +2096,7 @@ const TADashboard = ({
               <Select
                 value={scheduleCohort}
                 onValueChange={(value) => {
-                  setScheduleCohort(value as "A" | "B");
+                  setScheduleCohort(value as "A" | "B" | "C");
                   // Load existing schedule for this cohort
                   const existingSchedule = classSchedule.filter(
                     (s) => s.cohort === value,
@@ -2074,6 +2110,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
+                  <SelectItem value="C">Cohort B</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2165,7 +2202,7 @@ const TADashboard = ({
                       endDate.setMonth(endDate.getMonth() + 3);
 
                       await generateClassDates(startDate, endDate, [
-                        scheduleCohort as "A" | "B",
+                        scheduleCohort as "A" | "B" | "C",
                       ]);
                     }}
                     className="flex-1"
@@ -2260,7 +2297,7 @@ const TADashboard = ({
               <Select
                 value={addStudentCohort}
                 onValueChange={(value) =>
-                  setAddStudentCohort(value as "A" | "B")
+                  setAddStudentCohort(value as "A" | "B" | "C")
                 }
               >
                 <SelectTrigger>
@@ -2269,6 +2306,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
+                  <SelectItem value="C">Cohort B</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2444,6 +2482,7 @@ const TADashboard = ({
                   <SelectItem value="all">All Cohorts</SelectItem>
                   <SelectItem value="a">Cohort A</SelectItem>
                   <SelectItem value="b">Cohort B</SelectItem>
+                  <SelectItem value="c">Cohort C</SelectItem>
                 </SelectContent>
               </Select>
             </div>
