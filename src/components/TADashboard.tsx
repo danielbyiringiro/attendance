@@ -65,8 +65,15 @@ interface Student {
   name: string;
 }
 
+interface RosterStudent {
+  student_id: string;
+  cohort: "A" | "B" | "C" | string;
+  name?: string;
+}
+
 interface TADashboardProps {
   presentStudents: Student[];
+  roster: RosterStudent[];
   currentPin: string;
   timeLimit: number;
   isTimeUp: boolean;
@@ -121,6 +128,7 @@ interface FlaggedRecord {
 
 const TADashboard = ({
   presentStudents,
+  roster,
   currentPin,
   timeLimit,
   isTimeUp,
@@ -134,10 +142,6 @@ const TADashboard = ({
   const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
-  const [roster, setRoster] = useState<
-    Array<{ student_id: string; cohort: "A" | "B" | "C"; name?: string }>
-  >([]);
-  const [isLoadingRoster, setIsLoadingRoster] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -191,42 +195,17 @@ const TADashboard = ({
   const [flaggedRecords, setFlaggedRecords] = useState<FlaggedRecord[]>([]);
   const [isLoadingFlagged, setIsLoadingFlagged] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
-    (async () => {
-      setIsLoadingRoster(true);
-      const { data, error } = await supabase
-        .from("students")
-        .select("student_id, cohort, name")
-        .order("student_id", { ascending: true });
-      if (error) {
-        console.error("Failed to load students roster:", error);
-      }
-      if (isMounted && data) {
-        const normalized = data.map((row: any) => {
-          const normalizedCohort = String(row.cohort).toUpperCase();
-          const cohort = normalizedCohort;
-          return {
-            student_id: String(row.student_id),
-            cohort: cohort as "A" | "B" | "C",
-            name: row.name || undefined,
-          };
-        });
-        setRoster(normalized);
-      }
-      if (isMounted) setIsLoadingRoster(false);
-    })();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
   const isValidClassDay = (date: Date): boolean => {
     const day = date.getDay();
-    return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
+    return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
   };
   const allStudents = roster.map((r) => r.student_id);
   const inferCohort = (id: string): "A" | "B" | "C" =>
-    id.toUpperCase().includes("A") ? "A" : "B" ? "B" : "C";
+    id.toUpperCase().includes("A")
+      ? "A"
+      : id.toUpperCase().includes("B")
+        ? "B"
+        : "C";
 
   const loadFlaggedRecords = async () => {
     setIsLoadingFlagged(true);
@@ -499,17 +478,7 @@ const TADashboard = ({
       return;
     }
 
-    // Update local roster
-    setRoster((prev) =>
-      [
-        ...prev,
-        {
-          student_id: newStudent.student_id,
-          cohort: newStudent.cohort,
-          name: newStudent.name || undefined,
-        },
-      ].sort((a, b) => a.student_id.localeCompare(b.student_id)),
-    );
+    // Roster will be updated automatically via realtime subscription in Index.tsx
 
     toast({
       title: "Student Added",
@@ -549,10 +518,7 @@ const TADashboard = ({
       return;
     }
 
-    // Update local roster
-    setRoster((prev) =>
-      prev.filter((r) => r.student_id !== studentToRemove.student_id),
-    );
+    // Roster will be updated automatically via realtime subscription in Index.tsx
 
     toast({
       title: "Student Removed",
@@ -1320,7 +1286,7 @@ const TADashboard = ({
         </div>
 
         {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card className="border-2 shadow-soft">
             <CardContent className="pt-6">
               <div className="flex items-center space-x-2">
@@ -1598,11 +1564,7 @@ const TADashboard = ({
 
                   <TabsContent value="present" className="mt-4">
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {isLoadingRoster ? (
-                        <p className="text-center text-muted-foreground py-8">
-                          Loading roster...
-                        </p>
-                      ) : filteredPresentStudents.length === 0 ? (
+                      {filteredPresentStudents.length === 0 ? (
                         <p className="text-center text-muted-foreground py-8">
                           No students marked present yet
                         </p>
@@ -1642,11 +1604,7 @@ const TADashboard = ({
 
                   <TabsContent value="absent" className="mt-4">
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {isLoadingRoster ? (
-                        <p className="text-center text-muted-foreground py-8">
-                          Loading roster...
-                        </p>
-                      ) : filteredAbsentStudents.length === 0 ? (
+                      {filteredAbsentStudents.length === 0 ? (
                         <p className="text-center text-muted-foreground py-8">
                           All students are present!
                         </p>
@@ -2306,7 +2264,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort B</SelectItem>
+                  <SelectItem value="C">Cohort C</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2364,7 +2322,13 @@ const TADashboard = ({
                         ? "bg-destructive/10 border-destructive/40"
                         : "bg-muted/50 border-transparent hover:bg-muted",
                     )}
-                    onClick={() => setStudentToRemove(student)}
+                    onClick={() =>
+                      setStudentToRemove({
+                        student_id: student.student_id,
+                        cohort: student.cohort as "A" | "B" | "C",
+                        name: student.name,
+                      })
+                    }
                   >
                     <div className="flex flex-col">
                       <div className="flex items-center space-x-2">
@@ -2435,7 +2399,7 @@ const TADashboard = ({
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>
-              Pick any date to see who was absent that week (Mon/Wed/Fri only).
+              Pick any date to see who was absent that week (Tue/Wed/Thu only).
               Students are sorted by number of absences.
             </DialogDescription>
           </DialogHeader>

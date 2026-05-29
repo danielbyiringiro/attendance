@@ -11,7 +11,14 @@ interface Student {
   id: string;
   cohort: string;
   timestamp: Date;
+  name: string;
   sessionDate?: string; // YYYY-MM-DD
+}
+
+interface RosterStudent {
+  student_id: string;
+  cohort: string;
+  name?: string;
 }
 
 const Index = () => {
@@ -19,6 +26,7 @@ const Index = () => {
   const [timeLimit, setTimeLimit] = useState(300); // 5 minutes in seconds
   const [isTimeUp, setIsTimeUp] = useState(true);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
+  const [roster, setRoster] = useState<RosterStudent[]>([]);
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
@@ -81,6 +89,7 @@ const Index = () => {
       cohort: rosterEntry.cohort,
       timestamp: new Date(),
       sessionDate: new Date().toISOString().slice(0, 10),
+      name: rosterEntry.name || "",
     };
 
     // Optimistic update
@@ -236,39 +245,111 @@ const Index = () => {
         return;
       }
       if (data) {
-        const restored: Student[] = data.map((row: any) => ({
+        const restored: Student[] = data.map((row) => ({
           id: row.student_id,
           cohort: row.cohort,
           timestamp: new Date(row.timestamp),
+          name: "", // Will be filled by roster or left empty
         }));
         setPresentStudents(restored);
       }
+
+      // Load roster from students table
+      const { data: rosterData, error: rosterError } = await supabase
+        .from("students")
+        .select("student_id, cohort, name")
+        .order("student_id", { ascending: true });
+      if (rosterError) {
+        console.error("Failed to load students roster:", rosterError);
+      }
+      if (rosterData) {
+        const normalized: RosterStudent[] = rosterData.map((row) => {
+          const normalizedCohort = String(row.cohort).toUpperCase();
+          return {
+            student_id: String(row.student_id),
+            cohort: normalizedCohort,
+            name: row.name || undefined,
+          };
+        });
+        setRoster(normalized);
+      }
     })();
 
-    // Subscribe to realtime changes on session_state to sync timer across clients
-    const channel = supabase
+    const sessionChannel = supabase
       .channel("session_state_changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "session_state" },
         (payload) => {
-          const row: any = payload.new || payload.record;
-          if (row) {
-            setCurrentPin(row.pin);
-            setTimeLimit(row.time_limit_seconds);
-            setSessionStartTime(new Date(row.session_start));
-            setIsOpen(!!row.is_open);
-            const elapsed = Math.floor(
-              (Date.now() - new Date(row.session_start).getTime()) / 1000,
-            );
-            setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
+          if (payload.eventType !== "DELETE") {
+            const row = payload.new;
+            if (row) {
+              setCurrentPin(row.pin);
+              setTimeLimit(row.time_limit_seconds);
+              setSessionStartTime(new Date(row.session_start));
+              setIsOpen(!!row.is_open);
+              const elapsed = Math.floor(
+                (Date.now() - new Date(row.session_start).getTime()) / 1000,
+              );
+              setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
+            }
+          }
+        },
+      )
+      .subscribe();
+
+    // Subscribe to realtime changes on students table to keep roster updated
+    const rosterChannel = supabase
+      .channel("students_changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        (payload) => {
+          if (payload.eventType !== "DELETE") {
+            const row = payload.new;
+            if (row) {
+              const normalizedCohort = String(row.cohort).toUpperCase();
+              const newStudent: RosterStudent = {
+                student_id: String(row.student_id),
+                cohort: normalizedCohort,
+                name: row.name || undefined,
+              };
+              // Update roster - add or replace student
+              setRoster((prev) => {
+                const existing = prev.find(
+                  (s) => s.student_id === newStudent.student_id,
+                );
+                if (existing) {
+                  // Replace existing student
+                  return prev.map((s) =>
+                    s.student_id === newStudent.student_id ? newStudent : s,
+                  );
+                } else {
+                  // Add new student and sort
+                  return [...prev, newStudent].sort((a, b) =>
+                    a.student_id.localeCompare(b.student_id),
+                  );
+                }
+              });
+            }
+          } else {
+            // Handle deletion
+            const deletedRow = payload.old;
+            if (deletedRow) {
+              setRoster((prev) =>
+                prev.filter(
+                  (s) => s.student_id !== String(deletedRow.student_id),
+                ),
+              );
+            }
           }
         },
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(sessionChannel);
+      supabase.removeChannel(rosterChannel);
     };
   }, []);
 
@@ -286,6 +367,7 @@ const Index = () => {
     return (
       <TADashboard
         presentStudents={presentStudents}
+        roster={roster}
         currentPin={currentPin}
         timeLimit={timeLimit}
         isTimeUp={isTimeUp}
