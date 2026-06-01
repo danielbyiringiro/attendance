@@ -30,6 +30,7 @@ import { supabase } from "@/lib/supabase";
 import {
   Settings,
   Users,
+  Clock,
   UserCheck,
   UserX,
   RefreshCw,
@@ -64,16 +65,8 @@ interface Student {
   name?: string;
 }
 
-interface RosterStudent {
-  student_id: string;
-  cohort: "A" | "B" | "C" | string;
-  name?: string;
-}
-
 interface TADashboardProps {
-  activeSection?: "attendance" | "analytics" | "students" | "sessions";
   presentStudents: Student[];
-  roster: RosterStudent[];
   currentPin: string;
   timeLimit: number;
   isTimeUp: boolean;
@@ -105,6 +98,11 @@ interface ClassSchedule {
   day_of_week: number; // 0 = Sunday, 1 = Monday, etc.
 }
 
+interface ClassDate {
+  date: string;
+  cohort: "A" | "B" | "C";
+}
+
 interface WeeklyAbsence {
   student_id: string;
   cohort: "A" | "B" | "C";
@@ -122,9 +120,7 @@ interface FlaggedRecord {
 }
 
 const TADashboard = ({
-  activeSection = "attendance",
   presentStudents,
-  roster,
   currentPin,
   timeLimit,
   isTimeUp,
@@ -138,6 +134,10 @@ const TADashboard = ({
   const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
+  const [roster, setRoster] = useState<
+    Array<{ student_id: string; cohort: "A" | "B" | "C"; name?: string }>
+  >([]);
+  const [isLoadingRoster, setIsLoadingRoster] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -191,17 +191,42 @@ const TADashboard = ({
   const [flaggedRecords, setFlaggedRecords] = useState<FlaggedRecord[]>([]);
   const [isLoadingFlagged, setIsLoadingFlagged] = useState(false);
 
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      setIsLoadingRoster(true);
+      const { data, error } = await supabase
+        .from("students")
+        .select("student_id, cohort, name")
+        .order("student_id", { ascending: true });
+      if (error) {
+        console.error("Failed to load students roster:", error);
+      }
+      if (isMounted && data) {
+        const normalized = data.map((row: any) => {
+          const normalizedCohort = String(row.cohort).toUpperCase();
+          const cohort = normalizedCohort;
+          return {
+            student_id: String(row.student_id),
+            cohort: cohort as "A" | "B" | "C",
+            name: row.name || undefined,
+          };
+        });
+        setRoster(normalized);
+      }
+      if (isMounted) setIsLoadingRoster(false);
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const isValidClassDay = (date: Date): boolean => {
     const day = date.getDay();
-    return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
+    return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
   };
   const allStudents = roster.map((r) => r.student_id);
   const inferCohort = (id: string): "A" | "B" | "C" =>
-    id.toUpperCase().includes("A")
-      ? "A"
-      : id.toUpperCase().includes("B")
-        ? "B"
-        : "C";
+    id.toUpperCase().includes("A") ? "A" : "B" ? "B" : "C";
 
   const loadFlaggedRecords = async () => {
     setIsLoadingFlagged(true);
@@ -314,8 +339,8 @@ const TADashboard = ({
     selectedCohort === "all"
       ? presentStudents
       : presentStudents.filter(
-        (student) => student.cohort === selectedCohort.toUpperCase(),
-      );
+          (student) => student.cohort === selectedCohort.toUpperCase(),
+        );
 
   const presentStudentIds = presentStudents.map((s) => s.id);
   const absentStudents = allStudents.filter(
@@ -325,10 +350,10 @@ const TADashboard = ({
     selectedCohort === "all"
       ? absentStudents
       : absentStudents.filter((id) => {
-        const rosterEntry = roster.find((r) => r.student_id === id);
-        const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
-        return cohort === selectedCohort.toUpperCase();
-      });
+          const rosterEntry = roster.find((r) => r.student_id === id);
+          const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
+          return cohort === selectedCohort.toUpperCase();
+        });
 
   const cohortAPresent = presentStudents.filter((s) => s.cohort === "A").length;
   const cohortBPresent = presentStudents.filter((s) => s.cohort === "B").length;
@@ -414,6 +439,7 @@ const TADashboard = ({
     if (scheduleMatches) {
       // If it matches the schedule, we can assume it's a class day
       // unless explicitly cancelled
+      const cancelledKey = `${dateStr}-${cohort}`;
       const isCancelled = cancelledSessions.some(
         (s) => s.date === dateStr && s.cohort === cohort && s.is_cancelled,
       );
@@ -473,7 +499,17 @@ const TADashboard = ({
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
+    // Update local roster
+    setRoster((prev) =>
+      [
+        ...prev,
+        {
+          student_id: newStudent.student_id,
+          cohort: newStudent.cohort,
+          name: newStudent.name || undefined,
+        },
+      ].sort((a, b) => a.student_id.localeCompare(b.student_id)),
+    );
 
     toast({
       title: "Student Added",
@@ -513,7 +549,10 @@ const TADashboard = ({
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
+    // Update local roster
+    setRoster((prev) =>
+      prev.filter((r) => r.student_id !== studentToRemove.student_id),
+    );
 
     toast({
       title: "Student Removed",
@@ -662,18 +701,18 @@ const TADashboard = ({
     weeklyAbsenceCohortFilter === "all"
       ? weeklyAbsences
       : weeklyAbsences.filter(
-        (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
-      );
+          (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
+        );
 
   const filteredRosterForRemoval = removeSearchQuery.trim()
     ? roster.filter(
-      (r) =>
-        r.student_id
-          .toLowerCase()
-          .includes(removeSearchQuery.toLowerCase()) ||
-        (r.name &&
-          r.name.toLowerCase().includes(removeSearchQuery.toLowerCase())),
-    )
+        (r) =>
+          r.student_id
+            .toLowerCase()
+            .includes(removeSearchQuery.toLowerCase()) ||
+          (r.name &&
+            r.name.toLowerCase().includes(removeSearchQuery.toLowerCase())),
+      )
     : roster;
 
   const handleMarkAttendanceManually = async (
@@ -1259,27 +1298,6 @@ const TADashboard = ({
     return () => clearTimeout(timeoutId);
   }, [searchQuery, showSearchDialog, roster]);
 
-  const isAttendanceSection = activeSection === "attendance";
-  const isAnalyticsSection = activeSection === "analytics";
-  const isStudentsSection = activeSection === "students";
-  const isSessionsSection = activeSection === "sessions";
-  const sectionTitle =
-    activeSection === "analytics"
-      ? "Attendance Analytics"
-      : activeSection === "students"
-        ? "Student Management"
-        : activeSection === "sessions"
-          ? "Class Session Management"
-          : "TA Dashboard";
-  const sectionDescription =
-    activeSection === "analytics"
-      ? "Review attendance trends, absences, and flagged records"
-      : activeSection === "students"
-        ? "Search the roster and manage student records"
-        : activeSection === "sessions"
-          ? "Manage attendance windows, cancelled classes, and schedules"
-          : "Manage live attendance and monitor student participation";
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -1290,9 +1308,9 @@ const TADashboard = ({
               <Shield className="h-6 w-6 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">{sectionTitle}</h1>
+              <h1 className="text-2xl font-bold">TA Dashboard</h1>
               <p className="text-muted-foreground">
-                {sectionDescription}
+                Manage attendance and monitor student participation
               </p>
             </div>
           </div>
@@ -1301,409 +1319,389 @@ const TADashboard = ({
           </Button>
         </div>
 
-        {isAnalyticsSection && (
-          <>
-            {/* Stats Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserCheck className="h-5 w-5 text-success" />
-                    <div>
-                      <p className="text-2xl font-bold text-success">
-                        {presentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Present</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+        {/* Stats Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <UserCheck className="h-5 w-5 text-success" />
+                <div>
+                  <p className="text-2xl font-bold text-success">
+                    {presentStudents.length}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Present</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserX className="h-5 w-5 text-destructive" />
-                    <div>
-                      <p className="text-2xl font-bold text-destructive">
-                        {absentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Absent</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <UserX className="h-5 w-5 text-destructive" />
+                <div>
+                  <p className="text-2xl font-bold text-destructive">
+                    {absentStudents.length}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Absent</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortAPresent}/{cohortATotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort A</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-primary" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {cohortAPresent}/{cohortATotal}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Cohort A</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortBPresent}/{cohortBTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort B</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-accent" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {cohortBPresent}/{cohortBTotal}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Cohort B</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortCPresent}/{cohortCTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort C</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </>
-        )}
+          <Card className="border-2 shadow-soft">
+            <CardContent className="pt-6">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-accent" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {cohortCPresent}/{cohortCTotal}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Cohort C</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Action Buttons */}
-        {(isAnalyticsSection || isStudentsSection || isSessionsSection) && (
-          <div className="flex gap-4 flex-wrap">
-            {isAnalyticsSection && (
-              <>
-                <Button
-                  onClick={() => setShowHistoryDialog(true)}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <History className="h-4 w-4" />
-                  View Absence History
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowWeeklyAbsenceDialog(true);
-                    setWeeklyAbsenceDate(undefined);
-                    setWeeklyAbsences([]);
-                    setWeeklyAbsenceCohortFilter("all");
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <CalendarDays className="h-4 w-4" />
-                  Weekly Absences
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowFlaggedDialog(true);
-                    loadFlaggedRecords();
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Flag className="h-4 w-4" />
-                  Review Flags
-                </Button>
-              </>
-            )}
-            {isStudentsSection && (
-              <>
-                <Button
-                  onClick={() => {
-                    setShowSearchDialog(true);
-                    setSearchQuery("");
-                    setStudentAbsenceHistory([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Search className="h-4 w-4" />
-                  Search Student
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowAddStudentDialog(true);
-                    setAddStudentId("");
-                    setAddStudentName("");
-                    setAddStudentCohort("");
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <UserPlus className="h-4 w-4" />
-                  Add Student
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowRemoveStudentDialog(true);
-                    setRemoveSearchQuery("");
-                    setStudentToRemove(null);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <UserMinus className="h-4 w-4" />
-                  Remove Student
-                </Button>
-              </>
-            )}
-            {isSessionsSection && (
-              <>
-                <Button
-                  onClick={() => setShowCancelDialog(true)}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <XCircle className="h-4 w-4" />
-                  Cancel Class
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowScheduleDialog(true);
-                    setScheduleCohort("");
-                    setSelectedDays([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Settings className="h-4 w-4" />
-                  Class Schedule
-                </Button>
-              </>
-            )}
-          </div>
-        )}
+        <div className="flex gap-4 flex-wrap">
+          <Button
+            onClick={() => setShowHistoryDialog(true)}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <History className="h-4 w-4" />
+            View Absence History
+          </Button>
+          <Button
+            onClick={() => {
+              setShowSearchDialog(true);
+              setSearchQuery("");
+              setStudentAbsenceHistory([]);
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <Search className="h-4 w-4" />
+            Search Student
+          </Button>
+          <Button
+            onClick={() => setShowCancelDialog(true)}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <XCircle className="h-4 w-4" />
+            Cancel Class
+          </Button>
+          <Button
+            onClick={() => {
+              setShowAddStudentDialog(true);
+              setAddStudentId("");
+              setAddStudentName("");
+              setAddStudentCohort("");
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <UserPlus className="h-4 w-4" />
+            Add Student
+          </Button>
+          <Button
+            onClick={() => {
+              setShowRemoveStudentDialog(true);
+              setRemoveSearchQuery("");
+              setStudentToRemove(null);
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <UserMinus className="h-4 w-4" />
+            Remove Student
+          </Button>
+          <Button
+            onClick={() => {
+              setShowWeeklyAbsenceDialog(true);
+              setWeeklyAbsenceDate(undefined);
+              setWeeklyAbsences([]);
+              setWeeklyAbsenceCohortFilter("all");
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <CalendarDays className="h-4 w-4" />
+            Weekly Absences
+          </Button>
+          <Button
+            onClick={() => {
+              setShowScheduleDialog(true);
+              setScheduleCohort("");
+              setSelectedDays([]);
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <Settings className="h-4 w-4" />
+            Class Schedule
+          </Button>
+          <Button
+            onClick={() => {
+              setShowFlaggedDialog(true);
+              loadFlaggedRecords();
+            }}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <Flag className="h-4 w-4" />
+            Review Flags
+          </Button>
+        </div>
 
         {/* Controls and Student Lists */}
-        {(isAttendanceSection || isSessionsSection || isStudentsSection) && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Controls */}
-            {(isAttendanceSection || isSessionsSection) && (
-              <Card className="border-2 shadow-medium">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Settings className="h-5 w-5" />
-                    Attendance Controls
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Current PIN</label>
-                    <div className="flex items-center space-x-2">
-                      <Input
-                        value={currentPin}
-                        readOnly
-                        className="font-mono text-lg text-center"
-                      />
-                      <Badge variant={isTimeUp ? "destructive" : "default"}>
-                        {isTimeUp ? "Closed" : "Active"}
-                      </Badge>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Set New PIN</label>
-                    <div className="flex space-x-2">
-                      <Input
-                        placeholder="Enter new PIN"
-                        value={newPin}
-                        onChange={(e) => setNewPin(e.target.value)}
-                      />
-                      <Button onClick={handleSetPin} size="sm">
-                        Set
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Time Limit (minutes)
-                    </label>
-                    <div className="flex space-x-2">
-                      <Input
-                        type="number"
-                        placeholder="Minutes"
-                        value={newTimeLimit}
-                        onChange={(e) => setNewTimeLimit(e.target.value)}
-                      />
-                      <Button onClick={handleSetTimeLimit} size="sm">
-                        <Timer className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={onResetAttendance}
-                    variant="destructive"
-                    className="w-full"
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Reset Attendance
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Student Lists */}
-            {(isAttendanceSection || isStudentsSection) && (
-              <div
-                className={cn(
-                  isStudentsSection ? "lg:col-span-3" : "lg:col-span-2",
-                )}
-              >
-                <Card className="border-2 shadow-medium">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2">
-                        <Users className="h-5 w-5" />
-                        Student Status
-                      </CardTitle>
-                      <Select
-                        value={selectedCohort}
-                        onValueChange={setSelectedCohort}
-                      >
-                        <SelectTrigger className="w-32">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Cohorts</SelectItem>
-                          <SelectItem value="a">Cohort A</SelectItem>
-                          <SelectItem value="b">Cohort B</SelectItem>
-                          <SelectItem value="c">Cohort C</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <Tabs defaultValue="absent" className="w-full">
-                      <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger
-                          value="present"
-                          className="flex items-center gap-2"
-                        >
-                          <UserCheck className="h-4 w-4" />
-                          Present ({filteredPresentStudents.length})
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="absent"
-                          className="flex items-center gap-2"
-                        >
-                          <UserX className="h-4 w-4" />
-                          Absent ({filteredAbsentStudents.length})
-                        </TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent value="present" className="mt-4">
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                          {filteredPresentStudents.length === 0 ? (
-                            <p className="text-center text-muted-foreground py-8">
-                              No students marked present yet
-                            </p>
-                          ) : (
-                            filteredPresentStudents.map((student) => (
-                              <div
-                                key={student.id}
-                                className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg"
-                              >
-                                {/* Left Side: ID and Name */}
-                                <div className="flex flex-col">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="font-medium">
-                                      {student.id}
-                                    </span>
-                                  </div>
-                                  <span className="text-sm text-muted-foreground mt-1">
-                                    {roster.find((r) => r.student_id === student.id)
-                                      ?.name || "Unknown Student"}
-                                  </span>
-                                </div>
-
-                                {/* Right Side: Cohort and Timestamp stacked vertically */}
-                                <div className="flex flex-col items-end space-y-1 ml-4">
-                                  <Badge variant="outline" className="text-xs">
-                                    Cohort {student.cohort}
-                                  </Badge>
-                                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                    {student.timestamp.toLocaleTimeString()}
-                                  </span>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent value="absent" className="mt-4">
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                          {filteredAbsentStudents.length === 0 ? (
-                            <p className="text-center text-muted-foreground py-8">
-                              All students are present!
-                            </p>
-                          ) : (
-                            filteredAbsentStudents.map((studentId) => {
-                              const rosterEntry = roster.find(
-                                (r) => r.student_id === studentId,
-                              );
-                              const cohort = rosterEntry
-                                ? rosterEntry.cohort
-                                : inferCohort(studentId);
-                              const studentName = rosterEntry?.name;
-                              return (
-                                <div
-                                  key={studentId}
-                                  className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg"
-                                >
-                                  <div className="flex flex-col">
-                                    <div className="flex items-center space-x-2">
-                                      <span className="font-medium">
-                                        {studentId}
-                                      </span>
-                                      <Badge variant="outline" className="text-xs">
-                                        Cohort {cohort}
-                                      </Badge>
-                                    </div>
-                                    <span className="text-sm text-muted-foreground mt-1">
-                                      {studentName}
-                                    </span>
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() =>
-                                      handleMarkAttendanceManually(
-                                        studentId,
-                                        cohort,
-                                      )
-                                    }
-                                    className="h-8 text-xs"
-                                  >
-                                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                                    Mark Present
-                                  </Button>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  </CardContent>
-                </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Controls */}
+          <Card className="border-2 shadow-medium">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Attendance Controls
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Current PIN</label>
+                <div className="flex items-center space-x-2">
+                  <Input
+                    value={currentPin}
+                    readOnly
+                    className="font-mono text-lg text-center"
+                  />
+                  <Badge variant={isTimeUp ? "destructive" : "default"}>
+                    {isTimeUp ? "Closed" : "Active"}
+                  </Badge>
+                </div>
               </div>
-            )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Set New PIN</label>
+                <div className="flex space-x-2">
+                  <Input
+                    placeholder="Enter new PIN"
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value)}
+                  />
+                  <Button onClick={handleSetPin} size="sm">
+                    Set
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Time Limit (minutes)
+                </label>
+                <div className="flex space-x-2">
+                  <Input
+                    type="number"
+                    placeholder="Minutes"
+                    value={newTimeLimit}
+                    onChange={(e) => setNewTimeLimit(e.target.value)}
+                  />
+                  <Button onClick={handleSetTimeLimit} size="sm">
+                    <Timer className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <Button
+                onClick={onResetAttendance}
+                variant="destructive"
+                className="w-full"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Reset Attendance
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Student Lists */}
+          <div className="lg:col-span-2">
+            <Card className="border-2 shadow-medium">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Student Status
+                  </CardTitle>
+                  <Select
+                    value={selectedCohort}
+                    onValueChange={setSelectedCohort}
+                  >
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Cohorts</SelectItem>
+                      <SelectItem value="a">Cohort A</SelectItem>
+                      <SelectItem value="b">Cohort B</SelectItem>
+                      <SelectItem value="c">Cohort C</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Tabs defaultValue="absent" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger
+                      value="present"
+                      className="flex items-center gap-2"
+                    >
+                      <UserCheck className="h-4 w-4" />
+                      Present ({filteredPresentStudents.length})
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="absent"
+                      className="flex items-center gap-2"
+                    >
+                      <UserX className="h-4 w-4" />
+                      Absent ({filteredAbsentStudents.length})
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="present" className="mt-4">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {isLoadingRoster ? (
+                        <p className="text-center text-muted-foreground py-8">
+                          Loading roster...
+                        </p>
+                      ) : filteredPresentStudents.length === 0 ? (
+                        <p className="text-center text-muted-foreground py-8">
+                          No students marked present yet
+                        </p>
+                      ) : (
+                        filteredPresentStudents.map((student) => (
+                          <div
+                            key={student.id}
+                            className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg"
+                          >
+                            {/* Left Side: ID and Name */}
+                            <div className="flex flex-col">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-medium">
+                                  {student.id}
+                                </span>
+                              </div>
+                              <span className="text-sm text-muted-foreground mt-1">
+                                {roster.find((r) => r.student_id === student.id)
+                                  ?.name || "Unknown Student"}
+                              </span>
+                            </div>
+
+                            {/* Right Side: Cohort and Timestamp stacked vertically */}
+                            <div className="flex flex-col items-end space-y-1 ml-4">
+                              <Badge variant="outline" className="text-xs">
+                                Cohort {student.cohort}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {student.timestamp.toLocaleTimeString()}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="absent" className="mt-4">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {isLoadingRoster ? (
+                        <p className="text-center text-muted-foreground py-8">
+                          Loading roster...
+                        </p>
+                      ) : filteredAbsentStudents.length === 0 ? (
+                        <p className="text-center text-muted-foreground py-8">
+                          All students are present!
+                        </p>
+                      ) : (
+                        filteredAbsentStudents.map((studentId) => {
+                          const rosterEntry = roster.find(
+                            (r) => r.student_id === studentId,
+                          );
+                          const cohort = rosterEntry
+                            ? rosterEntry.cohort
+                            : inferCohort(studentId);
+                          const studentName = rosterEntry?.name;
+                          return (
+                            <div
+                              key={studentId}
+                              className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg"
+                            >
+                              <div className="flex flex-col">
+                                <div className="flex items-center space-x-2">
+                                  <span className="font-medium">
+                                    {studentId}
+                                  </span>
+                                  <Badge variant="outline" className="text-xs">
+                                    Cohort {cohort}
+                                  </Badge>
+                                </div>
+                                <span className="text-sm text-muted-foreground mt-1">
+                                  {studentName}
+                                </span>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  handleMarkAttendanceManually(
+                                    studentId,
+                                    cohort,
+                                  )
+                                }
+                                className="h-8 text-xs"
+                              >
+                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                Mark Present
+                              </Button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
           </div>
-        )}
+        </div>
       </div>
 
       {/* History Dialog */}
@@ -2112,7 +2110,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
+                  <SelectItem value="C">Cohort B</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2308,7 +2306,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
+                  <SelectItem value="C">Cohort B</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2366,13 +2364,7 @@ const TADashboard = ({
                         ? "bg-destructive/10 border-destructive/40"
                         : "bg-muted/50 border-transparent hover:bg-muted",
                     )}
-                    onClick={() =>
-                      setStudentToRemove({
-                        student_id: student.student_id,
-                        cohort: student.cohort as "A" | "B" | "C",
-                        name: student.name,
-                      })
-                    }
+                    onClick={() => setStudentToRemove(student)}
                   >
                     <div className="flex flex-col">
                       <div className="flex items-center space-x-2">
@@ -2443,7 +2435,7 @@ const TADashboard = ({
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>
-              Pick any date to see who was absent that week (Tue/Wed/Thu only).
+              Pick any date to see who was absent that week (Mon/Wed/Fri only).
               Students are sorted by number of absences.
             </DialogDescription>
           </DialogHeader>

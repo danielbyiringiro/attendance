@@ -2112,7 +2112,7 @@ const TADashboard = ({
                 <SelectContent>
                   <SelectItem value="A">Cohort A</SelectItem>
                   <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
+                  <SelectItem value="C">Cohort B</SelectItem>
                 </SelectContent>
               </Select>
             </div>
