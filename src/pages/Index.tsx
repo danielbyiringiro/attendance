@@ -4,8 +4,29 @@ import StudentLogin from "@/components/StudentLogin";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
-import { Settings, History } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  Clock,
+  History,
+  Settings,
+  Users,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 interface Student {
   id: string;
@@ -21,6 +42,8 @@ interface RosterStudent {
   name?: string;
 }
 
+type TATab = "attendance" | "analytics" | "students" | "sessions";
+
 const Index = () => {
   const [currentPin, setCurrentPin] = useState("1234");
   const [timeLimit, setTimeLimit] = useState(300); // 5 minutes in seconds
@@ -30,6 +53,7 @@ const Index = () => {
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
+  const [taTab, setTaTab] = useState<TATab>("attendance");
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -178,6 +202,7 @@ const Index = () => {
   const handleTALogin = () => {
     setIsTA(true);
     setShowTALogin(false);
+    setTaTab("attendance");
   };
 
   const handleTALogout = () => {
@@ -365,18 +390,101 @@ const Index = () => {
 
   if (isTA) {
     return (
-      <TADashboard
-        presentStudents={presentStudents}
-        roster={roster}
-        currentPin={currentPin}
-        timeLimit={timeLimit}
-        isTimeUp={isTimeUp}
-        onSetPin={handleSetPin}
-        onSetTimeLimit={handleSetTimeLimit}
-        onResetAttendance={handleResetAttendance}
-        onLogout={handleTALogout}
-        onMarkAttendance={handleMarkAttendance}
-      />
+      <SidebarProvider defaultOpen>
+        <Sidebar collapsible="offcanvas">
+          <SidebarHeader>
+            <div className="px-2 py-1 text-sm font-semibold">TA Dashboard</div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={taTab === "attendance"}
+                      tooltip="Attendance"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setTaTab("attendance")}
+                      >
+                        <CalendarDays />
+                        <span>Attendance</span>
+                      </button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={taTab === "analytics"}
+                      tooltip="Attendance Analytics"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setTaTab("analytics")}
+                      >
+                        <BarChart3 />
+                        <span>Attendance Analytics</span>
+                      </button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={taTab === "students"}
+                      tooltip="Students"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setTaTab("students")}
+                      >
+                        <Users />
+                        <span>Students</span>
+                      </button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={taTab === "sessions"}
+                      tooltip="Class Sessions"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setTaTab("sessions")}
+                      >
+                        <Clock />
+                        <span>Class Sessions</span>
+                      </button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </Sidebar>
+
+        <SidebarInset>
+          <div className="flex flex-1 flex-col">
+            <SidebarTrigger className="fixed left-4 top-4 z-50" />
+            <TADashboard
+              activeSection={taTab}
+              presentStudents={presentStudents}
+              roster={roster}
+              currentPin={currentPin}
+              timeLimit={timeLimit}
+              isTimeUp={isTimeUp}
+              onSetPin={handleSetPin}
+              onSetTimeLimit={handleSetTimeLimit}
+              onResetAttendance={handleResetAttendance}
+              onLogout={handleTALogout}
+              onMarkAttendance={handleMarkAttendance}
+            />
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
     );
   }
 
