@@ -30,7 +30,6 @@ import { supabase } from "@/lib/supabase";
 import {
   Settings,
   Users,
-  Clock,
   UserCheck,
   UserX,
   RefreshCw,
@@ -62,7 +61,7 @@ interface Student {
   id: string;
   cohort: string;
   timestamp: Date;
-  name: string;
+  name?: string;
 }
 
 interface RosterStudent {
@@ -72,6 +71,7 @@ interface RosterStudent {
 }
 
 interface TADashboardProps {
+  activeSection?: "attendance" | "analytics" | "students" | "sessions";
   presentStudents: Student[];
   roster: RosterStudent[];
   currentPin: string;
@@ -105,11 +105,6 @@ interface ClassSchedule {
   day_of_week: number; // 0 = Sunday, 1 = Monday, etc.
 }
 
-interface ClassDate {
-  date: string;
-  cohort: "A" | "B" | "C";
-}
-
 interface WeeklyAbsence {
   student_id: string;
   cohort: "A" | "B" | "C";
@@ -127,6 +122,7 @@ interface FlaggedRecord {
 }
 
 const TADashboard = ({
+  activeSection = "attendance",
   presentStudents,
   roster,
   currentPin,
@@ -418,7 +414,6 @@ const TADashboard = ({
     if (scheduleMatches) {
       // If it matches the schedule, we can assume it's a class day
       // unless explicitly cancelled
-      const cancelledKey = `${dateStr}-${cohort}`;
       const isCancelled = cancelledSessions.some(
         (s) => s.date === dateStr && s.cohort === cohort && s.is_cancelled,
       );
@@ -1264,6 +1259,27 @@ const TADashboard = ({
     return () => clearTimeout(timeoutId);
   }, [searchQuery, showSearchDialog, roster]);
 
+  const isAttendanceSection = activeSection === "attendance";
+  const isAnalyticsSection = activeSection === "analytics";
+  const isStudentsSection = activeSection === "students";
+  const isSessionsSection = activeSection === "sessions";
+  const sectionTitle =
+    activeSection === "analytics"
+      ? "Attendance Analytics"
+      : activeSection === "students"
+        ? "Student Management"
+        : activeSection === "sessions"
+          ? "Class Session Management"
+          : "TA Dashboard";
+  const sectionDescription =
+    activeSection === "analytics"
+      ? "Review attendance trends, absences, and flagged records"
+      : activeSection === "students"
+        ? "Search the roster and manage student records"
+        : activeSection === "sessions"
+          ? "Manage attendance windows, cancelled classes, and schedules"
+          : "Manage live attendance and monitor student participation";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -1274,9 +1290,9 @@ const TADashboard = ({
               <Shield className="h-6 w-6 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">TA Dashboard</h1>
+              <h1 className="text-2xl font-bold">{sectionTitle}</h1>
               <p className="text-muted-foreground">
-                Manage attendance and monitor student participation
+                {sectionDescription}
               </p>
             </div>
           </div>
@@ -1285,6 +1301,8 @@ const TADashboard = ({
           </Button>
         </div>
 
+        {isAnalyticsSection && (
+          <>
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card className="border-2 shadow-soft">
@@ -1357,103 +1375,121 @@ const TADashboard = ({
             </CardContent>
           </Card>
         </div>
+          </>
+        )}
 
         {/* Action Buttons */}
+        {(isAnalyticsSection || isStudentsSection || isSessionsSection) && (
         <div className="flex gap-4 flex-wrap">
-          <Button
-            onClick={() => setShowHistoryDialog(true)}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <History className="h-4 w-4" />
-            View Absence History
-          </Button>
-          <Button
-            onClick={() => {
-              setShowSearchDialog(true);
-              setSearchQuery("");
-              setStudentAbsenceHistory([]);
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <Search className="h-4 w-4" />
-            Search Student
-          </Button>
-          <Button
-            onClick={() => setShowCancelDialog(true)}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <XCircle className="h-4 w-4" />
-            Cancel Class
-          </Button>
-          <Button
-            onClick={() => {
-              setShowAddStudentDialog(true);
-              setAddStudentId("");
-              setAddStudentName("");
-              setAddStudentCohort("");
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <UserPlus className="h-4 w-4" />
-            Add Student
-          </Button>
-          <Button
-            onClick={() => {
-              setShowRemoveStudentDialog(true);
-              setRemoveSearchQuery("");
-              setStudentToRemove(null);
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <UserMinus className="h-4 w-4" />
-            Remove Student
-          </Button>
-          <Button
-            onClick={() => {
-              setShowWeeklyAbsenceDialog(true);
-              setWeeklyAbsenceDate(undefined);
-              setWeeklyAbsences([]);
-              setWeeklyAbsenceCohortFilter("all");
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <CalendarDays className="h-4 w-4" />
-            Weekly Absences
-          </Button>
-          <Button
-            onClick={() => {
-              setShowScheduleDialog(true);
-              setScheduleCohort("");
-              setSelectedDays([]);
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <Settings className="h-4 w-4" />
-            Class Schedule
-          </Button>
-          <Button
-            onClick={() => {
-              setShowFlaggedDialog(true);
-              loadFlaggedRecords();
-            }}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <Flag className="h-4 w-4" />
-            Review Flags
-          </Button>
+          {isAnalyticsSection && (
+            <>
+              <Button
+                onClick={() => setShowHistoryDialog(true)}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <History className="h-4 w-4" />
+                View Absence History
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowWeeklyAbsenceDialog(true);
+                  setWeeklyAbsenceDate(undefined);
+                  setWeeklyAbsences([]);
+                  setWeeklyAbsenceCohortFilter("all");
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <CalendarDays className="h-4 w-4" />
+                Weekly Absences
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowFlaggedDialog(true);
+                  loadFlaggedRecords();
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Flag className="h-4 w-4" />
+                Review Flags
+              </Button>
+            </>
+          )}
+          {isStudentsSection && (
+            <>
+              <Button
+                onClick={() => {
+                  setShowSearchDialog(true);
+                  setSearchQuery("");
+                  setStudentAbsenceHistory([]);
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Search className="h-4 w-4" />
+                Search Student
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowAddStudentDialog(true);
+                  setAddStudentId("");
+                  setAddStudentName("");
+                  setAddStudentCohort("");
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <UserPlus className="h-4 w-4" />
+                Add Student
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowRemoveStudentDialog(true);
+                  setRemoveSearchQuery("");
+                  setStudentToRemove(null);
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <UserMinus className="h-4 w-4" />
+                Remove Student
+              </Button>
+            </>
+          )}
+          {isSessionsSection && (
+            <>
+              <Button
+                onClick={() => setShowCancelDialog(true)}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <XCircle className="h-4 w-4" />
+                Cancel Class
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowScheduleDialog(true);
+                  setScheduleCohort("");
+                  setSelectedDays([]);
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Settings className="h-4 w-4" />
+                Class Schedule
+              </Button>
+            </>
+          )}
         </div>
+        )}
 
         {/* Controls and Student Lists */}
+        {(isAttendanceSection || isSessionsSection || isStudentsSection) && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Controls */}
+          {(isAttendanceSection || isSessionsSection) && (
           <Card className="border-2 shadow-medium">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1517,9 +1553,15 @@ const TADashboard = ({
               </Button>
             </CardContent>
           </Card>
+          )}
 
           {/* Student Lists */}
-          <div className="lg:col-span-2">
+          {(isAttendanceSection || isStudentsSection) && (
+          <div
+            className={cn(
+              isStudentsSection ? "lg:col-span-3" : "lg:col-span-2",
+            )}
+          >
             <Card className="border-2 shadow-medium">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1659,7 +1701,9 @@ const TADashboard = ({
               </CardContent>
             </Card>
           </div>
+          )}
         </div>
+        )}
       </div>
 
       {/* History Dialog */}
