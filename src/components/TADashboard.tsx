@@ -154,6 +154,15 @@ const TADashboard = ({
     AbsenceHistory[]
   >([]);
   const [isLoadingStudentHistory, setIsLoadingStudentHistory] = useState(false);
+
+  // Student search (mark attendance) state
+  const [showAttendanceSearchDialog, setShowAttendanceSearchDialog] = useState(
+    false,
+  );
+  const [attendanceSearchQuery, setAttendanceSearchQuery] = useState("");
+  const [attendanceSearchResults, setAttendanceSearchResults] = useState<
+    RosterStudent[]
+  >([]);
   const [classDates, setClassDates] = useState<Map<string, boolean>>(new Map()); // key: "YYYY-MM-DD-cohort"
   const [classSchedule, setClassSchedule] = useState<ClassSchedule[]>([]);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
@@ -617,13 +626,23 @@ const TADashboard = ({
         string,
         {
           student_id: string;
-          cohort: "A" | "B";
+          cohort: "A" | "B" | "C";
           name?: string;
           absentDays: string[];
         }
       >();
 
       roster.forEach((student) => {
+        const normalizedCohort = String(student.cohort).toUpperCase();
+        let cohort: "A" | "B" | "C" = inferCohort(student.student_id);
+        if (
+          normalizedCohort === "A" ||
+          normalizedCohort === "B" ||
+          normalizedCohort === "C"
+        ) {
+          cohort = normalizedCohort;
+        }
+
         classDayStrings.forEach((dateStr) => {
           if (cancelledSet.has(dateStr)) return; // ignore any cancelled session
           const presentKey = `${student.student_id}-${dateStr}`;
@@ -631,7 +650,7 @@ const TADashboard = ({
             if (!absenceMap.has(student.student_id)) {
               absenceMap.set(student.student_id, {
                 student_id: student.student_id,
-                cohort: student.cohort,
+                cohort,
                 name: student.name,
                 absentDays: [],
               });
@@ -886,7 +905,7 @@ const TADashboard = ({
     cohorts: ("A" | "B" | "C")[],
   ) => {
     try {
-      const datesToInsert: Array<{ date: string; cohort: "A" | "B" }> = [];
+      const datesToInsert: Array<{ date: string; cohort: "A" | "B" | "C" }> = [];
       const currentDate = new Date(startDate);
 
       while (currentDate <= endDate) {
@@ -1239,6 +1258,22 @@ const TADashboard = ({
     }
   };
 
+  const searchStudentForAttendance = (query: string) => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      setAttendanceSearchResults([]);
+      return;
+    }
+
+    const results = roster.filter(
+      (r) =>
+        r.student_id.toLowerCase().includes(normalizedQuery) ||
+        (r.name && r.name.toLowerCase().includes(normalizedQuery)),
+    );
+
+    setAttendanceSearchResults(results);
+  };
+
   useEffect(() => {
     if (showHistoryDialog) {
       loadAbsenceHistory();
@@ -1429,7 +1464,19 @@ const TADashboard = ({
                   className="flex items-center gap-2"
                 >
                   <Search className="h-4 w-4" />
-                  Search Student
+                  Search Absences
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowAttendanceSearchDialog(true);
+                    setAttendanceSearchQuery("");
+                    setAttendanceSearchResults([]);
+                  }}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Search className="h-4 w-4" />
+                  Mark Attendance (Search)
                 </Button>
                 <Button
                   onClick={() => {
@@ -1972,7 +2019,7 @@ const TADashboard = ({
 
       {/* Search Student Dialog */}
       <Dialog open={showSearchDialog} onOpenChange={setShowSearchDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
           <DialogHeader>
             <DialogTitle>Search Student Absence History</DialogTitle>
             <DialogDescription>
@@ -2074,6 +2121,113 @@ const TADashboard = ({
                 setShowSearchDialog(false);
                 setSearchQuery("");
                 setStudentAbsenceHistory([]);
+              }}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Search Student (Mark Attendance) Dialog */}
+      <Dialog
+        open={showAttendanceSearchDialog}
+        onOpenChange={setShowAttendanceSearchDialog}
+      >
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
+          <DialogHeader>
+            <DialogTitle>Search Student to Mark Attendance</DialogTitle>
+            <DialogDescription>
+              Search for a student by name or ID, then mark attendance for them.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Input
+                placeholder="Enter student name or ID..."
+                value={attendanceSearchQuery}
+                onChange={(e) => setAttendanceSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    searchStudentForAttendance(attendanceSearchQuery);
+                  }
+                }}
+                className="flex-1"
+              />
+              <Button
+                onClick={() => searchStudentForAttendance(attendanceSearchQuery)}
+                variant="default"
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Search
+              </Button>
+            </div>
+
+            {attendanceSearchResults.length === 0 && attendanceSearchQuery ? (
+              <p className="text-center text-muted-foreground py-8">
+                No students found.
+              </p>
+            ) : attendanceSearchResults.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  {attendanceSearchResults.length} student
+                  {attendanceSearchResults.length === 1 ? "" : "s"} found
+                </p>
+
+                <div className="space-y-2">
+                  {attendanceSearchResults.map((student) => {
+                    const cohort = student.cohort
+                      ? String(student.cohort).toUpperCase()
+                      : inferCohort(student.student_id);
+                    const isAlreadyPresent = presentStudents.some(
+                      (p) => p.id === student.student_id,
+                    );
+
+                    return (
+                      <div
+                        key={student.student_id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-muted/50 rounded-lg border gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="font-medium">
+                            {student.name
+                              ? `${student.name} (${student.student_id})`
+                              : student.student_id}
+                          </div>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Badge variant="outline">Cohort {cohort}</Badge>
+                            {isAlreadyPresent && (
+                              <Badge variant="secondary">Already Present</Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={() =>
+                            handleMarkAttendanceManually(student.student_id, cohort)}
+                          disabled={isAlreadyPresent}
+                        >
+                          Mark Present
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <p className="text-center text-muted-foreground py-8">
+                Enter a name or ID to search.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                setShowAttendanceSearchDialog(false);
+                setAttendanceSearchQuery("");
+                setAttendanceSearchResults([]);
               }}
             >
               Close
