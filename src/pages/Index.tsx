@@ -393,7 +393,7 @@ const Index = () => {
       <SidebarProvider defaultOpen>
         <Sidebar collapsible="offcanvas">
           <SidebarHeader>
-            <div className="px-2 py-1 text-sm font-semibold">TA Dashboard</div>
+            <div className="px-2 py-3 text-sm font-semibold">TA Dashboard</div>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
@@ -468,7 +468,7 @@ const Index = () => {
 
         <SidebarInset>
           <div className="flex flex-1 flex-col">
-            <SidebarTrigger className="fixed left-4 top-4 z-50" />
+            <SidebarTrigger className="fixed left-4 top-10 z-50" />
             <TADashboard
               activeSection={taTab}
               presentStudents={presentStudents}
