@@ -60,65 +60,47 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   );
   const { toast } = useToast();
 
-  // Fetch flag status for specific date
-  const getFlagStatusForDate = async (studentId: string, date: string) => {
-    const { data } = await supabase
-      .from("flagged")
-      .select("status")
-      .eq("student_id", studentId)
-      .eq("session_date", date)
-      .single();
-
-    return data?.status || null;
-  };
-
   const handleFlag = async (date: string) => {
     if (flaggingInProgress === date) return; // Prevent double submission
 
     setFlaggingInProgress(date);
 
     try {
-      // First check if there's already a flag for this date
-      const { data: existingFlag, error: checkError } = await supabase
-        .from("flagged")
-        .select("status")
-        .eq("student_id", studentId)
-        .eq("session_date", date)
-        .maybeSingle(); // Use maybeSingle to handle no rows
+      // Flagging is handled server-side; the anon key cannot write to the table
+      // directly. The RPC enforces the "already pending / denied" rules.
+      const { data, error } = await supabase.rpc("flag_attendance", {
+        p_student_id: studentId,
+        p_session_date: date,
+      });
 
-      if (checkError) throw checkError;
+      if (error) throw error;
 
-      // If there's already a flag that's not "denied", prevent new flag
-      if (existingFlag && existingFlag.status !== "denied") {
-        toast({
-          title: "Already Flagged",
-          description: `This record has already been flagged and is pending review.`,
-          variant: "default",
-        });
+      const result = (data ?? {}) as { success?: boolean; error?: string };
+
+      if (!result.success) {
+        if (result.error === "already_pending") {
+          toast({
+            title: "Already Flagged",
+            description:
+              "This record has already been flagged and is pending review.",
+            variant: "default",
+          });
+        } else if (result.error === "denied") {
+          toast({
+            title: "Cannot Flag",
+            description:
+              "This record has already been reviewed and denied. Please contact your TA if you believe this is an error.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: "Failed to flag record. Please try again.",
+            variant: "destructive",
+          });
+        }
         return;
       }
-
-      // If there's a denied flag, prevent flagging again
-      if (existingFlag && existingFlag.status === "denied") {
-        toast({
-          title: "Cannot Flag",
-          description:
-            "This record has already been reviewed and denied. Please contact your TA if you believe this is an error.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Insert new flag (or update if exists but was denied - though we prevented above)
-      const { error: insertError } = await supabase.from("flagged").insert([
-        {
-          student_id: studentId,
-          session_date: date,
-          status: "flagged",
-        },
-      ]);
-
-      if (insertError) throw insertError;
 
       // Update local state
       setHistory((prev) =>
@@ -162,18 +144,26 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
     setHasSearched(true);
 
     try {
-      // Fetch all attendance records for this student
-      const { data: presentData, error: presentError } = await supabase
-        .from("present_students")
-        .select("timestamp, cohort")
-        .eq("student_id", studentId)
-        .order("timestamp", { ascending: false });
+      // One server-side call returns just this student's data. The anon key has
+      // no direct read access to these tables (RLS); everything goes through the
+      // get_student_attendance RPC.
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "get_student_attendance",
+        { p_student_id: studentId },
+      );
 
-      if (presentError) {
-        throw presentError;
+      if (rpcError) {
+        throw rpcError;
       }
 
-      if (!presentData || presentData.length === 0) {
+      const payload = (rpcData ?? {}) as {
+        present?: Array<{ timestamp: string; cohort: string }>;
+        cancelled?: string[];
+        flagged?: Array<{ session_date: string; status: string }>;
+      };
+      const presentData = payload.present ?? [];
+
+      if (presentData.length === 0) {
         setHistory([]);
         setStats({ present: 0, absent: 0, total: 0 });
         toast({
@@ -184,36 +174,15 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         return;
       }
 
-      // Infer cohort from the most recent attendance record
-      const cohort = presentData[0].cohort;
+      const cancelledDates = new Set<string>(payload.cancelled ?? []);
 
-      // Fetch cancelled sessions for the cohort
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date")
-        .eq("is_cancelled", true);
-
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      }
-
-      const cancelledDates = new Set<string>();
-      if (cancelledData) {
-        cancelledData.forEach((row: any) => cancelledDates.add(row.date));
-      }
-
-      // Fetch flagged records for this student (including all statuses)
-      const { data: flaggedData } = await supabase
-        .from("flagged")
-        .select("session_date, status")
-        .eq("student_id", studentId);
-
-      const flaggedMap = new Map<string, string>();
-      if (flaggedData) {
-        flaggedData.forEach((row: any) => {
-          flaggedMap.set(row.session_date, row.status);
-        });
-      }
+      const flaggedMap = new Map<string, "flagged" | "accepted" | "denied">();
+      (payload.flagged ?? []).forEach((row) => {
+        flaggedMap.set(
+          row.session_date,
+          row.status as "flagged" | "accepted" | "denied",
+        );
+      });
 
       // Track present dates
       const presentDatesMap = new Map<string, string>();
