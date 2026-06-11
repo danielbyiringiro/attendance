@@ -6,16 +6,15 @@ import { Clock, Users, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface StudentLoginProps {
-  currentPin: string;
   timeLimit: number;
   isTimeUp: boolean;
   onMarkAttendance: (
     studentId: string,
-  ) => Promise<{ success: boolean; error?: string }>;
+    pin: string,
+  ) => Promise<{ success: boolean; error?: string; name?: string }>;
 }
 
 const StudentLogin = ({
-  currentPin,
   timeLimit,
   isTimeUp,
   onMarkAttendance,
@@ -59,16 +58,17 @@ const StudentLogin = ({
       return;
     }
 
-    if (pin !== currentPin) {
+    if (!pin.trim()) {
       toast({
-        title: "Invalid PIN",
-        description: "The PIN you entered is incorrect.",
+        title: "PIN Required",
+        description: "Please enter the PIN provided by your TA.",
         variant: "destructive",
       });
       return;
     }
 
-    const result = await onMarkAttendance(studentId);
+    // The PIN is verified server-side; we never compare it in the browser.
+    const result = await onMarkAttendance(studentId, pin);
 
     if (!result.success) {
       toast({
@@ -81,7 +81,9 @@ const StudentLogin = ({
 
     toast({
       title: "Attendance Marked!",
-      description: `Welcome, ${result.error}! Your attendance has been recorded.`,
+      description: result.name
+        ? `Welcome, ${result.name}! Your attendance has been recorded.`
+        : "Your attendance has been recorded.",
       variant: "default",
     });
 

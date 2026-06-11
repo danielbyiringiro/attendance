@@ -44,6 +44,13 @@ interface RosterStudent {
 
 type TATab = "attendance" | "analytics" | "students" | "sessions";
 
+// Keys used to persist the TA dashboard across page reloads. sessionStorage is
+// used (not localStorage) so the session is cleared when the tab/browser closes,
+// which keeps attendance data from lingering on shared machines.
+// TA authentication is handled by Supabase Auth; we only persist which tab the
+// TA last viewed so a reload returns them to the same section.
+const TA_TAB_KEY = "ta_active_tab";
+
 const Index = () => {
   const [currentPin, setCurrentPin] = useState("1234");
   const [timeLimit, setTimeLimit] = useState(300); // 5 minutes in seconds
@@ -53,7 +60,9 @@ const Index = () => {
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
-  const [taTab, setTaTab] = useState<TATab>("attendance");
+  const [taTab, setTaTab] = useState<TATab>(
+    () => (sessionStorage.getItem(TA_TAB_KEY) as TATab) || "attendance",
+  );
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -74,18 +83,70 @@ const Index = () => {
     }
   }, [sessionStartTime, timeLimit, isTimeUp, isOpen]);
 
-  const handleMarkAttendance = async (
+  // Source of truth for TA access: a valid Supabase Auth session. Supabase
+  // persists the session across reloads automatically, so refreshing keeps the
+  // TA logged in. Any authenticated user is a TA (TA accounts are provisioned
+  // in the Supabase dashboard; there is no public signup).
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setIsTA(!!data.session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsTA(!!session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Students mark attendance through a server-side RPC. The PIN is verified
+  // inside the database (see sql/secure_pin.sql), so the browser never needs to
+  // know the PIN and all rules (window open, time limit, roster, duplicates)
+  // are enforced server-side and can't be bypassed from the console.
+  const handleStudentMarkAttendance = async (
     studentId: string,
-  ): Promise<{ success: boolean; error?: string }> => {
-    // Check if student already marked attendance locally
-    if (presentStudents.find((s) => s.id === studentId)) {
+    pin: string,
+  ): Promise<{ success: boolean; error?: string; name?: string }> => {
+    const { data, error } = await supabase.rpc("mark_attendance", {
+      p_student_id: studentId.trim(),
+      p_pin: pin,
+    });
+
+    if (error) {
+      console.error("mark_attendance failed:", error);
       return {
         success: false,
-        error: "You have already marked your attendance.",
+        error: "Something went wrong. Please try again.",
       };
     }
 
-    // Verify the student exists in the roster
+    const result = (data ?? {}) as {
+      success?: boolean;
+      error?: string;
+      name?: string;
+    };
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error || "Failed to record attendance. Please try again.",
+      };
+    }
+
+    return { success: true, name: result.name };
+  };
+
+  // TA manual override — marks a student present without a PIN. Only reachable
+  // from the authenticated dashboard.
+  const handleTAMarkAttendance = async (
+    studentId: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (presentStudents.find((s) => s.id === studentId)) {
+      return { success: false, error: "Student is already marked present." };
+    }
+
     const { data: rosterEntry, error: rosterError } = await supabase
       .from("students")
       .select("*")
@@ -101,33 +162,15 @@ const Index = () => {
     }
 
     if (!rosterEntry) {
-      return {
-        success: false,
-        error:
-          "You are not registered for this course. Please contact your TA.",
-      };
+      return { success: false, error: "Student is not on the roster." };
     }
 
-    const newStudent: Student = {
-      id: studentId,
-      cohort: rosterEntry.cohort,
-      timestamp: new Date(),
-      sessionDate: new Date().toISOString().slice(0, 10),
-      name: rosterEntry.name || "",
-    };
-
-    // Optimistic update
-    // setPresentStudents((prev) => [...prev, newStudent]);
-
-    // Persist to Supabase
     const { error } = await supabase.from("present_students").insert({
       student_id: studentId,
       cohort: rosterEntry.cohort,
-      timestamp: newStudent.timestamp.toISOString(),
+      timestamp: new Date().toISOString(),
     });
     if (error) {
-      // Rollback optimistic update on failure
-      setPresentStudents((prev) => prev.filter((s) => s.id !== studentId));
       console.error("Failed to insert attendance:", error);
       return {
         success: false,
@@ -135,7 +178,7 @@ const Index = () => {
       };
     }
 
-    return { success: true, error: rosterEntry.name };
+    return { success: true };
   };
 
   const handleSetPin = async (newPin: string) => {
@@ -153,11 +196,13 @@ const Index = () => {
         },
         { onConflict: "id" },
       )
-      .select()
+      // Don't read the pin column back (anon has no SELECT on it). We already
+      // know the value we just wrote.
+      .select("id, time_limit_seconds, session_start, is_open")
       .single();
 
     if (!error && data) {
-      setCurrentPin(data.pin);
+      setCurrentPin(newPin);
       setTimeLimit(data.time_limit_seconds);
       setSessionStartTime(new Date(data.session_start));
       setIsOpen(!!data.is_open);
@@ -180,11 +225,10 @@ const Index = () => {
         },
         { onConflict: "id" },
       )
-      .select()
+      .select("id, time_limit_seconds, session_start, is_open")
       .single();
 
     if (!error && data) {
-      setCurrentPin(data.pin);
       setTimeLimit(data.time_limit_seconds);
       setSessionStartTime(new Date(data.session_start));
       setIsOpen(!!data.is_open);
@@ -199,23 +243,36 @@ const Index = () => {
     setIsTimeUp(false);
   };
 
-  const handleTALogin = () => {
-    setIsTA(true);
-    setShowTALogin(false);
-    setTaTab("attendance");
+  // Persist tab selection so a reload returns the TA to the same section.
+  const handleSetTaTab = (tab: TATab) => {
+    setTaTab(tab);
+    sessionStorage.setItem(TA_TAB_KEY, tab);
   };
 
-  const handleTALogout = () => {
-    setIsTA(false);
+  const handleTALogin = () => {
+    // isTA flips to true via the auth listener below once the session exists.
+    setShowTALogin(false);
+    handleSetTaTab("attendance");
+  };
+
+  const handleTALogout = async () => {
+    await supabase.auth.signOut();
+    sessionStorage.removeItem(TA_TAB_KEY);
+    // Drop sensitive data from memory when leaving the dashboard.
+    setPresentStudents([]);
+    setRoster([]);
   };
 
   // Initialize session on first load
   useEffect(() => {
     // Load shared session state (do not create/modify on load)
     (async () => {
+      // SECURITY: never select the pin column on the public page. The anon role
+      // no longer has read access to it (see sql/secure_pin.sql); the PIN is
+      // verified server-side via the mark_attendance RPC.
       const { data: ss, error: ssError } = await supabase
         .from("session_state")
-        .select("*")
+        .select("id, time_limit_seconds, session_start, is_open")
         .eq("id", 1)
         .maybeSingle();
 
@@ -225,7 +282,6 @@ const Index = () => {
 
       if (ss) {
         setSessionId(ss.id);
-        setCurrentPin(ss.pin);
         setTimeLimit(ss.time_limit_seconds);
         setSessionStartTime(new Date(ss.session_start));
         setIsOpen(!!ss.is_open);
@@ -235,8 +291,59 @@ const Index = () => {
         );
         setIsTimeUp(!ss.is_open || elapsed >= ss.time_limit_seconds);
       }
+    })();
 
-      // Load today's attendance from Supabase using timestamp range (independent of session_date)
+    const sessionChannel = supabase
+      .channel("session_state_changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "session_state" },
+        (payload) => {
+          if (payload.eventType !== "DELETE") {
+            const row = payload.new;
+            if (row) {
+              // pin is intentionally absent from this payload for the anon role.
+              setTimeLimit(row.time_limit_seconds);
+              setSessionStartTime(new Date(row.session_start));
+              setIsOpen(!!row.is_open);
+              const elapsed = Math.floor(
+                (Date.now() - new Date(row.session_start).getTime()) / 1000,
+              );
+              setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
+            }
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(sessionChannel);
+    };
+  }, []);
+
+  // Load and subscribe to attendance + roster data ONLY when an authenticated TA
+  // is viewing the dashboard. Students never receive this data, so it cannot be
+  // read from the browser console on the public check-in page.
+  useEffect(() => {
+    if (!isTA) return;
+
+    let cancelled = false;
+
+    const loadDashboardData = async () => {
+      // Read the current PIN to display it. Only authenticated TAs can SELECT the
+      // pin column (RLS + column grant), so students never receive it.
+      const { data: pinRow, error: pinError } = await supabase
+        .from("session_state")
+        .select("pin")
+        .eq("id", 1)
+        .maybeSingle();
+      if (pinError) {
+        console.error("Failed to load session PIN:", pinError);
+      } else if (pinRow?.pin && !cancelled) {
+        setCurrentPin(pinRow.pin);
+      }
+
+      // Load today's attendance using a timestamp range (independent of session_date)
       const now = new Date();
       const start = new Date(
         Date.UTC(
@@ -267,9 +374,7 @@ const Index = () => {
         .order("timestamp", { ascending: true });
       if (error) {
         console.error("Failed to load attendance:", error);
-        return;
-      }
-      if (data) {
+      } else if (data && !cancelled) {
         const restored: Student[] = data.map((row) => ({
           id: row.student_id,
           cohort: row.cohort,
@@ -286,8 +391,7 @@ const Index = () => {
         .order("student_id", { ascending: true });
       if (rosterError) {
         console.error("Failed to load students roster:", rosterError);
-      }
-      if (rosterData) {
+      } else if (rosterData && !cancelled) {
         const normalized: RosterStudent[] = rosterData.map((row) => {
           const normalizedCohort = String(row.cohort).toUpperCase();
           return {
@@ -298,32 +402,11 @@ const Index = () => {
         });
         setRoster(normalized);
       }
-    })();
+    };
 
-    const sessionChannel = supabase
-      .channel("session_state_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "session_state" },
-        (payload) => {
-          if (payload.eventType !== "DELETE") {
-            const row = payload.new;
-            if (row) {
-              setCurrentPin(row.pin);
-              setTimeLimit(row.time_limit_seconds);
-              setSessionStartTime(new Date(row.session_start));
-              setIsOpen(!!row.is_open);
-              const elapsed = Math.floor(
-                (Date.now() - new Date(row.session_start).getTime()) / 1000,
-              );
-              setIsTimeUp(!row.is_open || elapsed >= row.time_limit_seconds);
-            }
-          }
-        },
-      )
-      .subscribe();
+    loadDashboardData();
 
-    // Subscribe to realtime changes on students table to keep roster updated
+    // Keep the roster in sync in real time while the TA is logged in.
     const rosterChannel = supabase
       .channel("students_changes")
       .on(
@@ -339,18 +422,15 @@ const Index = () => {
                 cohort: normalizedCohort,
                 name: row.name || undefined,
               };
-              // Update roster - add or replace student
               setRoster((prev) => {
                 const existing = prev.find(
                   (s) => s.student_id === newStudent.student_id,
                 );
                 if (existing) {
-                  // Replace existing student
                   return prev.map((s) =>
                     s.student_id === newStudent.student_id ? newStudent : s,
                   );
                 } else {
-                  // Add new student and sort
                   return [...prev, newStudent].sort((a, b) =>
                     a.student_id.localeCompare(b.student_id),
                   );
@@ -358,7 +438,6 @@ const Index = () => {
               });
             }
           } else {
-            // Handle deletion
             const deletedRow = payload.old;
             if (deletedRow) {
               setRoster((prev) =>
@@ -372,11 +451,41 @@ const Index = () => {
       )
       .subscribe();
 
+    // Reflect new check-ins live in the dashboard as students mark attendance.
+    const presentChannel = supabase
+      .channel("present_students_changes")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "present_students" },
+        (payload) => {
+          const row = payload.new;
+          if (!row) return;
+          const ts = new Date(row.timestamp);
+          const todayStr = new Date().toISOString().slice(0, 10);
+          // Only surface check-ins for the current day.
+          if (ts.toISOString().slice(0, 10) !== todayStr) return;
+          setPresentStudents((prev) => {
+            if (prev.some((s) => s.id === row.student_id)) return prev;
+            return [
+              ...prev,
+              {
+                id: row.student_id,
+                cohort: row.cohort,
+                timestamp: ts,
+                name: "",
+              },
+            ];
+          });
+        },
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(sessionChannel);
+      cancelled = true;
       supabase.removeChannel(rosterChannel);
+      supabase.removeChannel(presentChannel);
     };
-  }, []);
+  }, [isTA]);
 
   const getTimeLeft = () => {
     if (!isOpen || !sessionStartTime) return 0;
@@ -393,7 +502,7 @@ const Index = () => {
       <SidebarProvider defaultOpen>
         <Sidebar collapsible="offcanvas">
           <SidebarHeader>
-            <div className="px-2 py-1 text-sm font-semibold">TA Dashboard</div>
+            <div className="px-2 py-3 text-sm font-semibold">TA Dashboard</div>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
@@ -408,7 +517,7 @@ const Index = () => {
                     >
                       <button
                         type="button"
-                        onClick={() => setTaTab("attendance")}
+                        onClick={() => handleSetTaTab("attendance")}
                       >
                         <CalendarDays />
                         <span>Attendance</span>
@@ -423,7 +532,7 @@ const Index = () => {
                     >
                       <button
                         type="button"
-                        onClick={() => setTaTab("analytics")}
+                        onClick={() => handleSetTaTab("analytics")}
                       >
                         <BarChart3 />
                         <span>Attendance Analytics</span>
@@ -438,7 +547,7 @@ const Index = () => {
                     >
                       <button
                         type="button"
-                        onClick={() => setTaTab("students")}
+                        onClick={() => handleSetTaTab("students")}
                       >
                         <Users />
                         <span>Students</span>
@@ -453,7 +562,7 @@ const Index = () => {
                     >
                       <button
                         type="button"
-                        onClick={() => setTaTab("sessions")}
+                        onClick={() => handleSetTaTab("sessions")}
                       >
                         <Clock />
                         <span>Class Sessions</span>
@@ -468,7 +577,7 @@ const Index = () => {
 
         <SidebarInset>
           <div className="flex flex-1 flex-col">
-            <SidebarTrigger className="fixed left-4 top-4 z-50" />
+            <SidebarTrigger className="fixed left-4 top-10 z-50" />
             <TADashboard
               activeSection={taTab}
               presentStudents={presentStudents}
@@ -480,7 +589,7 @@ const Index = () => {
               onSetTimeLimit={handleSetTimeLimit}
               onResetAttendance={handleResetAttendance}
               onLogout={handleTALogout}
-              onMarkAttendance={handleMarkAttendance}
+              onMarkAttendance={handleTAMarkAttendance}
             />
           </div>
         </SidebarInset>
@@ -495,10 +604,9 @@ const Index = () => {
   return (
     <div className="relative">
       <StudentLogin
-        currentPin={currentPin}
         timeLimit={getTimeLeft()}
         isTimeUp={isTimeUp}
-        onMarkAttendance={handleMarkAttendance}
+        onMarkAttendance={handleStudentMarkAttendance}
       />
 
       {/* Student History Button */}
@@ -523,7 +631,12 @@ const Index = () => {
       </Button>
 
       {/* TA Login Modal */}
-      {showTALogin && <TALogin onLogin={handleTALogin} />}
+      {showTALogin && (
+        <TALogin
+          onLogin={handleTALogin}
+          onCancel={() => setShowTALogin(false)}
+        />
+      )}
     </div>
   );
 };

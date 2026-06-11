@@ -205,6 +205,7 @@ const TADashboard = ({
     return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
   };
   const allStudents = roster.map((r) => r.student_id);
+  const rosterIds = new Set(allStudents);
   const inferCohort = (id: string): "A" | "B" | "C" =>
     id.toUpperCase().includes("A")
       ? "A"
@@ -319,14 +320,25 @@ const TADashboard = ({
     });
   };
 
+  // Only count students who are actually on the roster, and never count the same
+  // student twice. This guarantees "present" can never exceed total enrolled even
+  // if the attendance table contains duplicates or records for removed students.
+  const validPresentStudents = Array.from(
+    new Map(
+      presentStudents
+        .filter((s) => rosterIds.has(s.id))
+        .map((s) => [s.id, s]),
+    ).values(),
+  );
+
   const filteredPresentStudents =
     selectedCohort === "all"
-      ? presentStudents
-      : presentStudents.filter(
+      ? validPresentStudents
+      : validPresentStudents.filter(
         (student) => student.cohort === selectedCohort.toUpperCase(),
       );
 
-  const presentStudentIds = presentStudents.map((s) => s.id);
+  const presentStudentIds = validPresentStudents.map((s) => s.id);
   const absentStudents = allStudents.filter(
     (id) => !presentStudentIds.includes(id),
   );
@@ -339,9 +351,15 @@ const TADashboard = ({
         return cohort === selectedCohort.toUpperCase();
       });
 
-  const cohortAPresent = presentStudents.filter((s) => s.cohort === "A").length;
-  const cohortBPresent = presentStudents.filter((s) => s.cohort === "B").length;
-  const cohortCPresent = presentStudents.filter((s) => s.cohort === "C").length;
+  const cohortAPresent = validPresentStudents.filter(
+    (s) => s.cohort === "A",
+  ).length;
+  const cohortBPresent = validPresentStudents.filter(
+    (s) => s.cohort === "B",
+  ).length;
+  const cohortCPresent = validPresentStudents.filter(
+    (s) => s.cohort === "C",
+  ).length;
   const cohortATotal = roster.filter((r) => r.cohort === "A").length;
   const cohortBTotal = roster.filter((r) => r.cohort === "B").length;
   const cohortCTotal = roster.filter((r) => r.cohort === "C").length;
@@ -650,7 +668,7 @@ const TADashboard = ({
             if (!absenceMap.has(student.student_id)) {
               absenceMap.set(student.student_id, {
                 student_id: student.student_id,
-                cohort,
+                cohort: student.cohort as "A" | "B" | "C",
                 name: student.name,
                 absentDays: [],
               });
@@ -905,7 +923,8 @@ const TADashboard = ({
     cohorts: ("A" | "B" | "C")[],
   ) => {
     try {
-      const datesToInsert: Array<{ date: string; cohort: "A" | "B" | "C" }> = [];
+      const datesToInsert: Array<{ date: string; cohort: "A" | "B" | "C" }> =
+        [];
       const currentDate = new Date(startDate);
 
       while (currentDate <= endDate) {
@@ -1346,7 +1365,7 @@ const TADashboard = ({
                     <UserCheck className="h-5 w-5 text-success" />
                     <div>
                       <p className="text-2xl font-bold text-success">
-                        {presentStudents.length}
+                        {validPresentStudents.length}
                       </p>
                       <p className="text-sm text-muted-foreground">Present</p>
                     </div>
