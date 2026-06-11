@@ -43,6 +43,7 @@ import {
   UserPlus,
   UserMinus,
   CalendarDays,
+  CalendarCheck,
   Flag,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -199,6 +200,28 @@ const TADashboard = ({
   const [showFlaggedDialog, setShowFlaggedDialog] = useState(false);
   const [flaggedRecords, setFlaggedRecords] = useState<FlaggedRecord[]>([]);
   const [isLoadingFlagged, setIsLoadingFlagged] = useState(false);
+
+  // Excused absence ("absent with permission") state
+  const [showExcusedDialog, setShowExcusedDialog] = useState(false);
+  const [excusedSearchQuery, setExcusedSearchQuery] = useState("");
+  const [excusedStudent, setExcusedStudent] = useState<{
+    student_id: string;
+    cohort: "A" | "B" | "C" | string;
+    name?: string;
+  } | null>(null);
+  const [excusedStartDate, setExcusedStartDate] = useState<Date | undefined>(
+    undefined,
+  );
+  const [excusedEndDate, setExcusedEndDate] = useState<Date | undefined>(
+    undefined,
+  );
+  const [excusedReason, setExcusedReason] = useState("");
+  const [isSavingExcused, setIsSavingExcused] = useState(false);
+  // Set of "studentId-YYYY-MM-DD" for excused days, used to exclude them from
+  // absence calculations.
+  const [excusedAbsences, setExcusedAbsences] = useState<Set<string>>(
+    new Set(),
+  );
 
   const isValidClassDay = (date: Date): boolean => {
     const day = date.getDay();
@@ -383,6 +406,20 @@ const TADashboard = ({
         );
       }
 
+      // Load excused absences (student_id + date) to exclude from absence views.
+      const { data: excusedData, error: excusedError } = await supabase
+        .from("excused_absences")
+        .select("student_id, date");
+      if (excusedError && excusedError.code !== "PGRST116") {
+        console.error("Failed to load excused absences:", excusedError);
+      } else if (excusedData) {
+        setExcusedAbsences(
+          new Set(
+            excusedData.map((row: any) => `${row.student_id}-${row.date}`),
+          ),
+        );
+      }
+
       // Load class schedule
       const { data: scheduleData, error: scheduleError } = await supabase
         .from("class_schedule")
@@ -552,6 +589,105 @@ const TADashboard = ({
     setShowRemoveStudentDialog(false);
   };
 
+  // Mark a student "absent with permission" for every class day in a date range.
+  const handleAddExcused = async () => {
+    if (!excusedStudent) {
+      toast({
+        title: "No Student Selected",
+        description: "Please select a student first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!excusedStartDate || !excusedEndDate) {
+      toast({
+        title: "Dates Required",
+        description: "Please choose both a start and end date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (excusedEndDate < excusedStartDate) {
+      toast({
+        title: "Invalid Range",
+        description: "The end date can't be before the start date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Expand the range into individual class days (Tue/Wed/Thu).
+    const rows: { student_id: string; date: string; reason: string | null }[] =
+      [];
+    const cursor = new Date(
+      excusedStartDate.getFullYear(),
+      excusedStartDate.getMonth(),
+      excusedStartDate.getDate(),
+    );
+    const end = new Date(
+      excusedEndDate.getFullYear(),
+      excusedEndDate.getMonth(),
+      excusedEndDate.getDate(),
+    );
+    while (cursor <= end) {
+      if (isValidClassDay(cursor)) {
+        const y = cursor.getFullYear();
+        const m = String(cursor.getMonth() + 1).padStart(2, "0");
+        const d = String(cursor.getDate()).padStart(2, "0");
+        rows.push({
+          student_id: excusedStudent.student_id,
+          date: `${y}-${m}-${d}`,
+          reason: excusedReason.trim() || null,
+        });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (rows.length === 0) {
+      toast({
+        title: "No Class Days",
+        description: "That range contains no class days (Tue/Wed/Thu).",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSavingExcused(true);
+    const { error } = await supabase
+      .from("excused_absences")
+      .upsert(rows, { onConflict: "student_id,date" });
+    setIsSavingExcused(false);
+
+    if (error) {
+      console.error("Failed to save excused absence:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save the excused absence.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Refresh the local excused set so analytics update immediately.
+    setExcusedAbsences((prev) => {
+      const next = new Set(prev);
+      rows.forEach((r) => next.add(`${r.student_id}-${r.date}`));
+      return next;
+    });
+
+    toast({
+      title: "Excused Absence Saved",
+      description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${rows.length} class day${rows.length > 1 ? "s" : ""}.`,
+    });
+
+    setShowExcusedDialog(false);
+    setExcusedStudent(null);
+    setExcusedSearchQuery("");
+    setExcusedStartDate(undefined);
+    setExcusedEndDate(undefined);
+    setExcusedReason("");
+  };
+
   // Filtered roster for the remove dialog search
   // Compute Monday of the week containing a given date (local time)
   const getMonday = (date: Date): Date => {
@@ -664,6 +800,8 @@ const TADashboard = ({
         classDayStrings.forEach((dateStr) => {
           if (cancelledSet.has(dateStr)) return; // ignore any cancelled session
           const presentKey = `${student.student_id}-${dateStr}`;
+          // Excused ("absent with permission") days don't count as absences.
+          if (excusedAbsences.has(presentKey)) return;
           if (!presentSet.has(presentKey)) {
             if (!absenceMap.has(student.student_id)) {
               absenceMap.set(student.student_id, {
@@ -896,7 +1034,15 @@ const TADashboard = ({
           // Check if class was cancelled for this cohort on this date
           const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
 
-          if (isClassDate && !presentOnDate.has(studentId) && !wasCancelled) {
+          // Excused ("absent with permission") days don't count as absences.
+          const isExcused = excusedAbsences.has(`${studentId}-${dateStr}`);
+
+          if (
+            isClassDate &&
+            !presentOnDate.has(studentId) &&
+            !wasCancelled &&
+            !isExcused
+          ) {
             absences.push({
               date: dateStr,
               student_id: studentId,
@@ -1246,8 +1392,11 @@ const TADashboard = ({
           const classDateKey = `${dateStr}-${student.cohort}`;
           const isClassDate = classDatesMap.has(classDateKey);
           const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
+          const isExcused = excusedAbsences.has(
+            `${student.student_id}-${dateStr}`,
+          );
 
-          if (isClassDate && !presentOnDate && !wasCancelled) {
+          if (isClassDate && !presentOnDate && !wasCancelled && !isExcused) {
             absences.push({
               date: dateStr,
               student_id: student.student_id,
@@ -1521,6 +1670,21 @@ const TADashboard = ({
                 >
                   <UserMinus className="h-4 w-4" />
                   Remove Student
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowExcusedDialog(true);
+                    setExcusedSearchQuery("");
+                    setExcusedStudent(null);
+                    setExcusedStartDate(undefined);
+                    setExcusedEndDate(undefined);
+                    setExcusedReason("");
+                  }}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <CalendarCheck className="h-4 w-4" />
+                  Excused Absence
                 </Button>
               </>
             )}
@@ -2607,6 +2771,206 @@ const TADashboard = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Excused Absence Dialog */}
+      <Dialog open={showExcusedDialog} onOpenChange={setShowExcusedDialog}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add Excused Absence</DialogTitle>
+            <DialogDescription>
+              Mark a student "absent with permission" for a range of class days.
+              Excused days are not counted as absences.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Student</label>
+              <Input
+                placeholder="Search by student ID or name..."
+                value={excusedSearchQuery}
+                onChange={(e) => {
+                  setExcusedSearchQuery(e.target.value);
+                  setExcusedStudent(null);
+                }}
+              />
+            </div>
+
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {(excusedSearchQuery.trim()
+                ? roster.filter(
+                    (r) =>
+                      r.student_id
+                        .toLowerCase()
+                        .includes(excusedSearchQuery.toLowerCase()) ||
+                      (r.name &&
+                        r.name
+                          .toLowerCase()
+                          .includes(excusedSearchQuery.toLowerCase())),
+                  )
+                : roster
+              ).length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">
+                  No students found.
+                </p>
+              ) : (
+                (excusedSearchQuery.trim()
+                  ? roster.filter(
+                      (r) =>
+                        r.student_id
+                          .toLowerCase()
+                          .includes(excusedSearchQuery.toLowerCase()) ||
+                        (r.name &&
+                          r.name
+                            .toLowerCase()
+                            .includes(excusedSearchQuery.toLowerCase())),
+                    )
+                  : roster
+                ).map((student) => (
+                  <div
+                    key={student.student_id}
+                    className={cn(
+                      "flex items-center justify-between p-2 rounded-lg cursor-pointer border transition-colors",
+                      excusedStudent?.student_id === student.student_id
+                        ? "bg-primary/10 border-primary/40"
+                        : "bg-muted/50 border-transparent hover:bg-muted",
+                    )}
+                    onClick={() =>
+                      setExcusedStudent({
+                        student_id: student.student_id,
+                        cohort: student.cohort,
+                        name: student.name,
+                      })
+                    }
+                  >
+                    <div className="flex flex-col">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium">
+                          {student.student_id}
+                        </span>
+                        <Badge variant="outline" className="text-xs">
+                          Cohort {student.cohort}
+                        </Badge>
+                      </div>
+                      {student.name && (
+                        <span className="text-sm text-muted-foreground mt-1">
+                          {student.name}
+                        </span>
+                      )}
+                    </div>
+                    {excusedStudent?.student_id === student.student_id && (
+                      <Badge className="text-xs">Selected</Badge>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Start date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !excusedStartDate && "text-muted-foreground",
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {excusedStartDate
+                        ? format(excusedStartDate, "PP")
+                        : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={excusedStartDate}
+                      onSelect={(date) => {
+                        setExcusedStartDate(date);
+                        if (date && (!excusedEndDate || excusedEndDate < date)) {
+                          setExcusedEndDate(date);
+                        }
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">End date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !excusedEndDate && "text-muted-foreground",
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {excusedEndDate
+                        ? format(excusedEndDate, "PP")
+                        : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={excusedEndDate}
+                      onSelect={setExcusedEndDate}
+                      disabled={(date) =>
+                        excusedStartDate ? date < excusedStartDate : false
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason (optional)</label>
+              <Input
+                placeholder="e.g. medical, family emergency"
+                value={excusedReason}
+                onChange={(e) => setExcusedReason(e.target.value)}
+              />
+            </div>
+
+            {excusedStudent && excusedStartDate && excusedEndDate && (
+              <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg text-sm text-muted-foreground">
+                Excusing <strong>{excusedStudent.student_id}</strong>
+                {excusedStudent.name ? ` (${excusedStudent.name})` : ""} from{" "}
+                {format(excusedStartDate, "PP")} to{" "}
+                {format(excusedEndDate, "PP")} (class days only).
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowExcusedDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddExcused}
+              disabled={
+                isSavingExcused ||
+                !excusedStudent ||
+                !excusedStartDate ||
+                !excusedEndDate
+              }
+            >
+              <CalendarCheck className="h-4 w-4 mr-2" />
+              {isSavingExcused ? "Saving..." : "Save Excused"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Weekly Absences Dialog */}
       <Dialog
         open={showWeeklyAbsenceDialog}
