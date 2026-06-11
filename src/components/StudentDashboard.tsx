@@ -23,6 +23,7 @@ import {
   UserCheck,
   UserX,
   CalendarDays,
+  CalendarCheck,
   Flag,
   CheckCircle2,
 } from "lucide-react";
@@ -32,7 +33,7 @@ import { useToast } from "@/hooks/use-toast";
 
 interface AttendanceRecord {
   date: string;
-  status: "Present" | "Absent";
+  status: "Present" | "Absent" | "Excused";
   timestamp?: string;
   isFlagged?: boolean;
   flagStatus?: "flagged" | "accepted" | "denied" | null; // Track the flag status
@@ -52,7 +53,12 @@ const isValidClassDay = (date: Date): boolean => {
 const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [studentId, setStudentId] = useState("");
   const [history, setHistory] = useState<AttendanceRecord[]>([]);
-  const [stats, setStats] = useState({ present: 0, absent: 0, total: 0 });
+  const [stats, setStats] = useState({
+    present: 0,
+    absent: 0,
+    excused: 0,
+    total: 0,
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [flaggingInProgress, setFlaggingInProgress] = useState<string | null>(
@@ -159,13 +165,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       const payload = (rpcData ?? {}) as {
         present?: Array<{ timestamp: string; cohort: string }>;
         cancelled?: string[];
+        excused?: string[];
         flagged?: Array<{ session_date: string; status: string }>;
       };
       const presentData = payload.present ?? [];
 
       if (presentData.length === 0) {
         setHistory([]);
-        setStats({ present: 0, absent: 0, total: 0 });
+        setStats({ present: 0, absent: 0, excused: 0, total: 0 });
         toast({
           title: "No Records Found",
           description: `No attendance records found for ID: ${studentId}`,
@@ -175,6 +182,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       }
 
       const cancelledDates = new Set<string>(payload.cancelled ?? []);
+      const excusedDates = new Set<string>(payload.excused ?? []);
 
       const flaggedMap = new Map<string, "flagged" | "accepted" | "denied">();
       (payload.flagged ?? []).forEach((row) => {
@@ -195,6 +203,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       const historyList: AttendanceRecord[] = [];
       let presentCount = 0;
       let absentCount = 0;
+      let excusedCount = 0;
 
       const currentDate = new Date(SEMESTER_START);
       const today = new Date();
@@ -217,6 +226,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                 flagStatus: flagStatus || null,
               });
               presentCount++;
+            } else if (excusedDates.has(dateStr)) {
+              // Absent with permission — not counted as an absence.
+              historyList.push({
+                date: dateStr,
+                status: "Excused",
+                flagStatus: flagStatus || null,
+              });
+              excusedCount++;
             } else {
               historyList.push({
                 date: dateStr,
@@ -255,7 +272,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       setStats({
         present: presentCount,
         absent: absentCount,
-        total: presentCount + absentCount,
+        excused: excusedCount,
+        total: presentCount + absentCount + excusedCount,
       });
     } catch (error) {
       console.error("Error fetching history:", error);
@@ -348,7 +366,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
             {hasSearched && (
               <div className="space-y-6">
                 {/* Statistics Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Card className="bg-primary/5 border-primary/20">
                     <CardContent className="p-6 flex flex-col items-center justify-center text-center">
                       <CalendarDays className="h-8 w-8 text-primary mb-2" />
@@ -381,6 +399,18 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                       </p>
                       <p className="text-3xl font-bold text-destructive">
                         {stats.absent}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-blue-500/5 border-blue-500/20">
+                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
+                      <CalendarCheck className="h-8 w-8 text-blue-600 mb-2" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Excused
+                      </p>
+                      <p className="text-3xl font-bold text-blue-600">
+                        {stats.excused}
                       </p>
                     </CardContent>
                   </Card>
@@ -417,7 +447,9 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                   className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                                     record.status === "Present"
                                       ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                      : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                      : record.status === "Excused"
+                                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                                        : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
                                   }`}
                                 >
                                   {record.status}
@@ -434,18 +466,24 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                 )}
                               </TableCell>
                               <TableCell className="text-right">
-                                <Button
-                                  variant={buttonState.variant}
-                                  size="sm"
-                                  onClick={() => handleFlag(record.date)}
-                                  title={buttonState.title}
-                                  disabled={
-                                    buttonState.disabled ||
-                                    flaggingInProgress === record.date
-                                  }
-                                >
-                                  {buttonState.icon}
-                                </Button>
+                                {record.status === "Excused" ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    Excused by TA
+                                  </span>
+                                ) : (
+                                  <Button
+                                    variant={buttonState.variant}
+                                    size="sm"
+                                    onClick={() => handleFlag(record.date)}
+                                    title={buttonState.title}
+                                    disabled={
+                                      buttonState.disabled ||
+                                      flaggingInProgress === record.date
+                                    }
+                                  >
+                                    {buttonState.icon}
+                                  </Button>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
