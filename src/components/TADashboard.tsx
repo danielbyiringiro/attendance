@@ -45,13 +45,16 @@ import {
   CalendarDays,
   CalendarCheck,
   Flag,
+  Copy,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
 // Semester start date — attendance is only tracked from this date forward
-const SEMESTER_START = new Date(Date.UTC(2026, 0, 26)); // January 26, 2026
+const SEMESTER_START = new Date(Date.UTC(2026, 4, 18)); // May 26, 2026 (month is 0-indexed)
 
 export const isValidClassDay = (date: Date): boolean => {
   const day = date.getDay();
@@ -114,6 +117,13 @@ interface WeeklyAbsence {
   frequency: number;
 }
 
+interface WeekReport {
+  weekNumber: number;
+  startStr: string; // Monday (YYYY-MM-DD)
+  rangeLabel: string; // e.g. "Jan 27 – Jan 29"
+  absences: WeeklyAbsence[]; // sorted by frequency desc
+}
+
 interface FlaggedRecord {
   id: string;
   student_id: string;
@@ -157,9 +167,8 @@ const TADashboard = ({
   const [isLoadingStudentHistory, setIsLoadingStudentHistory] = useState(false);
 
   // Student search (mark attendance) state
-  const [showAttendanceSearchDialog, setShowAttendanceSearchDialog] = useState(
-    false,
-  );
+  const [showAttendanceSearchDialog, setShowAttendanceSearchDialog] =
+    useState(false);
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState("");
   const [attendanceSearchResults, setAttendanceSearchResults] = useState<
     RosterStudent[]
@@ -181,6 +190,21 @@ const TADashboard = ({
   const [isLoadingWeeklyAbsences, setIsLoadingWeeklyAbsences] = useState(false);
   const [weeklyAbsenceCohortFilter, setWeeklyAbsenceCohortFilter] =
     useState("all");
+
+  // Weekly report (week-by-week, copy-paste rows for the spreadsheet)
+  const [weeklyReport, setWeeklyReport] = useState<WeekReport[]>([]);
+  const [isBuildingReport, setIsBuildingReport] = useState(false);
+  // Lecturer (instructor) + FI are configured per cohort.
+  const [reportPairs, setReportPairs] = useState<
+    Record<string, { instructor: string; fi: string }>
+  >({
+    A: { instructor: "", fi: "" },
+    B: { instructor: "", fi: "" },
+    C: { instructor: "", fi: "" },
+  });
+  const [isSavingReportSettings, setIsSavingReportSettings] = useState(false);
+  const [showReportConfig, setShowReportConfig] = useState(false);
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
 
   // Add/Remove student state
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
@@ -348,9 +372,7 @@ const TADashboard = ({
   // if the attendance table contains duplicates or records for removed students.
   const validPresentStudents = Array.from(
     new Map(
-      presentStudents
-        .filter((s) => rosterIds.has(s.id))
-        .map((s) => [s.id, s]),
+      presentStudents.filter((s) => rosterIds.has(s.id)).map((s) => [s.id, s]),
     ).values(),
   );
 
@@ -358,8 +380,8 @@ const TADashboard = ({
     selectedCohort === "all"
       ? validPresentStudents
       : validPresentStudents.filter(
-        (student) => student.cohort === selectedCohort.toUpperCase(),
-      );
+          (student) => student.cohort === selectedCohort.toUpperCase(),
+        );
 
   const presentStudentIds = validPresentStudents.map((s) => s.id);
   const absentStudents = allStudents.filter(
@@ -369,10 +391,10 @@ const TADashboard = ({
     selectedCohort === "all"
       ? absentStudents
       : absentStudents.filter((id) => {
-        const rosterEntry = roster.find((r) => r.student_id === id);
-        const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
-        return cohort === selectedCohort.toUpperCase();
-      });
+          const rosterEntry = roster.find((r) => r.student_id === id);
+          const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
+          return cohort === selectedCohort.toUpperCase();
+        });
 
   const cohortAPresent = validPresentStudents.filter(
     (s) => s.cohort === "A",
@@ -418,6 +440,26 @@ const TADashboard = ({
             excusedData.map((row: any) => `${row.student_id}-${row.date}`),
           ),
         );
+      }
+
+      // Load per-cohort report settings (lecturer + FI for each cohort).
+      const { data: settingsData, error: settingsError } = await supabase
+        .from("report_settings")
+        .select("cohort, instructor_name, fi_name");
+      if (settingsError && settingsError.code !== "PGRST116") {
+        console.error("Failed to load report settings:", settingsError);
+      } else if (settingsData) {
+        setReportPairs((prev) => {
+          const next = { ...prev };
+          settingsData.forEach((row: any) => {
+            const c = String(row.cohort).toUpperCase();
+            next[c] = {
+              instructor: row.instructor_name || "",
+              fi: row.fi_name || "",
+            };
+          });
+          return next;
+        });
       }
 
       // Load class schedule
@@ -837,18 +879,231 @@ const TADashboard = ({
     weeklyAbsenceCohortFilter === "all"
       ? weeklyAbsences
       : weeklyAbsences.filter(
-        (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
+          (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
+        );
+
+  // Build the full week-by-week report from the semester start through today.
+  // One fetch, computed client-side per week (excludes cancelled + excused days).
+  const buildWeeklyReport = async () => {
+    setIsBuildingReport(true);
+    setWeeklyReport([]);
+    try {
+      const toDateStr = (d: Date) => d.toISOString().split("T")[0];
+      const now = new Date();
+      const todayStr = toDateStr(now);
+
+      // Fetch ALL attendance from semester start to today. Paginate, because
+      // PostgREST caps a single response (default 1000 rows) — without this,
+      // present check-ins get silently dropped and students are mis-flagged.
+      const presentSet = new Set<string>();
+      const pageSize = 1000;
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data: page, error: pageError } = await supabase
+          .from("present_students")
+          .select("student_id, timestamp")
+          .gte("timestamp", toDateStr(SEMESTER_START) + "T00:00:00")
+          .order("timestamp", { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (pageError) {
+          console.error("Failed to load attendance:", pageError);
+          break;
+        }
+        (page || []).forEach((r: any) => {
+          const recordDate = toDateStr(new Date(r.timestamp));
+          presentSet.add(`${r.student_id}-${recordDate}`);
+        });
+        if (!page || page.length < pageSize) break;
+        from += pageSize;
+      }
+
+      // Cancelled sessions (any cohort) → treat that date as no-class.
+      const { data: cancelledData } = await supabase
+        .from("cancelled_sessions")
+        .select("date")
+        .eq("is_cancelled", true);
+      const cancelledSet = new Set<string>(
+        (cancelledData || []).map((r: any) => r.date),
       );
+
+      // Excused absences → never count as an absence.
+      const { data: excusedData } = await supabase
+        .from("excused_absences")
+        .select("student_id, date");
+      const excusedSet = new Set<string>(
+        (excusedData || []).map((r: any) => `${r.student_id}-${r.date}`),
+      );
+
+      const report: WeekReport[] = [];
+      // Start from the Monday of the semester-start week, then step weekly so
+      // week boundaries are stable regardless of which weekday the term starts.
+      const weekStart = new Date(SEMESTER_START);
+      const startDow = weekStart.getUTCDay(); // 0=Sun … 6=Sat
+      weekStart.setUTCDate(
+        weekStart.getUTCDate() + (startDow === 0 ? -6 : 1 - startDow),
+      );
+      let weekNumber = 0;
+
+      while (toDateStr(weekStart) <= todayStr) {
+        weekNumber += 1;
+
+        // Class days (Tue/Wed/Thu) in this week, on/after semester start, up to today.
+        const classDays: string[] = [];
+        for (let i = 0; i < 7; i++) {
+          const day = new Date(weekStart);
+          day.setUTCDate(day.getUTCDate() + i);
+          const dow = day.getUTCDay(); // 0=Sun … 6=Sat
+          if (dow !== 2 && dow !== 3 && dow !== 4) continue;
+          const ds = toDateStr(day);
+          if (ds < toDateStr(SEMESTER_START)) continue;
+          if (ds > todayStr) continue;
+          if (cancelledSet.has(ds)) continue;
+          classDays.push(ds);
+        }
+
+        // Week 1 had no attendance taken — skip it so it doesn't show everyone
+        // as absent.
+        if (classDays.length > 0 && weekNumber > 1) {
+          const absences: WeeklyAbsence[] = [];
+          roster.forEach((student) => {
+            const missed: string[] = [];
+            classDays.forEach((ds) => {
+              if (excusedSet.has(`${student.student_id}-${ds}`)) return;
+              if (!presentSet.has(`${student.student_id}-${ds}`)) {
+                missed.push(ds);
+              }
+            });
+            if (missed.length > 0) {
+              absences.push({
+                student_id: student.student_id,
+                cohort: student.cohort as "A" | "B" | "C",
+                name: student.name,
+                absentDays: missed,
+                frequency: missed.length,
+              });
+            }
+          });
+          absences.sort((a, b) => b.frequency - a.frequency);
+
+          const first = new Date(classDays[0] + "T00:00:00");
+          const last = new Date(classDays[classDays.length - 1] + "T00:00:00");
+          const rangeLabel =
+            classDays.length === 1
+              ? format(first, "MMM dd")
+              : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`;
+
+          report.push({
+            weekNumber,
+            startStr: toDateStr(weekStart),
+            rangeLabel,
+            absences,
+          });
+        }
+
+        weekStart.setUTCDate(weekStart.getUTCDate() + 7);
+      }
+
+      setWeeklyReport(report);
+    } catch (error) {
+      console.error("Error building weekly report:", error);
+    } finally {
+      setIsBuildingReport(false);
+    }
+  };
+
+  // Last 4 characters of the student ID = year group.
+  const yearGroupOf = (studentId: string) => studentId.slice(-4);
+
+  // Build the tab-separated block for a week (pastes into Excel columns
+  // Student's Name → Feedback). Respects the cohort filter.
+  const buildWeekTSV = (week: WeekReport) => {
+    const rows = week.absences.filter(
+      (a) =>
+        // Only students absent twice or thrice are reported.
+        a.frequency >= 2 &&
+        (weeklyAbsenceCohortFilter === "all" ||
+          a.cohort === weeklyAbsenceCohortFilter.toUpperCase()),
+    );
+    return rows
+      .map((a) => {
+        const pair = reportPairs[a.cohort] || { instructor: "", fi: "" };
+        // Feedback only for students absent twice or thrice in the week.
+        const feedback =
+          a.frequency >= 2 ? `Was absent for ${a.frequency} days` : "";
+        return [
+          a.name || a.student_id,
+          yearGroupOf(a.student_id),
+          a.cohort,
+          pair.instructor,
+          pair.fi,
+          feedback,
+        ].join("\t");
+      })
+      .join("\n");
+  };
+
+  const handleCopyWeek = async (week: WeekReport) => {
+    const tsv = buildWeekTSV(week);
+    if (!tsv) {
+      toast({
+        title: "Nothing to copy",
+        description: `No absences for Week ${week.weekNumber}.`,
+      });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(tsv);
+      toast({
+        title: "Copied",
+        description: `Week ${week.weekNumber} rows copied — paste into the Student's Name column.`,
+      });
+    } catch {
+      toast({
+        title: "Copy failed",
+        description: "Select the text and copy it manually.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSaveReportSettings = async () => {
+    setIsSavingReportSettings(true);
+    const nowIso = new Date().toISOString();
+    const rows = ["A", "B", "C"].map((c) => ({
+      cohort: c,
+      instructor_name: reportPairs[c]?.instructor || "",
+      fi_name: reportPairs[c]?.fi || "",
+      updated_at: nowIso,
+    }));
+    const { error } = await supabase
+      .from("report_settings")
+      .upsert(rows, { onConflict: "cohort" });
+    setIsSavingReportSettings(false);
+    if (error) {
+      console.error("Failed to save report settings:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save instructor / FI.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({
+      title: "Saved",
+      description: "Instructor and FI updated.",
+    });
+  };
 
   const filteredRosterForRemoval = removeSearchQuery.trim()
     ? roster.filter(
-      (r) =>
-        r.student_id
-          .toLowerCase()
-          .includes(removeSearchQuery.toLowerCase()) ||
-        (r.name &&
-          r.name.toLowerCase().includes(removeSearchQuery.toLowerCase())),
-    )
+        (r) =>
+          r.student_id
+            .toLowerCase()
+            .includes(removeSearchQuery.toLowerCase()) ||
+          (r.name &&
+            r.name.toLowerCase().includes(removeSearchQuery.toLowerCase())),
+      )
     : roster;
 
   const handleMarkAttendanceManually = async (
@@ -1494,9 +1749,7 @@ const TADashboard = ({
             </div>
             <div>
               <h1 className="text-2xl font-bold">{sectionTitle}</h1>
-              <p className="text-muted-foreground">
-                {sectionDescription}
-              </p>
+              <p className="text-muted-foreground">{sectionDescription}</p>
             </div>
           </div>
           <Button onClick={onLogout} variant="outline">
@@ -1597,9 +1850,8 @@ const TADashboard = ({
                 <Button
                   onClick={() => {
                     setShowWeeklyAbsenceDialog(true);
-                    setWeeklyAbsenceDate(undefined);
-                    setWeeklyAbsences([]);
                     setWeeklyAbsenceCohortFilter("all");
+                    buildWeeklyReport();
                   }}
                   variant="outline"
                   className="flex items-center gap-2"
@@ -1854,8 +2106,9 @@ const TADashboard = ({
                                     </span>
                                   </div>
                                   <span className="text-sm text-muted-foreground mt-1">
-                                    {roster.find((r) => r.student_id === student.id)
-                                      ?.name || "Unknown Student"}
+                                    {roster.find(
+                                      (r) => r.student_id === student.id,
+                                    )?.name || "Unknown Student"}
                                   </span>
                                 </div>
 
@@ -1899,7 +2152,10 @@ const TADashboard = ({
                                       <span className="font-medium">
                                         {studentId}
                                       </span>
-                                      <Badge variant="outline" className="text-xs">
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs"
+                                      >
                                         Cohort {cohort}
                                       </Badge>
                                     </div>
@@ -2339,7 +2595,9 @@ const TADashboard = ({
                 className="flex-1"
               />
               <Button
-                onClick={() => searchStudentForAttendance(attendanceSearchQuery)}
+                onClick={() =>
+                  searchStudentForAttendance(attendanceSearchQuery)
+                }
                 variant="default"
               >
                 <Search className="h-4 w-4 mr-2" />
@@ -2388,7 +2646,11 @@ const TADashboard = ({
 
                         <Button
                           onClick={() =>
-                            handleMarkAttendanceManually(student.student_id, cohort)}
+                            handleMarkAttendanceManually(
+                              student.student_id,
+                              cohort,
+                            )
+                          }
                           disabled={isAlreadyPresent}
                         >
                           Mark Present
@@ -2889,7 +3151,10 @@ const TADashboard = ({
                       selected={excusedStartDate}
                       onSelect={(date) => {
                         setExcusedStartDate(date);
-                        if (date && (!excusedEndDate || excusedEndDate < date)) {
+                        if (
+                          date &&
+                          (!excusedEndDate || excusedEndDate < date)
+                        ) {
                           setExcusedEndDate(date);
                         }
                       }}
@@ -2942,8 +3207,9 @@ const TADashboard = ({
             {excusedStudent && excusedStartDate && excusedEndDate && (
               <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg text-sm text-muted-foreground">
                 Excusing <strong>{excusedStudent.student_id}</strong>
-                {excusedStudent.name ? ` (${excusedStudent.name})` : ""} from{" "}
-                {format(excusedStartDate, "PP")} to{" "}
+                {excusedStudent.name
+                  ? ` (${excusedStudent.name})`
+                  : ""} from {format(excusedStartDate, "PP")} to{" "}
                 {format(excusedEndDate, "PP")} (class days only).
               </div>
             )}
@@ -2976,165 +3242,187 @@ const TADashboard = ({
         open={showWeeklyAbsenceDialog}
         onOpenChange={setShowWeeklyAbsenceDialog}
       >
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>
-              Pick any date to see who was absent that week (Tue/Wed/Thu only).
-              Students are sorted by number of absences.
+              Each week from the semester start. Copy a week's block and paste
+              it into the spreadsheet under the Student's Name column — it fills
+              Student's Name, Year Group, Cohort, Instructor, FI and Feedback
+              (days absent).
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4 flex-wrap">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-[240px] justify-start text-left font-normal",
-                      !weeklyAbsenceDate && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {weeklyAbsenceDate
-                      ? format(weeklyAbsenceDate, "PPP")
-                      : "Select a date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={weeklyAbsenceDate}
-                    onSelect={(date) => {
-                      setWeeklyAbsenceDate(date);
-                      if (date) {
-                        loadWeeklyAbsences(date);
-                      }
-                    }}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
 
-              <Select
-                value={weeklyAbsenceCohortFilter}
-                onValueChange={setWeeklyAbsenceCohortFilter}
+          <div className="space-y-4">
+            {/* Per-cohort lecturer / FI — collapsed by default */}
+            <div className="rounded-lg border bg-muted/30">
+              <button
+                type="button"
+                onClick={() => setShowReportConfig((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 p-3 text-sm font-medium"
               >
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Cohorts</SelectItem>
-                  <SelectItem value="a">Cohort A</SelectItem>
-                  <SelectItem value="b">Cohort B</SelectItem>
-                  <SelectItem value="c">Cohort C</SelectItem>
-                </SelectContent>
-              </Select>
+                <span>Lecturer &amp; FI per cohort</span>
+                {showReportConfig ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+              </button>
+              {showReportConfig && (
+                <div className="p-3 pt-0 space-y-3">
+                  <div className="space-y-2">
+                    <div className="hidden sm:grid grid-cols-[60px_1fr_1fr] gap-3 text-xs font-medium text-muted-foreground">
+                      <div>Cohort</div>
+                      <div>Instructor / Lecturer</div>
+                      <div>FI</div>
+                    </div>
+                    {["A", "B", "C"].map((c) => (
+                      <div
+                        key={c}
+                        className="grid grid-cols-1 sm:grid-cols-[60px_1fr_1fr] gap-3 items-center"
+                      >
+                        <Badge variant="outline" className="w-fit">
+                          Cohort {c}
+                        </Badge>
+                        <Input
+                          value={reportPairs[c]?.instructor || ""}
+                          onChange={(e) =>
+                            setReportPairs((prev) => ({
+                              ...prev,
+                              [c]: { ...prev[c], instructor: e.target.value },
+                            }))
+                          }
+                          placeholder={`Cohort ${c} instructor`}
+                        />
+                        <Input
+                          value={reportPairs[c]?.fi || ""}
+                          onChange={(e) =>
+                            setReportPairs((prev) => ({
+                              ...prev,
+                              [c]: { ...prev[c], fi: e.target.value },
+                            }))
+                          }
+                          placeholder={`Cohort ${c} FI`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <Select
+                      value={weeklyAbsenceCohortFilter}
+                      onValueChange={setWeeklyAbsenceCohortFilter}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Cohorts</SelectItem>
+                        <SelectItem value="a">Cohort A</SelectItem>
+                        <SelectItem value="b">Cohort B</SelectItem>
+                        <SelectItem value="c">Cohort C</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      onClick={handleSaveReportSettings}
+                      disabled={isSavingReportSettings}
+                    >
+                      {isSavingReportSettings
+                        ? "Saving..."
+                        : "Save Instructor / FI"}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {weeklyAbsenceDate && (
-              <div className="text-sm text-muted-foreground">
-                Showing week of{" "}
-                <strong>
-                  {format(getMonday(weeklyAbsenceDate), "MMM dd")}
-                </strong>{" "}
-                –{" "}
-                <strong>
-                  {format(
-                    (() => {
-                      const fri = getMonday(weeklyAbsenceDate);
-                      fri.setDate(fri.getDate() + 4);
-                      return fri;
-                    })(),
-                    "MMM dd, yyyy",
-                  )}
-                </strong>
-              </div>
-            )}
-
-            {isLoadingWeeklyAbsences ? (
-              <p className="text-center text-muted-foreground py-8">Loading…</p>
-            ) : !weeklyAbsenceDate ? (
+            {isBuildingReport ? (
               <p className="text-center text-muted-foreground py-8">
-                Pick a date to view weekly absences.
+                Building report…
               </p>
-            ) : filteredWeeklyAbsences.length === 0 ? (
+            ) : weeklyReport.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">
-                No absences found for this week. 🎉
+                No class weeks found yet.
               </p>
             ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_80px_80px_1fr] gap-2 font-semibold text-sm border-b pb-2">
-                  <div>Student</div>
-                  <div>Cohort</div>
-                  <div className="text-center">Missed</div>
-                  <div>Absent Days</div>
-                </div>
-                {filteredWeeklyAbsences.map((absence) => (
-                  <div
-                    key={absence.student_id}
-                    className="grid grid-cols-[1fr_80px_80px_1fr] gap-2 p-2 bg-muted/50 rounded-lg text-sm items-center"
-                  >
-                    <div>
-                      <span className="font-medium">{absence.student_id}</span>
-                      {absence.name && (
-                        <span className="text-muted-foreground ml-2 text-xs">
-                          {absence.name}
-                        </span>
+              <div className="space-y-3">
+                {/* Most recent week first */}
+                {[...weeklyReport].reverse().map((week) => {
+                  const tsv = buildWeekTSV(week);
+                  const count = tsv ? tsv.split("\n").length : 0;
+                  const open = expandedWeeks.has(week.weekNumber);
+                  return (
+                    <div key={week.weekNumber} className="rounded-lg border">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedWeeks((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(week.weekNumber)) {
+                              next.delete(week.weekNumber);
+                            } else {
+                              next.add(week.weekNumber);
+                            }
+                            return next;
+                          })
+                        }
+                        className="w-full flex items-center justify-between gap-2 p-3"
+                      >
+                        <div className="flex items-center gap-2 text-sm text-left">
+                          {open ? (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                          )}
+                          <span className="font-semibold">
+                            Week {week.weekNumber}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {week.rangeLabel}
+                          </span>
+                          <span className="text-muted-foreground">
+                            · {count} absentee{count !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      </button>
+                      {open && (
+                        <div className="p-3 border-t space-y-2">
+                          {count === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              No absences (twice or more) this week. 🎉
+                            </p>
+                          ) : (
+                            <>
+                              <div className="flex justify-end">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleCopyWeek(week)}
+                                  className="flex items-center gap-2"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                  Copy
+                                </Button>
+                              </div>
+                              <textarea
+                                readOnly
+                                value={tsv}
+                                onFocus={(e) => e.currentTarget.select()}
+                                className="w-full h-28 font-mono text-xs p-2 rounded-md border bg-background resize-y whitespace-pre"
+                              />
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <Badge variant="outline">Cohort {absence.cohort}</Badge>
-                    </div>
-                    <div className="text-center">
-                      <Badge
-                        variant={
-                          absence.frequency >= 3
-                            ? "destructive"
-                            : absence.frequency === 2
-                              ? "default"
-                              : "secondary"
-                        }
-                      >
-                        {absence.frequency}/3
-                      </Badge>
-                    </div>
-                    <div className="flex gap-1 flex-wrap">
-                      {absence.absentDays.map((d) => {
-                        const dayDate = new Date(d + "T00:00:00");
-                        const dayName = [
-                          "Sun",
-                          "Mon",
-                          "Tue",
-                          "Wed",
-                          "Thu",
-                          "Fri",
-                          "Sat",
-                        ][dayDate.getDay()];
-                        return (
-                          <Badge key={d} variant="outline" className="text-xs">
-                            {dayName} {format(dayDate, "MMM dd")}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-                <div className="pt-2 border-t text-sm text-muted-foreground">
-                  Total: {filteredWeeklyAbsences.length} student
-                  {filteredWeeklyAbsences.length !== 1 ? "s" : ""} with absences
-                </div>
+                  );
+                })}
               </div>
             )}
           </div>
+
           <DialogFooter>
-            <Button
-              onClick={() => {
-                setShowWeeklyAbsenceDialog(false);
-                setWeeklyAbsenceDate(undefined);
-                setWeeklyAbsences([]);
-              }}
-            >
+            <Button onClick={() => setShowWeeklyAbsenceDialog(false)}>
               Close
             </Button>
           </DialogFooter>
