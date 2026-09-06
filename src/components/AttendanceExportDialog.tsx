@@ -101,10 +101,14 @@ const AttendanceExportDialog = ({
   const [canvasFileName, setCanvasFileName] = useState("");
   const [matches, setMatches] = useState<CanvasMatch[] | null>(null);
   const [isApplyingCohorts, setIsApplyingCohorts] = useState(false);
+  // Rows the TA marked as not-a-student, kept so a re-match preserves them.
+  const [manualIgnores, setManualIgnores] = useState<Set<number>>(new Set());
 
   const resetCanvasMatching = () => {
     setMatches(null);
     setLastResult(null);
+    // Row indexes belong to the old file, so remembered ignores do not carry.
+    setManualIgnores(new Set());
   };
 
   // Any change to what gets tallied invalidates an existing pairing - a match
@@ -144,6 +148,33 @@ const AttendanceExportDialog = ({
         ? prev.map((m) =>
             m.rowIndex === rowIndex
               ? { ...m, studentId, how: studentId ? "manual" : "unmatched" }
+              : m,
+          )
+        : prev,
+    );
+  };
+
+  const handleToggleIgnore = (rowIndex: number, ignored: boolean) => {
+    // Remembered against the file's row index, so a re-match after a cohort fix
+    // does not make the TA dismiss the same rows again.
+    setManualIgnores((prev) => {
+      const next = new Set(prev);
+      if (ignored) next.add(rowIndex);
+      else next.delete(rowIndex);
+      return next;
+    });
+    setMatches((prev) =>
+      prev
+        ? prev.map((m) =>
+            m.rowIndex === rowIndex
+              ? {
+                  ...m,
+                  ignored,
+                  ignoredReason: ignored ? "manual" : undefined,
+                  // Ignoring releases whoever was paired to it.
+                  studentId: ignored ? null : m.studentId,
+                  how: ignored ? "unmatched" : m.how,
+                }
               : m,
           )
         : prev,
@@ -326,14 +357,25 @@ const AttendanceExportDialog = ({
           });
           return;
         }
-        const found = matchCanvasRows(canvasSheet, result.summary);
+        const found = matchCanvasRows(canvasSheet, result.summary).map((m) =>
+          manualIgnores.has(m.rowIndex)
+            ? {
+                ...m,
+                ignored: true,
+                ignoredReason: "manual" as const,
+                studentId: null,
+                how: "unmatched" as const,
+              }
+            : m,
+        );
         setMatches(found);
-        const unmatched = found.filter((m) => !m.studentId).length;
+        const people = found.filter((m) => !m.ignored);
+        const unmatched = people.filter((m) => !m.studentId).length;
         toast({
           title: "Matched against your Canvas export",
           description: unmatched
-            ? `${found.length - unmatched} of ${found.length} rows matched. Pair the rest below, then download.`
-            : `All ${found.length} rows matched. Ready to download.`,
+            ? `${people.length - unmatched} of ${people.length} students matched. Pair or ignore the rest below, then download.`
+            : `All ${people.length} students matched. Ready to download.`,
         });
         return;
       }
@@ -695,6 +737,7 @@ const AttendanceExportDialog = ({
               matches={matches}
               summary={lastResult.summary}
               onAssign={handleAssign}
+              onToggleIgnore={handleToggleIgnore}
               onApplyCohorts={handleApplyCohorts}
               isApplyingCohorts={isApplyingCohorts}
             />
