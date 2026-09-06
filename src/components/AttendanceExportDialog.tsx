@@ -205,7 +205,10 @@ const AttendanceExportDialog = ({
     const graded = present + absent;
     return {
       students: rows.length,
-      classDays: Math.max(...rows.map((r) => r.classDays)),
+      // Distinct dates that counted for at least one cohort in scope — not the
+      // per-cohort max, which hides a cohort that met on fewer days.
+      classDays: lastResult.sessionDays,
+      candidateDays: lastResult.candidateDays,
       present,
       absent,
       excused,
@@ -461,9 +464,10 @@ const AttendanceExportDialog = ({
               </Popover>
             </div>
             <p className="text-xs text-muted-foreground">
-              Only Tue/Wed/Thu class days count. Cancelled sessions are left out
-              of the totals, and excused days are reported separately rather
-              than as absences.
+              Only sessions that actually ran are counted — a Tue/Wed/Thu with
+              check-ins or a scheduled class date, minus anything cancelled. A
+              day the cohort never met is left out entirely rather than marking
+              everyone absent.
             </p>
           </div>
 
@@ -487,9 +491,18 @@ const AttendanceExportDialog = ({
             <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
               <p className="text-sm font-medium">
                 {lastResult.effectiveStart} to {lastResult.effectiveEnd} ·{" "}
-                {totals.classDays} class day
-                {totals.classDays === 1 ? "" : "s"}
+                {totals.classDays} session
+                {totals.classDays === 1 ? "" : "s"} held
+                {totals.candidateDays > totals.classDays
+                  ? ` of ${totals.candidateDays} possible`
+                  : ""}
               </p>
+              {/* Canvas asks for this when it meets the new column. */}
+              {exportFormat === "canvas" && (
+                <p className="text-xs text-muted-foreground">
+                  Set Points Possible to {totals.classDays} when Canvas asks.
+                </p>
+              )}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                 <span>{totals.students} students</span>
                 <span>

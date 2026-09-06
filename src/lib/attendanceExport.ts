@@ -83,6 +83,10 @@ export interface ExportResult {
   effectiveEnd: string;
   /** Set when the requested range was narrowed, or when nothing matched. */
   notice?: string;
+  /** Distinct dates counted as sessions across the cohorts in scope. */
+  sessionDays: number;
+  /** Tue/Wed/Thu in the range, before the session and cancellation filters. */
+  candidateDays: number;
   summary: SummaryRow[];
   detail: DetailRow[];
 }
@@ -244,7 +248,9 @@ const renderDefault = (ctx: RenderContext) => {
         "Student ID",
         "Name",
         "Cohort",
-        "Class Days",
+        // Not "Class Days" — this counts sessions actually held, which is the
+        // only thing an absence can be measured against.
+        "Sessions Held",
         // Naming the merge in the header stops the file being ambiguous once it
         // is separated from the dialog that produced it.
         mergeExcused ? "Present (incl. Excused)" : "Present",
@@ -280,6 +286,23 @@ const CANVAS_RESERVED_FRAGMENTS = [
   "Override Status",
 ];
 
+/**
+ * The roster stores names surname-first ("Carter, Robin Lee"); Canvas
+ * displays them given-name-first ("Robin Lee Carter"). Canvas matches
+ * students on SIS User ID, not on this column, so a mismatch would not break
+ * the import — but it would make the review screen hard to check against the
+ * gradebook. Split on the first comma only, which is the "Last, First" reading;
+ * a name with no comma is already in display order and is left alone.
+ */
+export const toGivenNameFirst = (name: string): string => {
+  const comma = name.indexOf(",");
+  if (comma === -1) return name.trim();
+  const surname = name.slice(0, comma).trim();
+  const given = name.slice(comma + 1).trim();
+  if (!surname || !given) return name.trim();
+  return `${given} ${surname}`;
+};
+
 const renderCanvas = (ctx: RenderContext) => {
   const { summary, scopeLabel, startStr, endStr } = ctx;
 
@@ -313,7 +336,7 @@ const renderCanvas = (ctx: RenderContext) => {
         assignmentColumn,
       ],
       summary.map((r) => [
-        r.name || r.student_id,
+        r.name ? toGivenNameFirst(r.name) : r.student_id,
         "",
         r.student_id,
         "",
@@ -389,6 +412,8 @@ export const buildAttendanceExport = async (
     effectiveStart: startStr,
     effectiveEnd: endStr,
     notice,
+    sessionDays: 0,
+    candidateDays: 0,
     summary: [],
     detail: [],
   });
@@ -422,19 +447,49 @@ export const buildAttendanceExport = async (
   // --- check-ins ----------------------------------------------------------
   // The stored timestamp is already UTC; slicing the date off the string avoids
   // re-parsing it through the browser's local timezone.
-  const presentRows = await fetchAll<{ student_id: string; timestamp: string }>(
-    "present_students",
-    "student_id, timestamp",
-    (q) =>
-      q
-        .gte("timestamp", `${startStr}T00:00:00`)
-        .lte("timestamp", `${endStr}T23:59:59.999`)
-        .order("timestamp", { ascending: true }),
+  const presentRows = await fetchAll<{
+    student_id: string;
+    cohort: string;
+    timestamp: string;
+  }>("present_students", "student_id, cohort, timestamp", (q) =>
+    q
+      .gte("timestamp", `${startStr}T00:00:00`)
+      .lte("timestamp", `${endStr}T23:59:59.999`)
+      .order("timestamp", { ascending: true }),
   );
+  // Presence is matched on student + date alone. A student who changed cohort
+  // mid-term still has their old check-ins tagged with the old cohort, and those
+  // days were still attended.
   const presentSet = new Set(
     presentRows.map(
       (r) => `${r.student_id}-${String(r.timestamp).slice(0, 10)}`,
     ),
+  );
+
+  // A cohort met on a date if anyone in it checked in — the same inference the
+  // dashboard's absence history makes ("if someone was present, it was a class
+  // day"). This is what stops an untaught Tuesday from being read as everyone
+  // being absent.
+  const sessionDaysByCohort = new Map<string, Set<string>>();
+  const markSession = (rawCohort: string, date: string) => {
+    const key = String(rawCohort || "").toUpperCase();
+    if (!key) return;
+    if (!sessionDaysByCohort.has(key)) sessionDaysByCohort.set(key, new Set());
+    sessionDaysByCohort.get(key)!.add(date);
+  };
+  presentRows.forEach((r) =>
+    markSession(r.cohort, String(r.timestamp).slice(0, 10)),
+  );
+
+  // Explicitly scheduled dates count too, so a session where nobody turned up
+  // is still a session — provided the TA generated the class dates.
+  const classDateRows = await fetchAll<{ date: string; cohort: string }>(
+    "class_dates",
+    "date, cohort",
+    (q) => q.gte("date", startStr).lte("date", endStr),
+  );
+  classDateRows.forEach((r) =>
+    markSession(r.cohort, String(r.date).slice(0, 10)),
   );
 
   // --- cancelled sessions -------------------------------------------------
@@ -462,12 +517,20 @@ export const buildAttendanceExport = async (
     excusedRows.map((r) => `${r.student_id}-${String(r.date).slice(0, 10)}`),
   );
 
-  // --- class days per cohort ----------------------------------------------
-  const allDays = eachDateStr(startStr, endStr).filter((ds) =>
+  // --- sessions per cohort -------------------------------------------------
+  //
+  // A student can only be absent from a session that actually happened. Every
+  // Tue/Wed/Thu in the range is a *candidate*; it becomes a counted session for
+  // a cohort only if there is evidence that cohort met — a check-in or a
+  // scheduled class date — and it was not cancelled.
+  //
+  // Counting bare weekdays instead inflates absences by every reading week,
+  // holiday and untaught day nobody thought to record as cancelled.
+  const candidateDays = eachDateStr(startStr, endStr).filter((ds) =>
     CLASS_WEEKDAYS.has(weekdayOf(ds)),
   );
 
-  if (allDays.length === 0) {
+  if (candidateDays.length === 0) {
     return empty(
       `No class days (Tue/Wed/Thu) fall between ${startStr} and ${endStr}.`,
     );
@@ -476,10 +539,13 @@ export const buildAttendanceExport = async (
   const classDaysFor = new Map<string, string[]>();
   const daysForCohort = (c: string): string[] => {
     if (!classDaysFor.has(c)) {
+      const held = sessionDaysByCohort.get(c);
       const cancelled = cancelledByCohort.get(c);
       classDaysFor.set(
         c,
-        cancelled ? allDays.filter((ds) => !cancelled.has(ds)) : allDays,
+        candidateDays.filter(
+          (ds) => Boolean(held?.has(ds)) && !cancelled?.has(ds),
+        ),
       );
     }
     return classDaysFor.get(c)!;
@@ -539,6 +605,28 @@ export const buildAttendanceExport = async (
     });
   });
 
+  // Distinct dates that counted for at least one cohort in scope.
+  const heldDays = new Set<string>();
+  roster.forEach((s) =>
+    daysForCohort(s.cohort).forEach((ds) => heldDays.add(ds)),
+  );
+
+  if (heldDays.size === 0) {
+    return empty(
+      `No sessions were recorded between ${startStr} and ${endStr} — no check-ins and no scheduled class dates in that window, so there is nothing to count anyone absent from.`,
+    );
+  }
+
+  const notes: string[] = [];
+  if (clampNotes.length) {
+    notes.push(`Range adjusted: ${clampNotes.join("; ")}`);
+  }
+  if (heldDays.size < candidateDays.length) {
+    notes.push(
+      `Counted ${heldDays.size} of ${candidateDays.length} possible class days — the rest have no check-ins and no scheduled date on record`,
+    );
+  }
+
   // --- csv ----------------------------------------------------------------
   const scopeLabel = studentId
     ? studentId
@@ -562,9 +650,9 @@ export const buildAttendanceExport = async (
     rowCount: rendered.rowCount,
     effectiveStart: startStr,
     effectiveEnd: endStr,
-    notice: clampNotes.length
-      ? `Range adjusted: ${clampNotes.join("; ")}.`
-      : undefined,
+    notice: notes.length ? `${notes.join(". ")}.` : undefined,
+    sessionDays: heldDays.size,
+    candidateDays: candidateDays.length,
     summary,
     detail,
   };
