@@ -57,6 +57,15 @@ columns, their order, and how CAMU matches students, then add an entry to
   so it silently truncates past 1000 students. Affects the dashboard and the
   export dialog's student picker; the export itself paginates its own read.
 - `buildWeeklyReport` in [src/components/TADashboard.tsx](src/components/TADashboard.tsx)
-  treats a cancelled session as cancelled for every cohort, ignoring the `cohort`
-  column on `cancelled_sessions`. The exporter respects it, so the two can
-  disagree. Decide which is right and make them match.
+  now disagrees with the exporter in two ways. Decide which is right and make
+  them match:
+  1. It treats a cancelled session as cancelled for **every** cohort, ignoring
+     the `cohort` column on `cancelled_sessions`. The exporter respects it.
+  2. It counts **every** Tue/Wed/Thu as a class day, so any day the cohort did
+     not actually meet — a holiday, a reading week, a day nobody recorded as
+     cancelled — is charged to every student as an absence. The exporter counts
+     a day only when there is evidence the session ran (a check-in, or a
+     `class_dates` row), which is the same inference `loadAbsenceHistory`
+     already makes. The weekly report's `weekNumber > 1` skip is a symptom of
+     this: week 1 had to be special-cased precisely because no attendance was
+     taken then.
