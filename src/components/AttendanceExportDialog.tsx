@@ -33,11 +33,13 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   buildAttendanceExport,
   downloadCsv,
+  FORMATS,
   SEMESTER_START,
-  toDateStr,
+  type ExportFormat,
   type ExportResult,
   type ExportShape,
 } from "@/lib/attendanceExport";
@@ -70,6 +72,8 @@ const AttendanceExportDialog = ({
 
   const [cohort, setCohort] = useState<string>("all");
   const [shape, setShape] = useState<ExportShape>("summary");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("default");
+  const [mergeExcused, setMergeExcused] = useState(false);
   const [startDate, setStartDate] = useState<Date>(semesterStartLocal);
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [studentQuery, setStudentQuery] = useState("");
@@ -152,7 +156,9 @@ const AttendanceExportDialog = ({
         end: endDate,
         cohort,
         studentId: selectedStudent?.student_id ?? null,
-        shape,
+        shape: FORMATS[exportFormat].usesShape ? shape : "summary",
+        format: exportFormat,
+        mergeExcusedIntoPresent: mergeExcused,
       });
 
       if (result.rowCount === 0) {
@@ -253,6 +259,38 @@ const AttendanceExportDialog = ({
             </div>
 
             <div className="space-y-2">
+              <label className="text-sm font-medium">Format</label>
+              <Select
+                value={exportFormat}
+                onValueChange={(value) => setExportFormat(value as ExportFormat)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    Object.entries(FORMATS) as [
+                      ExportFormat,
+                      (typeof FORMATS)[ExportFormat],
+                    ][]
+                  ).map(([id, def]) => (
+                    <SelectItem key={id} value={id}>
+                      {def.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground -mt-3">
+            {FORMATS[exportFormat].description}
+          </p>
+
+          {/* The summary/detail choice only means something for the app's own
+              layout; a gradebook import wants one row per student. */}
+          {FORMATS[exportFormat].usesShape && (
+            <div className="space-y-2">
               <label className="text-sm font-medium">Report</label>
               <Select
                 value={shape}
@@ -270,6 +308,29 @@ const AttendanceExportDialog = ({
                   </SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Merge excused into present */}
+          <div className="flex items-start gap-3 rounded-lg border p-3">
+            <Checkbox
+              id="merge-excused"
+              checked={mergeExcused}
+              onCheckedChange={(checked) => setMergeExcused(checked === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-1">
+              <label
+                htmlFor="merge-excused"
+                className="text-sm font-medium cursor-pointer"
+              >
+                Count excused days as present
+              </label>
+              <p className="text-xs text-muted-foreground">
+                {mergeExcused
+                  ? "Excused days are added to the present count, and the rate is over every class day."
+                  : "Excused days are reported separately and left out of the rate entirely."}
+              </p>
             </div>
           </div>
 
@@ -431,9 +492,15 @@ const AttendanceExportDialog = ({
               </p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                 <span>{totals.students} students</span>
-                <span>{totals.present} present</span>
+                <span>
+                  {totals.present} present
+                  {mergeExcused ? " (incl. excused)" : ""}
+                </span>
                 <span>{totals.absent} absent</span>
-                <span>{totals.excused} excused</span>
+                <span>
+                  {totals.excused} excused
+                  {mergeExcused ? " (counted above)" : ""}
+                </span>
                 <span className="font-medium text-foreground">
                   {totals.rate}% attendance
                 </span>
