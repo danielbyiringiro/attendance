@@ -69,15 +69,36 @@ export interface CanvasMatch {
   canvasCohort: string | null;
   /** Resolved attendance student_id, or null while unmatched. */
   studentId: string | null;
-  how: "sis-id" | "name" | "manual" | "unmatched";
+  how: "sis-id" | "name" | "manual" | "remembered" | "unmatched";
   /**
    * Row that is not a person to be matched. Still written to the output file —
    * Canvas needs it back — but never counted as an unmatched student and never
    * offered for pairing.
    */
   ignored: boolean;
-  ignoredReason?: "boilerplate" | "manual";
+  ignoredReason?: "boilerplate" | "manual" | "remembered";
+  /** Stable identity for remembering a decision about this row. */
+  canvasKey: string;
 }
+
+/**
+ * A key for this Canvas row that survives into the next export.
+ *
+ * Row position is useless — a fresh download can reorder freely. Canvas's
+ * internal ID is preferred because it is stable per enrolment and never
+ * re-typed; SIS User ID next; and failing both, the canonical name, which is
+ * the weakest of the three but is all that is left for a row carrying no
+ * identifier at all.
+ */
+export const canvasRowKey = (
+  canvasId: string,
+  sisUserId: string,
+  name: string,
+): string => {
+  if (canvasId.trim()) return `cid:${norm(canvasId)}`;
+  if (sisUserId.trim()) return `sis:${norm(sisUserId)}`;
+  return `name:${nameKey(name)}`;
+};
 
 /**
  * Rows a Canvas export carries that are not enrolled people.
@@ -279,6 +300,7 @@ export const matchCanvasRows = (
       canvasSisId,
       canvasSection,
       canvasCohort,
+      canvasKey: canvasRowKey(canvasId, canvasSisId, canvasName),
     };
 
     if (isBoilerplateRow(canvasName, canvasSisId, canvasId)) {

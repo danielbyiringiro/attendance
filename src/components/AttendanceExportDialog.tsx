@@ -49,6 +49,12 @@ import {
   type CohortChange,
 } from "@/lib/rosterUpdates";
 import {
+  applyRememberedMappings,
+  forgetCanvasMapping,
+  loadCanvasMappings,
+  saveCanvasMapping,
+} from "@/lib/canvasMappings";
+import {
   fillCanvasSheet,
   matchCanvasRows,
   parseCanvasCsv,
@@ -101,14 +107,13 @@ const AttendanceExportDialog = ({
   const [canvasFileName, setCanvasFileName] = useState("");
   const [matches, setMatches] = useState<CanvasMatch[] | null>(null);
   const [isApplyingCohorts, setIsApplyingCohorts] = useState(false);
-  // Rows the TA marked as not-a-student, kept so a re-match preserves them.
-  const [manualIgnores, setManualIgnores] = useState<Set<number>>(new Set());
+  // Whether sql/add_canvas_mappings.sql has been run. Null until first checked.
+  const [memoryAvailable, setMemoryAvailable] = useState<boolean | null>(null);
+  const [rememberedCount, setRememberedCount] = useState(0);
 
   const resetCanvasMatching = () => {
     setMatches(null);
     setLastResult(null);
-    // Row indexes belong to the old file, so remembered ignores do not carry.
-    setManualIgnores(new Set());
   };
 
   // Any change to what gets tallied invalidates an existing pairing - a match
@@ -142,7 +147,37 @@ const AttendanceExportDialog = ({
     }
   };
 
+  /**
+   * Persist one human decision about a Canvas row. Fire-and-forget: the UI has
+   * already moved on, and an export must not fail because memory is off.
+   */
+  const remember = (
+    match: CanvasMatch,
+    studentId: string | null,
+    ignored: boolean,
+  ) => {
+    // Undoing an automatic boilerplate guess is itself a decision worth
+    // storing, otherwise the next match would just guess boilerplate again.
+    const overridesBoilerplate = match.ignoredReason === "boilerplate";
+    const nothingToSay = studentId === null && !ignored && !overridesBoilerplate;
+
+    const write = nothingToSay
+      ? forgetCanvasMapping(match.canvasKey)
+      : saveCanvasMapping({
+          canvasKey: match.canvasKey,
+          studentId,
+          ignored,
+          canvasName: match.canvasName,
+        });
+
+    write.then((ok) => {
+      if (!ok) setMemoryAvailable(false);
+    });
+  };
+
   const handleAssign = (rowIndex: number, studentId: string | null) => {
+    const target = matches?.find((m) => m.rowIndex === rowIndex);
+    if (target) remember(target, studentId, false);
     setMatches((prev) =>
       prev
         ? prev.map((m) =>
@@ -155,14 +190,8 @@ const AttendanceExportDialog = ({
   };
 
   const handleToggleIgnore = (rowIndex: number, ignored: boolean) => {
-    // Remembered against the file's row index, so a re-match after a cohort fix
-    // does not make the TA dismiss the same rows again.
-    setManualIgnores((prev) => {
-      const next = new Set(prev);
-      if (ignored) next.add(rowIndex);
-      else next.delete(rowIndex);
-      return next;
-    });
+    const target = matches?.find((m) => m.rowIndex === rowIndex);
+    if (target) remember(target, null, ignored);
     setMatches((prev) =>
       prev
         ? prev.map((m) =>
@@ -357,25 +386,29 @@ const AttendanceExportDialog = ({
           });
           return;
         }
-        const found = matchCanvasRows(canvasSheet, result.summary).map((m) =>
-          manualIgnores.has(m.rowIndex)
-            ? {
-                ...m,
-                ignored: true,
-                ignoredReason: "manual" as const,
-                studentId: null,
-                how: "unmatched" as const,
-              }
-            : m,
-        );
+        const store = await loadCanvasMappings();
+        setMemoryAvailable(store.available);
+
+        const fresh = matchCanvasRows(canvasSheet, result.summary);
+        const found = applyRememberedMappings(fresh, store.mappings);
         setMatches(found);
+
+        const recalled = found.filter(
+          (m) => m.how === "remembered" || m.ignoredReason === "remembered",
+        ).length;
+        setRememberedCount(recalled);
+
         const people = found.filter((m) => !m.ignored);
         const unmatched = people.filter((m) => !m.studentId).length;
         toast({
           title: "Matched against your Canvas export",
-          description: unmatched
-            ? `${people.length - unmatched} of ${people.length} students matched. Pair or ignore the rest below, then download.`
-            : `All ${people.length} students matched. Ready to download.`,
+          description: `${people.length - unmatched} of ${people.length} students matched${
+            recalled ? `, ${recalled} from memory` : ""
+          }. ${
+            unmatched
+              ? "Pair or ignore the rest below, then download."
+              : "Ready to download."
+          }`,
         });
         return;
       }
@@ -740,6 +773,8 @@ const AttendanceExportDialog = ({
               onToggleIgnore={handleToggleIgnore}
               onApplyCohorts={handleApplyCohorts}
               isApplyingCohorts={isApplyingCohorts}
+              memoryAvailable={memoryAvailable}
+              rememberedCount={rememberedCount}
             />
           )}
 

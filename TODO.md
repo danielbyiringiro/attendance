@@ -54,6 +54,12 @@ columns, their order, and how CAMU matches students, then add an entry to
 `FORMATS`. The Canvas entry in
 [src/lib/attendanceExport.ts](src/lib/attendanceExport.ts) is the model to copy.
 
+## Migration to run
+
+`sql/add_canvas_mappings.sql` stores remembered Canvas row pairings. Until it
+is run in the Supabase SQL Editor, the export still works but forgets manual
+pairings and ignores between exports, and the match panel says so.
+
 ## Smaller items
 
 - `SEMESTER_START` disagrees across the app: the export module and TA dashboard
