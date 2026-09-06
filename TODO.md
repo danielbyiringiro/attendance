@@ -42,6 +42,12 @@ A CAMU option was requested alongside Canvas, but we have no specification or
 sample file for what CAMU accepts on import, and guessing at a layout produces a
 file that fails silently on the other end.
 
+If CAMU can export its own roster or gradebook, prefer the round-trip that
+Canvas uses: upload CAMU's file, fill a column, hand it back. See
+[src/lib/canvasGradebook.ts](src/lib/canvasGradebook.ts) — matching on the
+institutional student ID means no name reformatting and no guessing at
+identity columns.
+
 To implement: get one real CAMU attendance or grade import template (ideally an
 export from CAMU itself, which is usually round-trippable), confirm the required
 columns, their order, and how CAMU matches students, then add an entry to
