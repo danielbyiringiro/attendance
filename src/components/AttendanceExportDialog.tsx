@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
+import CanvasMatchPanel from "@/components/CanvasMatchPanel";
 import {
   buildAttendanceExport,
   downloadCsv,
@@ -43,6 +44,13 @@ import {
   type ExportResult,
   type ExportShape,
 } from "@/lib/attendanceExport";
+import {
+  fillCanvasSheet,
+  matchCanvasRows,
+  parseCanvasCsv,
+  type CanvasMatch,
+  type ParsedCanvasSheet,
+} from "@/lib/canvasGradebook";
 
 interface RosterStudent {
   student_id: string;
@@ -82,6 +90,88 @@ const AttendanceExportDialog = ({
   );
   const [isExporting, setIsExporting] = useState(false);
   const [lastResult, setLastResult] = useState<ExportResult | null>(null);
+
+  // Canvas round-trip: the uploaded gradebook and how its rows pair up with the
+  // attendance roster.
+  const [canvasSheet, setCanvasSheet] = useState<ParsedCanvasSheet | null>(null);
+  const [canvasFileName, setCanvasFileName] = useState("");
+  const [matches, setMatches] = useState<CanvasMatch[] | null>(null);
+
+  const resetCanvasMatching = () => {
+    setMatches(null);
+    setLastResult(null);
+  };
+
+  // Any change to what gets tallied invalidates an existing pairing - a match
+  // built for one date range must not be downloaded against another.
+  useEffect(() => {
+    setMatches(null);
+  }, [exportFormat, cohort, mergeExcused, startDate, endDate, selectedStudent]);
+
+  const handleCanvasFile = async (file: File | undefined) => {
+    if (!file) return;
+    resetCanvasMatching();
+    try {
+      const parsed = parseCanvasCsv(await file.text());
+      setCanvasSheet(parsed);
+      setCanvasFileName(file.name);
+      toast({
+        title: "Canvas export loaded",
+        description: `${file.name} — ${parsed.rows.length} student row${
+          parsed.rows.length === 1 ? "" : "s"
+        }.`,
+      });
+    } catch (error) {
+      setCanvasSheet(null);
+      setCanvasFileName("");
+      toast({
+        title: "Could not read that file",
+        description:
+          error instanceof Error ? error.message : "Unrecognised CSV.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAssign = (rowIndex: number, studentId: string | null) => {
+    setMatches((prev) =>
+      prev
+        ? prev.map((m) =>
+            m.rowIndex === rowIndex
+              ? { ...m, studentId, how: studentId ? "manual" : "unmatched" }
+              : m,
+          )
+        : prev,
+    );
+  };
+
+  const handleDownloadFilled = () => {
+    if (!canvasSheet || !matches || !lastResult) return;
+    try {
+      const filled = fillCanvasSheet({
+        sheet: canvasSheet,
+        matches,
+        summary: lastResult.summary,
+        sessionDays: lastResult.sessionDays,
+        startStr: lastResult.effectiveStart,
+        endStr: lastResult.effectiveEnd,
+      });
+      downloadCsv(filled.csv, filled.filename);
+      toast({
+        title: "Canvas file ready",
+        description: `${filled.filename} — ${filled.filled} scored${
+          filled.blank ? `, ${filled.blank} left blank` : ""
+        }. Upload it on the Grades page.`,
+      });
+    } catch (error) {
+      toast({
+        title: "Could not build the file",
+        description:
+          error instanceof Error ? error.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Cohort options come from the roster, so an extra cohort added later shows
   // up here without a code change.
@@ -171,8 +261,33 @@ const AttendanceExportDialog = ({
         return;
       }
 
-      downloadCsv(result.csv, result.filename);
       setLastResult(result);
+
+      // Filling a Canvas export is a two-step: match first, so unmatched rows
+      // can be paired by hand before anything is downloaded.
+      if (FORMATS[exportFormat].requiresCanvasExport) {
+        if (!canvasSheet) {
+          toast({
+            title: "No Canvas export uploaded",
+            description:
+              "Upload the CSV from your Canvas Grades page, or switch to a format that builds a file from scratch.",
+            variant: "destructive",
+          });
+          return;
+        }
+        const found = matchCanvasRows(canvasSheet, result.summary);
+        setMatches(found);
+        const unmatched = found.filter((m) => !m.studentId).length;
+        toast({
+          title: "Matched against your Canvas export",
+          description: unmatched
+            ? `${found.length - unmatched} of ${found.length} rows matched. Pair the rest below, then download.`
+            : `All ${found.length} rows matched. Ready to download.`,
+        });
+        return;
+      }
+
+      downloadCsv(result.csv, result.filename);
       toast({
         title: "Export ready",
         description: `${result.filename} — ${result.rowCount} row${
@@ -289,6 +404,34 @@ const AttendanceExportDialog = ({
           <p className="text-xs text-muted-foreground -mt-3">
             {FORMATS[exportFormat].description}
           </p>
+
+          {/* Canvas round-trip: the export to fill */}
+          {FORMATS[exportFormat].requiresCanvasExport && (
+            <div className="space-y-2 rounded-lg border p-3">
+              <label className="text-sm font-medium">
+                Canvas gradebook export
+              </label>
+              <Input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => handleCanvasFile(e.target.files?.[0])}
+              />
+              {canvasSheet ? (
+                <p className="text-xs text-muted-foreground">
+                  {canvasFileName} · {canvasSheet.rows.length} students ·{" "}
+                  {canvasSheet.header.length} existing columns
+                  {canvasSheet.pointsPossibleRow
+                    ? " · Points Possible row will be filled in"
+                    : ""}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  In Canvas: Grades → Export → Export Entire Gradebook. Your
+                  existing assignment columns are carried through untouched.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* The summary/detail choice only means something for the app's own
               layout; a gradebook import wants one row per student. */}
@@ -486,6 +629,15 @@ const AttendanceExportDialog = ({
             )}
           </div>
 
+          {/* Canvas reconciliation */}
+          {matches && lastResult && (
+            <CanvasMatchPanel
+              matches={matches}
+              summary={lastResult.summary}
+              onAssign={handleAssign}
+            />
+          )}
+
           {/* Result of the last export */}
           {lastResult && totals && (
             <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
@@ -534,11 +686,23 @@ const AttendanceExportDialog = ({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          <Button onClick={handleExport} disabled={isExporting}>
+          <Button
+            onClick={handleExport}
+            disabled={
+              isExporting ||
+              (FORMATS[exportFormat].requiresCanvasExport && !canvasSheet)
+            }
+            variant={matches ? "outline" : "default"}
+          >
             {isExporting ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Building…
+              </>
+            ) : FORMATS[exportFormat].requiresCanvasExport ? (
+              <>
+                <Users className="h-4 w-4 mr-2" />
+                {matches ? "Re-match" : "Match students"}
               </>
             ) : (
               <>
@@ -547,6 +711,12 @@ const AttendanceExportDialog = ({
               </>
             )}
           </Button>
+          {matches && (
+            <Button onClick={handleDownloadFilled}>
+              <Download className="h-4 w-4 mr-2" />
+              Download filled CSV
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -7,6 +7,7 @@
 // otherwise. Excused days are never counted as absences.
 
 import { supabase } from "@/lib/supabase";
+import { toCsv } from "@/lib/csv";
 
 // Attendance is only tracked from this date forward; anything earlier has no
 // check-in rows at all and would read as everybody being absent.
@@ -25,7 +26,7 @@ export type DayStatus = "Present" | "Excused" | "Absent";
  * shape the same numbers into whatever a downstream gradebook expects. New
  * targets are added to FORMATS below — nothing else needs to change.
  */
-export type ExportFormat = "default" | "canvas";
+export type ExportFormat = "default" | "canvas" | "canvas-fill";
 
 export interface ExportOptions {
   /** First day of the range, inclusive (clamped to the semester start). */
@@ -169,31 +170,6 @@ const fetchAll = async <T>(
 };
 
 // ---------------------------------------------------------------------------
-// CSV
-// ---------------------------------------------------------------------------
-
-// Byte-order mark. Without it Excel opens the file as the local ANSI code
-// page and mangles any non-ASCII name.
-const BOM = String.fromCharCode(0xfeff);
-
-// A cell that opens with one of these is run as a formula when the file is
-// opened in Excel or Sheets. Names and IDs come from user input, so they get a
-// leading apostrophe to force them back to text.
-const RISKY_LEAD = /^[=+\-@\t\r]/;
-
-const csvCell = (value: string | number): string => {
-  const raw = value === null || value === undefined ? "" : String(value);
-  const safe = RISKY_LEAD.test(raw) ? `'${raw}` : raw;
-  return `"${safe.replace(/"/g, '""')}"`;
-};
-
-const toCsv = (header: string[], rows: (string | number)[][]): string => {
-  const lines = [header, ...rows].map((r) => r.map(csvCell).join(","));
-  // CRLF line endings, because that is what Excel itself writes.
-  return `${BOM}${lines.join("\r\n")}\r\n`;
-};
-
-// ---------------------------------------------------------------------------
 // Formats
 //
 // Each entry turns the same tallied rows into one destination system's layout.
@@ -218,11 +194,17 @@ interface FormatDefinition {
   description: string;
   /** Whether the summary/detail choice applies to this format. */
   usesShape: boolean;
-  render: (ctx: RenderContext) => {
+  /**
+   * Absent when the format fills a template the user supplies. The tally still
+   * comes back on the result; the caller renders it against the upload.
+   */
+  render?: (ctx: RenderContext) => {
     csv: string;
     filename: string;
     rowCount: number;
   };
+  /** The dialog must collect a Canvas gradebook export before exporting. */
+  requiresCanvasExport?: boolean;
 }
 
 const renderDefault = (ctx: RenderContext) => {
@@ -362,10 +344,17 @@ export const FORMATS: Record<ExportFormat, FormatDefinition> = {
     usesShape: true,
     render: renderDefault,
   },
-  canvas: {
-    label: "Canvas gradebook",
+  "canvas-fill": {
+    label: "Canvas — fill a gradebook export",
     description:
-      "Canvas grade-import layout. Score is days attended — set Points Possible to the class-day count when Canvas asks.",
+      "Upload the CSV you downloaded from your Canvas Grades page. Every column Canvas gave you is preserved and one attendance column is added, so names and IDs are Canvas's own.",
+    usesShape: false,
+    requiresCanvasExport: true,
+  },
+  canvas: {
+    label: "Canvas — build from scratch",
+    description:
+      "For when you have no gradebook export to hand. Canvas's ID and Section columns are left blank and the name order is guessed, so prefer filling a real export.",
     usesShape: false,
     render: renderCanvas,
   },
@@ -639,15 +628,20 @@ export const buildAttendanceExport = async (
       ? "all-cohorts"
       : `cohort-${cohort}`;
 
-  const rendered = FORMATS[format].render({
-    summary,
-    detail,
-    shape,
-    mergeExcused,
-    scopeLabel,
-    startStr,
-    endStr,
-  });
+  const definition = FORMATS[format];
+  const rendered = definition.render
+    ? definition.render({
+        summary,
+        detail,
+        shape,
+        mergeExcused,
+        scopeLabel,
+        startStr,
+        endStr,
+      })
+    : // A template-filling format renders from the caller's upload; the tally
+      // below is still what it renders against.
+      { csv: "", filename: "", rowCount: summary.length };
 
   return {
     csv: rendered.csv,
