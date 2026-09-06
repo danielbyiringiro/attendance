@@ -287,20 +287,25 @@ const CANVAS_RESERVED_FRAGMENTS = [
 ];
 
 /**
- * The roster stores names surname-first ("Carter, Robin Lee"); Canvas
- * displays them given-name-first ("Robin Lee Carter"). Canvas matches
- * students on SIS User ID, not on this column, so a mismatch would not break
- * the import — but it would make the review screen hard to check against the
- * gradebook. Split on the first comma only, which is the "Last, First" reading;
- * a name with no comma is already in display order and is left alone.
+ * This app stores names given-name-first ("Robin Lee Carter"); Canvas
+ * wants them surname-first ("Carter, Robin Lee").
+ *
+ * HEURISTIC, and a lossy one: it assumes the surname is the last whitespace-
+ * separated token. That is wrong for a multi-word surname ("van der Berg",
+ * "Lee Carter" if Addy is a middle name), and nothing in the roster
+ * distinguishes the two cases. Prefer filling a real Canvas export, where the
+ * name comes from Canvas itself and no guess is needed.
+ *
+ * A name that already contains a comma is assumed to be surname-first and is
+ * left alone.
  */
-export const toGivenNameFirst = (name: string): string => {
-  const comma = name.indexOf(",");
-  if (comma === -1) return name.trim();
-  const surname = name.slice(0, comma).trim();
-  const given = name.slice(comma + 1).trim();
-  if (!surname || !given) return name.trim();
-  return `${given} ${surname}`;
+export const toSurnameFirst = (name: string): string => {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (!trimmed || trimmed.includes(",")) return trimmed;
+  const parts = trimmed.split(" ");
+  if (parts.length < 2) return trimmed;
+  const surname = parts[parts.length - 1];
+  return `${surname}, ${parts.slice(0, -1).join(" ")}`;
 };
 
 const renderCanvas = (ctx: RenderContext) => {
@@ -336,7 +341,7 @@ const renderCanvas = (ctx: RenderContext) => {
         assignmentColumn,
       ],
       summary.map((r) => [
-        r.name ? toGivenNameFirst(r.name) : r.student_id,
+        r.name ? toSurnameFirst(r.name) : r.student_id,
         "",
         r.student_id,
         "",
