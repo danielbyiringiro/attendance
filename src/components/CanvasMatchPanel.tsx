@@ -24,6 +24,9 @@ interface CanvasMatchPanelProps {
   /** Write the given cohort corrections back to the roster. */
   onApplyCohorts: (changes: CohortChange[]) => void;
   isApplyingCohorts: boolean;
+  /** False when sql/add_canvas_mappings.sql has not been run. */
+  memoryAvailable: boolean | null;
+  rememberedCount: number;
 }
 
 const CanvasMatchPanel = ({
@@ -33,6 +36,8 @@ const CanvasMatchPanel = ({
   onToggleIgnore,
   onApplyCohorts,
   isApplyingCohorts,
+  memoryAvailable,
+  rememberedCount,
 }: CanvasMatchPanelProps) => {
   const byStudent = useMemo(
     () => new Map(summary.map((s) => [s.student_id, s])),
@@ -113,6 +118,19 @@ const CanvasMatchPanel = ({
           )
         </span>
       </div>
+
+      {memoryAvailable === false ? (
+        <p className="text-xs text-muted-foreground">
+          Pairings are not being remembered — run{" "}
+          <code>sql/add_canvas_mappings.sql</code> in Supabase to keep them
+          between exports.
+        </p>
+      ) : rememberedCount > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {rememberedCount} decision{rememberedCount === 1 ? "" : "s"} recalled
+          from last time. Changing one here updates what is remembered.
+        </p>
+      ) : null}
 
       {/* Cohort corrections */}
       {cohortConflicts.length > 0 && (
@@ -241,7 +259,9 @@ const CanvasMatchPanel = ({
                   <span className="text-muted-foreground">
                     {m.ignoredReason === "boilerplate"
                       ? " · recognised as boilerplate"
-                      : " · ignored by you"}
+                      : m.ignoredReason === "remembered"
+                        ? " · ignored previously"
+                        : " · ignored by you"}
                   </span>
                 </span>
                 <Button
