@@ -70,7 +70,40 @@ export interface CanvasMatch {
   /** Resolved attendance student_id, or null while unmatched. */
   studentId: string | null;
   how: "sis-id" | "name" | "manual" | "unmatched";
+  /**
+   * Row that is not a person to be matched. Still written to the output file —
+   * Canvas needs it back — but never counted as an unmatched student and never
+   * offered for pairing.
+   */
+  ignored: boolean;
+  ignoredReason?: "boilerplate" | "manual";
 }
+
+/**
+ * Rows a Canvas export carries that are not enrolled people.
+ *
+ * Canvas's Student View adds a "Test Student"; a re-saved sheet can carry a
+ * stray "Points Possible"; and a row with no name and no identifier at all is
+ * structure, not a person. Extend this list rather than teaching the UI about
+ * new special cases — anything missed here is still ignorable by hand.
+ */
+const BOILERPLATE_NAMES = new Set([
+  "points possible",
+  "test student",
+  "student, test",
+  "test, student",
+]);
+
+export const isBoilerplateRow = (
+  name: string,
+  sisId: string,
+  canvasId: string,
+): boolean => {
+  const n = norm(name);
+  if (BOILERPLATE_NAMES.has(n)) return true;
+  // Nothing to identify a person by.
+  return !n && !sisId.trim() && !canvasId.trim();
+};
 
 /**
  * Read a cohort code out of a Canvas Section label.
@@ -151,12 +184,22 @@ export const parseCanvasCsv = (text: string): ParsedCanvasSheet => {
     );
   }
 
+  // Canvas puts Points Possible directly under the header, but scan the whole
+  // body rather than trusting the position — a sheet that has been through
+  // Excel or a re-sort can move it, and a missed one gets reported as a student
+  // called "Points Possible" that the TA is then asked to match.
+  const nameCellOf = (r: string[]) =>
+    norm((name === -1 ? r[0] : r[name]) ?? r[0] ?? "");
+
   let pointsPossibleRow: string[] | null = null;
-  let body = rows.slice(1);
-  if (body.length > 0 && norm(body[0][name] ?? body[0][0] ?? "") === "points possible") {
-    pointsPossibleRow = body[0];
-    body = body.slice(1);
-  }
+  const body: string[][] = [];
+  rows.slice(1).forEach((r) => {
+    if (pointsPossibleRow === null && nameCellOf(r) === "points possible") {
+      pointsPossibleRow = r;
+      return;
+    }
+    body.push(r);
+  });
 
   // Drop trailing blank lines; a row of empty cells is not a student.
   const isBlank = (r: string[]) => r.every((c) => c.trim() === "");
@@ -225,6 +268,11 @@ export const matchCanvasRows = (
       ? inferCohortFromSection(canvasSection, knownCohorts)
       : null;
 
+    const canvasId =
+      sheet.columns.canvasId === -1
+        ? ""
+        : (row[sheet.columns.canvasId] ?? "").trim();
+
     const base = {
       rowIndex,
       canvasName,
@@ -233,18 +281,33 @@ export const matchCanvasRows = (
       canvasCohort,
     };
 
+    if (isBoilerplateRow(canvasName, canvasSisId, canvasId)) {
+      return {
+        ...base,
+        studentId: null,
+        how: "unmatched" as const,
+        ignored: true,
+        ignoredReason: "boilerplate" as const,
+      };
+    }
+
     const viaId = canvasSisId ? byId.get(norm(canvasSisId)) : undefined;
     if (viaId && !taken.has(viaId)) {
       taken.add(viaId);
-      return { ...base, studentId: viaId, how: "sis-id" as const };
+      return { ...base, studentId: viaId, how: "sis-id" as const, ignored: false };
     }
 
-    return { ...base, studentId: null, how: "unmatched" as const };
+    return {
+      ...base,
+      studentId: null,
+      how: "unmatched" as const,
+      ignored: false,
+    };
   });
 
   // Name fallback runs as a second pass so an ID match always wins the student.
   matches.forEach((m) => {
-    if (m.studentId || !m.canvasName) return;
+    if (m.ignored || m.studentId || !m.canvasName) return;
     const k = nameKey(m.canvasName);
     if (canvasNameCounts.get(k) !== 1) return; // ambiguous within the Canvas file
     const candidate = byName.get(k);

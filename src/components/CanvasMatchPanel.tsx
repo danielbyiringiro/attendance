@@ -2,7 +2,14 @@ import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import StudentPicker from "@/components/StudentPicker";
-import { AlertTriangle, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Loader2,
+} from "lucide-react";
 import type { CanvasMatch } from "@/lib/canvasGradebook";
 import type { CohortChange } from "@/lib/rosterUpdates";
 import type { SummaryRow } from "@/lib/attendanceExport";
@@ -12,6 +19,8 @@ interface CanvasMatchPanelProps {
   summary: SummaryRow[];
   /** Pair one Canvas row with an attendance student, or null to unpair. */
   onAssign: (rowIndex: number, studentId: string | null) => void;
+  /** Mark a row as not-a-student, or bring it back. */
+  onToggleIgnore: (rowIndex: number, ignored: boolean) => void;
   /** Write the given cohort corrections back to the roster. */
   onApplyCohorts: (changes: CohortChange[]) => void;
   isApplyingCohorts: boolean;
@@ -21,6 +30,7 @@ const CanvasMatchPanel = ({
   matches,
   summary,
   onAssign,
+  onToggleIgnore,
   onApplyCohorts,
   isApplyingCohorts,
 }: CanvasMatchPanelProps) => {
@@ -29,8 +39,12 @@ const CanvasMatchPanel = ({
     [summary],
   );
 
-  const matched = matches.filter((m) => m.studentId);
-  const unmatched = matches.filter((m) => !m.studentId);
+  // Ignored rows are neither matched nor outstanding — they are not people, so
+  // counting them either way would misstate how much is left to do.
+  const ignored = matches.filter((m) => m.ignored);
+  const people = matches.filter((m) => !m.ignored);
+  const matched = people.filter((m) => m.studentId);
+  const unmatched = people.filter((m) => !m.studentId);
 
   // Only offer students who are not already spoken for, so the same person
   // cannot be assigned to two Canvas rows.
@@ -41,10 +55,10 @@ const CanvasMatchPanel = ({
     return summary.filter((s) => !taken.has(s.student_id));
   }, [matches, summary]);
 
-  const autoCount = matches.filter(
+  const autoCount = people.filter(
     (m) => m.how === "sis-id" || m.how === "name",
   ).length;
-  const manualCount = matches.filter((m) => m.how === "manual").length;
+  const manualCount = people.filter((m) => m.how === "manual").length;
 
   // A matched student whose Canvas section disagrees with their cohort here.
   // Their attendance is being counted against the wrong cohort's sessions, so
@@ -86,11 +100,17 @@ const CanvasMatchPanel = ({
           <AlertTriangle className="h-4 w-4 text-amber-600" />
         )}
         <span className="font-medium">
-          {matched.length} of {matches.length} Canvas rows matched
+          {matched.length} of {people.length} Canvas students matched
         </span>
         <span className="text-muted-foreground">
           ({autoCount} automatically
-          {manualCount > 0 ? `, ${manualCount} by hand` : ""})
+          {manualCount > 0 ? `, ${manualCount} by hand` : ""}
+          {ignored.length > 0
+            ? `, ${ignored.length} non-student row${
+                ignored.length === 1 ? "" : "s"
+              } ignored`
+            : ""}
+          )
         </span>
       </div>
 
@@ -162,15 +182,16 @@ const CanvasMatchPanel = ({
       {unmatched.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            These Canvas students had no matching attendance record. Search for
-            the right person, or leave them — a blank cell tells Canvas to leave
-            that student's existing grade alone.
+            These Canvas rows had no matching attendance record. Search for the
+            right person, or ignore the row if it is not a student. Left alone,
+            a blank cell tells Canvas to leave that row's existing grade
+            untouched.
           </p>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {unmatched.map((m) => (
               <div
                 key={m.rowIndex}
-                className="flex items-center justify-between gap-3 rounded-md bg-muted/50 p-2"
+                className="flex items-center justify-between gap-2 rounded-md bg-muted/50 p-2"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
@@ -185,12 +206,57 @@ const CanvasMatchPanel = ({
                   students={available}
                   value={m.studentId}
                   onChange={(id) => onAssign(m.rowIndex, id)}
-                  className="w-60 shrink-0"
+                  className="w-52 shrink-0"
                 />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0"
+                  title="Not a student — leave this row out"
+                  onClick={() => onToggleIgnore(m.rowIndex, true)}
+                >
+                  <EyeOff className="h-4 w-4" />
+                </Button>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Rows deliberately left out */}
+      {ignored.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">
+            {ignored.length} row{ignored.length === 1 ? "" : "s"} ignored —
+            still written to the file, never scored
+          </summary>
+          <div className="mt-2 space-y-1">
+            {ignored.map((m) => (
+              <div
+                key={m.rowIndex}
+                className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1"
+              >
+                <span className="truncate">
+                  {m.canvasName || "(no name)"}
+                  <span className="text-muted-foreground">
+                    {m.ignoredReason === "boilerplate"
+                      ? " · recognised as boilerplate"
+                      : " · ignored by you"}
+                  </span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 shrink-0 text-xs"
+                  onClick={() => onToggleIgnore(m.rowIndex, false)}
+                >
+                  <Eye className="h-3.5 w-3.5 mr-1" />
+                  Treat as student
+                </Button>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       {unplaced.length > 0 && (
