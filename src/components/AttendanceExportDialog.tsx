@@ -45,6 +45,10 @@ import {
   type ExportShape,
 } from "@/lib/attendanceExport";
 import {
+  applyCohortChanges,
+  type CohortChange,
+} from "@/lib/rosterUpdates";
+import {
   fillCanvasSheet,
   matchCanvasRows,
   parseCanvasCsv,
@@ -96,6 +100,7 @@ const AttendanceExportDialog = ({
   const [canvasSheet, setCanvasSheet] = useState<ParsedCanvasSheet | null>(null);
   const [canvasFileName, setCanvasFileName] = useState("");
   const [matches, setMatches] = useState<CanvasMatch[] | null>(null);
+  const [isApplyingCohorts, setIsApplyingCohorts] = useState(false);
 
   const resetCanvasMatching = () => {
     setMatches(null);
@@ -143,6 +148,47 @@ const AttendanceExportDialog = ({
           )
         : prev,
     );
+  };
+
+  const handleApplyCohorts = async (changes: CohortChange[]) => {
+    if (changes.length === 0) return;
+    setIsApplyingCohorts(true);
+    try {
+      const results = await applyCohortChanges(changes);
+      const failed = results.filter((r) => r.error);
+      const moved = results.filter((r) => !r.error);
+      const retagged = moved.reduce((n, r) => n + r.checkInsRetagged, 0);
+
+      if (moved.length > 0) {
+        // The roster prop refreshes itself: Index.tsx subscribes to students
+        // via realtime and replaces the row on UPDATE.
+        toast({
+          title: `Moved ${moved.length} student${moved.length === 1 ? "" : "s"}`,
+          description: `${retagged} past check-in${
+            retagged === 1 ? "" : "s"
+          } retagged. Re-match to get corrected attendance figures.`,
+        });
+        // The tally these matches were built from is now stale.
+        setMatches(null);
+        setLastResult(null);
+      }
+      if (failed.length > 0) {
+        toast({
+          title: `${failed.length} change${failed.length === 1 ? "" : "s"} failed`,
+          description: failed[0].error,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Could not update cohorts",
+        description:
+          error instanceof Error ? error.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingCohorts(false);
+    }
   };
 
   const handleDownloadFilled = () => {
@@ -241,11 +287,16 @@ const AttendanceExportDialog = ({
     setIsExporting(true);
     setLastResult(null);
     try {
+      // When filling a Canvas export, the uploaded file decides who is in
+      // scope. Narrowing by cohort first would drop any student filed under the
+      // wrong one — exactly the people the reconciliation is meant to surface.
+      const scoped = !FORMATS[exportFormat].requiresCanvasExport;
+
       const result = await buildAttendanceExport({
         start: startDate,
         end: endDate,
-        cohort,
-        studentId: selectedStudent?.student_id ?? null,
+        cohort: scoped ? cohort : "all",
+        studentId: scoped ? (selectedStudent?.student_id ?? null) : null,
         shape: FORMATS[exportFormat].usesShape ? shape : "summary",
         format: exportFormat,
         mergeExcusedIntoPresent: mergeExcused,
@@ -348,6 +399,7 @@ const AttendanceExportDialog = ({
             <div className="space-y-2">
               <label className="text-sm font-medium">Cohort</label>
               <Select
+                disabled={FORMATS[exportFormat].requiresCanvasExport}
                 value={cohort}
                 onValueChange={(value) => {
                   setCohort(value);
@@ -481,6 +533,7 @@ const AttendanceExportDialog = ({
           </div>
 
           {/* Student scope */}
+          {!FORMATS[exportFormat].requiresCanvasExport && (
           <div className="space-y-2">
             <label className="text-sm font-medium">Students</label>
             {selectedStudent ? (
@@ -536,6 +589,7 @@ const AttendanceExportDialog = ({
               </>
             )}
           </div>
+          )}
 
           {/* Date range */}
           <div className="space-y-2">
@@ -617,7 +671,13 @@ const AttendanceExportDialog = ({
           {/* Scope readout */}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Users className="h-4 w-4" />
-            {selectedStudent ? (
+            {FORMATS[exportFormat].requiresCanvasExport ? (
+              <span>
+                The uploaded Canvas export decides who is included, so every
+                cohort is tallied — a student filed under the wrong one still
+                gets matched.
+              </span>
+            ) : selectedStudent ? (
               <span>Exporting 1 student.</span>
             ) : (
               <span>
@@ -635,6 +695,8 @@ const AttendanceExportDialog = ({
               matches={matches}
               summary={lastResult.summary}
               onAssign={handleAssign}
+              onApplyCohorts={handleApplyCohorts}
+              isApplyingCohorts={isApplyingCohorts}
             />
           )}
 

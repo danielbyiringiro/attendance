@@ -54,6 +54,7 @@ export interface ParsedCanvasSheet {
     name: number;
     canvasId: number;
     sisUserId: number;
+    section: number;
   };
 }
 
@@ -62,10 +63,54 @@ export interface CanvasMatch {
   rowIndex: number;
   canvasName: string;
   canvasSisId: string;
+  /** Raw Section cell, e.g. "Cohort B". Empty when the export has no Section. */
+  canvasSection: string;
+  /** Cohort code read out of canvasSection, when one could be read. */
+  canvasCohort: string | null;
   /** Resolved attendance student_id, or null while unmatched. */
   studentId: string | null;
   how: "sis-id" | "name" | "manual" | "unmatched";
 }
+
+/**
+ * Read a cohort code out of a Canvas Section label.
+ *
+ * Sections are free text — "Cohort B", "Section B", "CS101-B", or just "B" —
+ * so this looks for a known cohort code as a standalone token and only commits
+ * when exactly one matches. Anything ambiguous returns null and is treated as
+ * "no opinion" rather than as a mismatch, because wrongly claiming a mismatch
+ * would invite a TA to "correct" a cohort that was right all along.
+ */
+export const inferCohortFromSection = (
+  section: string,
+  knownCohorts: string[],
+): string | null => {
+  const tokens = section
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+
+  // "Cohort B" / "Section A" — the label says which one outright. This runs
+  // first because the cohort a misfiled student *belongs* to may have nobody
+  // in the tallied set, so it would not be in knownCohorts to recognise.
+  const labelled = new Set<string>();
+  tokens.forEach((t, i) => {
+    if (t !== "COHORT" && t !== "SECTION") return;
+    const next = tokens[i + 1];
+    // A cohort code is short; "Section Main" names no cohort.
+    if (next && next.length <= 2) labelled.add(next);
+  });
+  if (labelled.size === 1) return [...labelled][0];
+  if (labelled.size > 1) return null; // names several, so it names none
+
+  // Otherwise only commit when exactly one known cohort appears as its own
+  // token — a substring like the "A" inside "ACCRA" must not count.
+  const set = new Set(tokens);
+  const hits = knownCohorts
+    .map((c) => c.toUpperCase())
+    .filter((c) => set.has(c));
+  return hits.length === 1 ? hits[0] : null;
+};
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -98,6 +143,7 @@ export const parseCanvasCsv = (text: string): ParsedCanvasSheet => {
   const name = findColumn(header, "student", "student name");
   const canvasId = findColumn(header, "id");
   const sisUserId = findColumn(header, "sis user id");
+  const section = findColumn(header, "section");
 
   if (name === -1 && sisUserId === -1) {
     throw new Error(
@@ -120,7 +166,7 @@ export const parseCanvasCsv = (text: string): ParsedCanvasSheet => {
     header,
     pointsPossibleRow,
     rows: body,
-    columns: { name, canvasId, sisUserId },
+    columns: { name, canvasId, sisUserId, section },
   };
 };
 
@@ -136,7 +182,13 @@ export const matchCanvasRows = (
   sheet: ParsedCanvasSheet,
   summary: SummaryRow[],
 ): CanvasMatch[] => {
+  // Cohort is deliberately not part of matching. Students do get filed under
+  // the wrong cohort here, and a cohort-aware match would hide exactly the
+  // people who most need correcting.
   const byId = new Map(summary.map((r) => [norm(r.student_id), r.student_id]));
+  const knownCohorts = Array.from(
+    new Set(summary.map((r) => r.cohort).filter(Boolean)),
+  );
 
   const nameCounts = new Map<string, number>();
   summary.forEach((r) => {
@@ -165,20 +217,29 @@ export const matchCanvasRows = (
       sheet.columns.sisUserId === -1
         ? ""
         : (row[sheet.columns.sisUserId] ?? "").trim();
+    const canvasSection =
+      sheet.columns.section === -1
+        ? ""
+        : (row[sheet.columns.section] ?? "").trim();
+    const canvasCohort = canvasSection
+      ? inferCohortFromSection(canvasSection, knownCohorts)
+      : null;
+
+    const base = {
+      rowIndex,
+      canvasName,
+      canvasSisId,
+      canvasSection,
+      canvasCohort,
+    };
 
     const viaId = canvasSisId ? byId.get(norm(canvasSisId)) : undefined;
     if (viaId && !taken.has(viaId)) {
       taken.add(viaId);
-      return { rowIndex, canvasName, canvasSisId, studentId: viaId, how: "sis-id" };
+      return { ...base, studentId: viaId, how: "sis-id" as const };
     }
 
-    return {
-      rowIndex,
-      canvasName,
-      canvasSisId,
-      studentId: null,
-      how: "unmatched",
-    };
+    return { ...base, studentId: null, how: "unmatched" as const };
   });
 
   // Name fallback runs as a second pass so an ID match always wins the student.
