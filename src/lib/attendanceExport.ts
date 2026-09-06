@@ -269,14 +269,14 @@ const CANVAS_RESERVED_FRAGMENTS = [
 ];
 
 /**
- * This app stores names given-name-first ("Robin Lee Carter"); Canvas
- * wants them surname-first ("Carter, Robin Lee").
+ * This app stores names given-name-first ("Robin Lee Carter"); Canvas wants
+ * them surname-first ("Carter, Robin Lee").
  *
  * HEURISTIC, and a lossy one: it assumes the surname is the last whitespace-
- * separated token. That is wrong for a multi-word surname ("van der Berg",
- * "Lee Carter" if Addy is a middle name), and nothing in the roster
- * distinguishes the two cases. Prefer filling a real Canvas export, where the
- * name comes from Canvas itself and no guess is needed.
+ * separated token. That is wrong for a multi-word surname ("van der Berg"), and
+ * wrong again where the final token is actually a middle name, which nothing in
+ * the roster distinguishes. Prefer filling a real Canvas export, where the name
+ * comes from Canvas itself and no guess is needed.
  *
  * A name that already contains a comma is assumed to be surname-first and is
  * left alone.
