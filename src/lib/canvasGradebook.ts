@@ -170,8 +170,8 @@ const norm = (s: string) => s.trim().toLowerCase();
 
 /**
  * Canonical form for fallback name matching: lowercase, punctuation stripped,
- * tokens sorted. "Carter, Robin Lee" and "Robin Lee Carter" both
- * become "carter lee robin", so word order stops mattering entirely.
+ * tokens sorted. "Carter, Robin Lee" and "Robin Lee Carter" both become
+ * "carter lee robin", so word order stops mattering entirely.
  */
 export const nameKey = (name: string): string =>
   name
