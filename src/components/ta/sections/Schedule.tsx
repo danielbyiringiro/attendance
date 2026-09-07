@@ -14,6 +14,7 @@ import {
   type ScheduleSlot,
 } from "@/lib/api/classes";
 import { generateSessions } from "@/lib/api/sessions";
+import SessionList from "@/components/ta/SessionList";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
 const DAYS = [
@@ -52,6 +53,7 @@ const Schedule = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genFrom, setGenFrom] = useState("");
   const [genTo, setGenTo] = useState("");
+  const [sessionsToken, setSessionsToken] = useState(0);
 
   const loadSchedules = useCallback(async () => {
     if (!activeClass) return;
@@ -90,29 +92,32 @@ const Schedule = () => {
   }, [existing]);
 
   const toggleCohort = (cohortId: string) => {
-    setSelectedCohorts((prev) => {
-      const next = prev.includes(cohortId)
-        ? prev.filter((id) => id !== cohortId)
-        : [...prev, cohortId];
+    const next = selectedCohorts.includes(cohortId)
+      ? selectedCohorts.filter((id) => id !== cohortId)
+      : [...selectedCohorts, cohortId];
 
-      // Selecting exactly one cohort pre-fills the editor with what it already
-      // has, so "adjust Thursday" does not mean retyping the whole pattern.
-      // With several selected there is no single pattern to show, and saving
-      // deliberately overwrites all of them with what is on screen.
-      if (next.length === 1) {
-        const rows = byCohort.get(next[0]) ?? [];
-        const seeded = emptyDays();
-        rows.forEach((r) => {
-          seeded[r.weekday] = {
-            enabled: true,
-            startTime: toInputTime(r.start_time),
-            duration: r.duration_minutes ? String(r.duration_minutes) : "",
-          };
-        });
-        setDays(seeded);
-      }
-      return next;
-    });
+    setSelectedCohorts(next);
+
+    // Computed out here, not inside the setSelectedCohorts updater. A state
+    // updater must be pure: React invokes it twice in development, so a
+    // setDays() call in there runs twice and the pre-fill fights itself.
+    //
+    // Selecting exactly one cohort loads what it already has, so "adjust
+    // Thursday" is not "retype the week". With several selected there is no
+    // single pattern to show, and saving overwrites all of them with whatever
+    // is on screen.
+    if (next.length === 1) {
+      const rows = byCohort.get(next[0]) ?? [];
+      const seeded = emptyDays();
+      rows.forEach((r) => {
+        seeded[r.weekday] = {
+          enabled: true,
+          startTime: toInputTime(r.start_time),
+          duration: r.duration_minutes ? String(r.duration_minutes) : "",
+        };
+      });
+      setDays(seeded);
+    }
   };
 
   const setDay = (weekday: number, patch: Partial<DayState>) =>
@@ -178,6 +183,7 @@ const Schedule = () => {
             ? "Every scheduled day in that range already has a session."
             : `${created} session${created === 1 ? "" : "s"} created. Days that already existed were left alone.`,
       });
+      setSessionsToken((n) => n + 1);
     } catch (e) {
       toast({
         title: "Could not generate sessions",
@@ -391,6 +397,20 @@ const Schedule = () => {
             Sessions already created keep their own times, so changing the pattern
             above never rewrites a day that has happened.
           </p>
+        </CardContent>
+      </Card>
+
+      {/* The sessions themselves — open, close, cancel */}
+      <Card className="border-2">
+        <CardHeader>
+          <CardTitle className="text-base">Sessions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SessionList
+            classId={activeClass.id}
+            cohorts={cohorts}
+            refreshToken={sessionsToken}
+          />
         </CardContent>
       </Card>
     </div>

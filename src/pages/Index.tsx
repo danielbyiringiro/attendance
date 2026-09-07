@@ -41,12 +41,6 @@ interface Student {
   sessionDate?: string; // YYYY-MM-DD
 }
 
-interface RosterStudent {
-  student_id: string;
-  cohort: string;
-  name?: string;
-}
-
 type TATab = "attendance" | "analytics" | "students" | "sessions" | "classes";
 
 // One row per sidebar entry. Previously these were four hand-duplicated
@@ -76,7 +70,6 @@ const Index = () => {
   const [timeLimit, setTimeLimit] = useState(300); // 5 minutes in seconds
   const [isTimeUp, setIsTimeUp] = useState(true);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
-  const [roster, setRoster] = useState<RosterStudent[]>([]);
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
@@ -291,9 +284,9 @@ const Index = () => {
   const handleTALogout = async () => {
     await supabase.auth.signOut();
     sessionStorage.removeItem(TA_TAB_KEY);
-    // Drop sensitive data from memory when leaving the dashboard.
+    // Drop sensitive data from memory when leaving the dashboard. The roster
+    // lives in TADashboard now and unmounts with it.
     setPresentStudents([]);
-    setRoster([]);
   };
 
   // Initialize session on first load
@@ -417,72 +410,13 @@ const Index = () => {
         setPresentStudents(restored);
       }
 
-      // Load roster from students table
-      const { data: rosterData, error: rosterError } = await supabase
-        .from("students")
-        .select("student_id, cohort, name")
-        .order("student_id", { ascending: true });
-      if (rosterError) {
-        console.error("Failed to load students roster:", rosterError);
-      } else if (rosterData && !cancelled) {
-        const normalized: RosterStudent[] = rosterData.map((row) => {
-          const normalizedCohort = String(row.cohort).toUpperCase();
-          return {
-            student_id: String(row.student_id),
-            cohort: normalizedCohort,
-            name: row.name || undefined,
-          };
-        });
-        setRoster(normalized);
-      }
+      // The roster is no longer loaded here. It is the active class's
+      // enrolments, which only TADashboard knows about — this query read the
+      // whole `students` table, so switching class in the sidebar changed
+      // nothing on the Analytics and Students screens.
     };
 
     loadDashboardData();
-
-    // Keep the roster in sync in real time while the TA is logged in.
-    const rosterChannel = supabase
-      .channel("students_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "students" },
-        (payload) => {
-          if (payload.eventType !== "DELETE") {
-            const row = payload.new;
-            if (row) {
-              const normalizedCohort = String(row.cohort).toUpperCase();
-              const newStudent: RosterStudent = {
-                student_id: String(row.student_id),
-                cohort: normalizedCohort,
-                name: row.name || undefined,
-              };
-              setRoster((prev) => {
-                const existing = prev.find(
-                  (s) => s.student_id === newStudent.student_id,
-                );
-                if (existing) {
-                  return prev.map((s) =>
-                    s.student_id === newStudent.student_id ? newStudent : s,
-                  );
-                } else {
-                  return [...prev, newStudent].sort((a, b) =>
-                    a.student_id.localeCompare(b.student_id),
-                  );
-                }
-              });
-            }
-          } else {
-            const deletedRow = payload.old;
-            if (deletedRow) {
-              setRoster((prev) =>
-                prev.filter(
-                  (s) => s.student_id !== String(deletedRow.student_id),
-                ),
-              );
-            }
-          }
-        },
-      )
-      .subscribe();
 
     // Reflect new check-ins live in the dashboard as students mark attendance.
     const presentChannel = supabase
@@ -515,7 +449,6 @@ const Index = () => {
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(rosterChannel);
       supabase.removeChannel(presentChannel);
     };
   }, [isTA]);
@@ -570,7 +503,6 @@ const Index = () => {
             <TADashboard
               activeSection={taTab}
               presentStudents={presentStudents}
-              roster={roster}
               currentPin={currentPin}
               timeLimit={timeLimit}
               isTimeUp={isTimeUp}

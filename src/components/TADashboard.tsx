@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +56,12 @@ import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
+import { useActiveClass } from "@/lib/classContext";
+import {
+  dropEnrolment,
+  listEnrolments,
+  upsertEnrolments,
+} from "@/lib/api/enrolment";
 // Semester start date — attendance is only tracked from this date forward.
 // Owned by the export module so the dashboard and the CSV agree on the term.
 import { SEMESTER_START } from "@/lib/attendanceExport";
@@ -81,7 +87,6 @@ interface RosterStudent {
 interface TADashboardProps {
   activeSection?: "attendance" | "analytics" | "students" | "sessions" | "classes";
   presentStudents: Student[];
-  roster: RosterStudent[];
   currentPin: string;
   timeLimit: number;
   isTimeUp: boolean;
@@ -139,7 +144,6 @@ interface FlaggedRecord {
 const TADashboard = ({
   activeSection = "attendance",
   presentStudents,
-  roster,
   currentPin,
   timeLimit,
   isTimeUp,
@@ -153,6 +157,48 @@ const TADashboard = ({
   const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
+
+  // The roster is the active class's enrolments, not every student in the
+  // database. It used to arrive as a prop from Index.tsx, which selected the
+  // whole `students` table — so every screen below showed the same people
+  // regardless of which class was picked in the sidebar.
+  const { activeClass, activeClassId, cohorts } = useActiveClass();
+  const [roster, setRoster] = useState<RosterStudent[]>([]);
+  const [isRosterLoading, setIsRosterLoading] = useState(false);
+
+  const loadRoster = useCallback(async () => {
+    if (!activeClassId) {
+      setRoster([]);
+      return;
+    }
+    setIsRosterLoading(true);
+    try {
+      const rows = await listEnrolments(activeClassId);
+      setRoster(
+        rows.map((r) => ({
+          student_id: r.student_id,
+          cohort: r.cohort_label,
+          name: r.name ?? undefined,
+        })),
+      );
+    } catch (e) {
+      console.error("Failed to load the roster:", e);
+      toast({
+        title: "Could not load the roster",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+      setRoster([]);
+    } finally {
+      setIsRosterLoading(false);
+    }
+  }, [activeClassId, toast]);
+
+  useEffect(() => {
+    void loadRoster();
+  }, [loadRoster]);
+
+  const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -160,9 +206,6 @@ const TADashboard = ({
   const [cancelledSessions, setCancelledSessions] = useState<ClassSession[]>(
     [],
   );
-  const [showCancelDialog, setShowCancelDialog] = useState(false);
-  const [cancelDate, setCancelDate] = useState<Date | undefined>(undefined);
-  const [cancelCohort, setCancelCohort] = useState<"A" | "B" | "C" | "">("");
   const [showSearchDialog, setShowSearchDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [studentAbsenceHistory, setStudentAbsenceHistory] = useState<
@@ -179,11 +222,6 @@ const TADashboard = ({
   >([]);
   const [classDates, setClassDates] = useState<Map<string, boolean>>(new Map()); // key: "YYYY-MM-DD-cohort"
   const [classSchedule, setClassSchedule] = useState<ClassSchedule[]>([]);
-  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [scheduleCohort, setScheduleCohort] = useState<"A" | "B" | "C" | "">(
-    "",
-  );
-  const [selectedDays, setSelectedDays] = useState<number[]>([]);
 
   // Weekly absence search state
   const [showWeeklyAbsenceDialog, setShowWeeklyAbsenceDialog] = useState(false);
@@ -214,9 +252,8 @@ const TADashboard = ({
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
   const [addStudentId, setAddStudentId] = useState("");
   const [addStudentName, setAddStudentName] = useState("");
-  const [addStudentCohort, setAddStudentCohort] = useState<
-    "A" | "B" | "C" | ""
-  >("");
+  // A cohort label of the active class, not one of three fixed letters.
+  const [addStudentCohort, setAddStudentCohort] = useState("");
   const [showRemoveStudentDialog, setShowRemoveStudentDialog] = useState(false);
   const [removeSearchQuery, setRemoveSearchQuery] = useState("");
   const [studentToRemove, setStudentToRemove] = useState<{
@@ -387,7 +424,7 @@ const TADashboard = ({
     selectedCohort === "all"
       ? validPresentStudents
       : validPresentStudents.filter(
-          (student) => student.cohort === selectedCohort.toUpperCase(),
+          (student) => student.cohort === selectedCohort,
         );
 
   const presentStudentIds = validPresentStudents.map((s) => s.id);
@@ -400,21 +437,17 @@ const TADashboard = ({
       : absentStudents.filter((id) => {
           const rosterEntry = roster.find((r) => r.student_id === id);
           const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
-          return cohort === selectedCohort.toUpperCase();
+          return cohort === selectedCohort;
         });
 
-  const cohortAPresent = validPresentStudents.filter(
-    (s) => s.cohort === "A",
-  ).length;
-  const cohortBPresent = validPresentStudents.filter(
-    (s) => s.cohort === "B",
-  ).length;
-  const cohortCPresent = validPresentStudents.filter(
-    (s) => s.cohort === "C",
-  ).length;
-  const cohortATotal = roster.filter((r) => r.cohort === "A").length;
-  const cohortBTotal = roster.filter((r) => r.cohort === "B").length;
-  const cohortCTotal = roster.filter((r) => r.cohort === "C").length;
+  // One tally per cohort the class actually has. These were three hardcoded
+  // A/B/C pairs, which is why a class with four cohorts could not be counted.
+  const cohortTallies = cohorts.map((co) => ({
+    id: co.id,
+    label: co.label,
+    present: validPresentStudents.filter((s) => s.cohort === co.label).length,
+    total: roster.filter((r) => r.cohort === co.label).length,
+  }));
 
   // Load cancelled sessions and class dates
   useEffect(() => {
@@ -536,8 +569,22 @@ const TADashboard = ({
     return false;
   };
 
-  // Add student to roster
+  // Enrol a student in the active class.
+  //
+  // This used to INSERT into `students`, which is the global person registry:
+  // adding someone to one class made them appear in every class, and a student
+  // taking two courses collided on the primary key. It now goes through
+  // upsert_enrolments, which reuses an existing student row and only creates
+  // the enrolment.
   const handleAddStudent = async () => {
+    if (!activeClassId) {
+      toast({
+        title: "No class selected",
+        description: "Choose a class in the sidebar first.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!addStudentId.trim()) {
       toast({
         title: "Student ID Required",
@@ -546,7 +593,8 @@ const TADashboard = ({
       });
       return;
     }
-    if (!addStudentCohort) {
+    const cohortId = cohortIdByLabel.get(addStudentCohort);
+    if (!cohortId) {
       toast({
         title: "Cohort Required",
         description: "Please select a cohort for the student.",
@@ -555,54 +603,66 @@ const TADashboard = ({
       return;
     }
 
-    // Check if student already exists
     const existing = roster.find(
       (r) => r.student_id.toLowerCase() === addStudentId.trim().toLowerCase(),
     );
     if (existing) {
       toast({
         title: "Student Already Exists",
-        description: `Student ${addStudentId.trim()} is already in the roster (Cohort ${existing.cohort}).`,
+        description: `Student ${addStudentId.trim()} is already in this class (Cohort ${existing.cohort}).`,
         variant: "destructive",
       });
       return;
     }
 
-    const newStudent = {
-      student_id: addStudentId.trim(),
-      cohort: addStudentCohort as "A" | "B" | "C",
-      name: addStudentName.trim() || null,
-    };
+    try {
+      const result = await upsertEnrolments(cohortId, [
+        {
+          student_id: addStudentId.trim(),
+          name: addStudentName.trim() || null,
+        },
+      ]);
 
-    const { error } = await supabase.from("students").insert(newStudent);
+      if (result.invalid.length > 0) {
+        toast({
+          title: "Not added",
+          description: result.invalid[0].reason,
+          variant: "destructive",
+        });
+        return;
+      }
 
-    if (error) {
-      console.error("Failed to add student:", error);
+      await loadRoster();
+      toast({
+        title: "Student Added",
+        description:
+          result.reused_students > 0
+            ? `${addStudentId.trim()} was already known to the system and is now enrolled in Cohort ${addStudentCohort}.`
+            : `${addStudentId.trim()}${addStudentName.trim() ? ` (${addStudentName.trim()})` : ""} added to Cohort ${addStudentCohort}.`,
+      });
+    } catch (e) {
+      console.error("Failed to add student:", e);
       toast({
         title: "Error",
-        description: "Failed to add student to roster.",
+        description: e instanceof Error ? e.message : "Failed to add student.",
         variant: "destructive",
       });
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
-
-    toast({
-      title: "Student Added",
-      description: `${newStudent.student_id}${newStudent.name ? ` (${newStudent.name})` : ""} added to Cohort ${newStudent.cohort}.`,
-    });
-
-    // Reset form
     setAddStudentId("");
     setAddStudentName("");
     setAddStudentCohort("");
     setShowAddStudentDialog(false);
   };
 
-  // Remove student from roster
+  // Take a student off this class's roster.
+  //
+  // A drop, not a delete: the student row is global and their past attendance
+  // has to survive. Deleting the `students` row, as this did before, removed
+  // them from every other class too.
   const handleRemoveStudent = async () => {
-    if (!studentToRemove) {
+    if (!activeClassId || !studentToRemove) {
       toast({
         title: "No Student Selected",
         description: "Please select a student to remove.",
@@ -611,26 +671,23 @@ const TADashboard = ({
       return;
     }
 
-    const { error } = await supabase
-      .from("students")
-      .delete()
-      .eq("student_id", studentToRemove.student_id);
-
-    if (error) {
-      console.error("Failed to remove student:", error);
+    try {
+      await dropEnrolment(activeClassId, studentToRemove.student_id);
+    } catch (e) {
+      console.error("Failed to remove student:", e);
       toast({
         title: "Error",
-        description: "Failed to remove student from roster.",
+        description:
+          e instanceof Error ? e.message : "Failed to remove student.",
         variant: "destructive",
       });
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
-
+    await loadRoster();
     toast({
       title: "Student Removed",
-      description: `${studentToRemove.student_id}${studentToRemove.name ? ` (${studentToRemove.name})` : ""} has been removed from the roster.`,
+      description: `${studentToRemove.student_id}${studentToRemove.name ? ` (${studentToRemove.name})` : ""} is no longer on this class's roster. Their record of past sessions is kept.`,
     });
 
     setStudentToRemove(null);
@@ -886,7 +943,7 @@ const TADashboard = ({
     weeklyAbsenceCohortFilter === "all"
       ? weeklyAbsences
       : weeklyAbsences.filter(
-          (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
+          (a) => a.cohort === weeklyAbsenceCohortFilter,
         );
 
   // Build the full week-by-week report from the semester start through today.
@@ -1030,7 +1087,7 @@ const TADashboard = ({
         // Only students absent twice or thrice are reported.
         a.frequency >= 2 &&
         (weeklyAbsenceCohortFilter === "all" ||
-          a.cohort === weeklyAbsenceCohortFilter.toUpperCase()),
+          a.cohort === weeklyAbsenceCohortFilter),
     );
     return rows
       .map((a) => {
@@ -1325,179 +1382,6 @@ const TADashboard = ({
     }
   };
 
-  const generateClassDates = async (
-    startDate: Date,
-    endDate: Date,
-    cohorts: ("A" | "B" | "C")[],
-  ) => {
-    try {
-      const datesToInsert: Array<{ date: string; cohort: "A" | "B" | "C" }> =
-        [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate <= endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-        const dateStr = currentDate.toISOString().split("T")[0];
-
-        cohorts.forEach((cohort) => {
-          // Check if this day matches the schedule
-          const scheduleMatches = classSchedule.some(
-            (s) => s.cohort === cohort && s.day_of_week === dayOfWeek,
-          );
-
-          if (scheduleMatches) {
-            // Check if already cancelled - if so, don't add
-            const isCancelled = cancelledSessions.some(
-              (s) =>
-                s.date === dateStr && s.cohort === cohort && s.is_cancelled,
-            );
-
-            if (!isCancelled) {
-              datesToInsert.push({ date: dateStr, cohort });
-            }
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      if (datesToInsert.length > 0) {
-        const { error } = await supabase
-          .from("class_dates")
-          .upsert(datesToInsert, {
-            onConflict: "date,cohort",
-            ignoreDuplicates: true,
-          });
-
-        if (error) {
-          console.error("Failed to generate class dates:", error);
-          toast({
-            title: "Error",
-            description: "Failed to generate class dates",
-            variant: "destructive",
-          });
-        } else {
-          toast({
-            title: "Class Dates Generated",
-            description: `Generated ${datesToInsert.length} class dates based on schedule.`,
-          });
-
-          // Update local state
-          const newDatesMap = new Map(classDates);
-          datesToInsert.forEach(({ date, cohort }) => {
-            const key = `${date}-${cohort}`;
-            newDatesMap.set(key, true);
-          });
-          setClassDates(newDatesMap);
-        }
-      }
-    } catch (error) {
-      console.error("Error generating class dates:", error);
-    }
-  };
-
-  const handleSaveSchedule = async (
-    cohort: "A" | "B" | "C",
-    daysOfWeek: number[],
-  ) => {
-    try {
-      // Delete existing schedule for this cohort
-      const { error: deleteError } = await supabase
-        .from("class_schedule")
-        .delete()
-        .eq("cohort", cohort);
-
-      if (deleteError) {
-        console.error("Failed to delete old schedule:", deleteError);
-      }
-
-      // Insert new schedule
-      const scheduleEntries = daysOfWeek.map((day) => ({
-        cohort,
-        day_of_week: day,
-      }));
-
-      const { error: insertError } = await supabase
-        .from("class_schedule")
-        .insert(scheduleEntries);
-
-      if (insertError) {
-        console.error("Failed to save schedule:", insertError);
-        toast({
-          title: "Error",
-          description: "Failed to save class schedule",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Schedule Saved",
-          description: `Class schedule for Cohort ${cohort} has been updated.`,
-        });
-
-        // Update local state
-        const newSchedule = classSchedule.filter((s) => s.cohort !== cohort);
-        scheduleEntries.forEach((entry) => {
-          newSchedule.push({
-            cohort: entry.cohort,
-            day_of_week: entry.day_of_week,
-          });
-        });
-        setClassSchedule(newSchedule);
-      }
-    } catch (error) {
-      console.error("Error saving schedule:", error);
-    }
-  };
-
-  const handleCancelClass = async () => {
-    if (!cancelDate || !cancelCohort) {
-      toast({
-        title: "Error",
-        description: "Please select both date and cohort",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const dateStr = cancelDate.toISOString().split("T")[0];
-
-    // Upsert cancelled session
-    const { error } = await supabase.from("cancelled_sessions").upsert(
-      {
-        date: dateStr,
-        cohort: cancelCohort,
-        is_cancelled: true,
-      },
-      { onConflict: "date,cohort" },
-    );
-
-    if (error) {
-      console.error("Failed to cancel class:", error);
-      toast({
-        title: "Error",
-        description: "Failed to mark class as cancelled",
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Class Cancelled",
-        description: `Cohort ${cancelCohort} class cancelled for ${dateStr}`,
-      });
-      setCancelledSessions((prev) => [
-        ...prev,
-        { date: dateStr, cohort: cancelCohort, is_cancelled: true },
-      ]);
-      setShowCancelDialog(false);
-      setCancelDate(undefined);
-      setCancelCohort("");
-    }
-  };
-
   const searchStudent = async (query: string) => {
     if (!query.trim()) {
       setStudentAbsenceHistory([]);
@@ -1768,13 +1652,35 @@ const TADashboard = ({
             </div>
             <div>
               <h1 className="text-2xl font-bold">{sectionTitle}</h1>
-              <p className="text-muted-foreground">{sectionDescription}</p>
+              <p className="text-muted-foreground">
+                {sectionDescription}
+                {activeClass && (
+                  <span className="ml-2 opacity-70">· {activeClass.name}</span>
+                )}
+              </p>
             </div>
           </div>
           <Button onClick={onLogout} variant="outline">
             Logout
           </Button>
         </div>
+
+        {/* Every count below is of one class's roster, so say when there isn't
+            one and when it is still arriving — an empty roster otherwise reads
+            as a class where everybody is absent. */}
+        {!isClassesSection && !activeClass && (
+          <Card className="border-2 border-dashed">
+            <CardContent className="pt-6 text-center">
+              <p className="font-medium">No class selected</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Choose one in the sidebar, or create one under Classes.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        {!isClassesSection && activeClass && isRosterLoading && (
+          <p className="text-sm text-muted-foreground">Loading the roster…</p>
+        )}
 
         {/* Classes and Class Sessions replace the body rather than sitting
             beside it: everything below is scoped to one class, and these are
@@ -1785,7 +1691,9 @@ const TADashboard = ({
         {!isClassesSection && isAnalyticsSection && (
           <>
             {/* Stats Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+            >
               <Card className="border-2 shadow-soft">
                 <CardContent className="pt-6">
                   <div className="flex items-center space-x-2">
@@ -1814,47 +1722,23 @@ const TADashboard = ({
                 </CardContent>
               </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortAPresent}/{cohortATotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort A</p>
+              {cohortTallies.map((c) => (
+                <Card key={c.id} className="border-2 shadow-soft">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center space-x-2">
+                      <Users className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="text-2xl font-bold">
+                          {c.present}/{c.total}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Cohort {c.label}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortBPresent}/{cohortBTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort B</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortCPresent}/{cohortCTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort C</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </>
         )}
@@ -1973,30 +1857,6 @@ const TADashboard = ({
                 </Button>
               </>
             )}
-            {isSessionsSection && (
-              <>
-                <Button
-                  onClick={() => setShowCancelDialog(true)}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <XCircle className="h-4 w-4" />
-                  Cancel Class
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowScheduleDialog(true);
-                    setScheduleCohort("");
-                    setSelectedDays([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Settings className="h-4 w-4" />
-                  Class Schedule
-                </Button>
-              </>
-            )}
           </div>
         )}
 
@@ -2093,9 +1953,11 @@ const TADashboard = ({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Cohorts</SelectItem>
-                          <SelectItem value="a">Cohort A</SelectItem>
-                          <SelectItem value="b">Cohort B</SelectItem>
-                          <SelectItem value="c">Cohort C</SelectItem>
+                          {cohorts.map((co) => (
+                            <SelectItem key={co.id} value={co.label}>
+                              Cohort {co.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2421,74 +2283,6 @@ const TADashboard = ({
         </DialogContent>
       </Dialog>
 
-      {/* Cancel Class Dialog */}
-      <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cancel Class</DialogTitle>
-            <DialogDescription>
-              Mark a class as cancelled for a specific cohort on a specific
-              date. Students from that cohort won't be marked as absent on
-              cancelled days.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Date</label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal",
-                      !cancelDate && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {cancelDate ? format(cancelDate, "PPP") : "Select date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={cancelDate}
-                    onSelect={setCancelDate}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Cohort</label>
-              <Select
-                value={cancelCohort}
-                onValueChange={(value) =>
-                  setCancelCohort(value as "A" | "B" | "C")
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select cohort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowCancelDialog(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleCancelClass}>Mark as Cancelled</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Search Student Dialog */}
       <Dialog open={showSearchDialog} onOpenChange={setShowSearchDialog}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
@@ -2714,187 +2508,6 @@ const TADashboard = ({
         </DialogContent>
       </Dialog>
 
-      {/* Class Schedule Dialog */}
-      <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Configure Class Schedule</DialogTitle>
-            <DialogDescription>
-              Set which days of the week classes occur for each cohort.
-              Attendance will only be tracked on these days.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Select Cohort</label>
-              <Select
-                value={scheduleCohort}
-                onValueChange={(value) => {
-                  setScheduleCohort(value as "A" | "B" | "C");
-                  // Load existing schedule for this cohort
-                  const existingSchedule = classSchedule.filter(
-                    (s) => s.cohort === value,
-                  );
-                  setSelectedDays(existingSchedule.map((s) => s.day_of_week));
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select cohort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {scheduleCohort && (
-              <div className="space-y-3">
-                <label className="text-sm font-medium">
-                  Select Days of Week (3 days)
-                </label>
-                <div className="space-y-2">
-                  {[
-                    { value: 1, label: "Monday" },
-                    { value: 2, label: "Tuesday" },
-                    { value: 3, label: "Wednesday" },
-                    { value: 4, label: "Thursday" },
-                    { value: 5, label: "Friday" },
-                    { value: 6, label: "Saturday" },
-                    { value: 0, label: "Sunday" },
-                  ].map((day) => (
-                    <div
-                      key={day.value}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`day-${day.value}`}
-                        checked={selectedDays.includes(day.value)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            if (selectedDays.length < 3) {
-                              setSelectedDays([...selectedDays, day.value]);
-                            } else {
-                              toast({
-                                title: "Maximum Days",
-                                description:
-                                  "Classes only occur 3 times per week. Please unselect a day first.",
-                                variant: "default",
-                              });
-                            }
-                          } else {
-                            setSelectedDays(
-                              selectedDays.filter((d) => d !== day.value),
-                            );
-                          }
-                        }}
-                      />
-                      <label
-                        htmlFor={`day-${day.value}`}
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                      >
-                        {day.label}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    onClick={() => {
-                      if (!scheduleCohort || selectedDays.length === 0) {
-                        toast({
-                          title: "Error",
-                          description:
-                            "Please select a cohort and at least one day",
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-                      handleSaveSchedule(scheduleCohort, selectedDays);
-                    }}
-                    className="flex-1"
-                  >
-                    Save Schedule
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      if (!scheduleCohort) {
-                        toast({
-                          title: "Error",
-                          description: "Please select a cohort first",
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-
-                      // Generate class dates for next 3 months
-                      const startDate = new Date();
-                      const endDate = new Date();
-                      endDate.setMonth(endDate.getMonth() + 3);
-
-                      await generateClassDates(startDate, endDate, [
-                        scheduleCohort as "A" | "B" | "C",
-                      ]);
-                    }}
-                    className="flex-1"
-                  >
-                    Generate Class Dates (Next 3 Months)
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {classSchedule.length > 0 && (
-              <div className="pt-4 border-t">
-                <p className="text-sm font-medium mb-2">Current Schedule:</p>
-                <div className="space-y-1">
-                  {["A", "B"].map((cohort) => {
-                    const cohortSchedule = classSchedule.filter(
-                      (s) => s.cohort === cohort,
-                    );
-                    if (cohortSchedule.length === 0) return null;
-
-                    const dayNames = [
-                      "Sunday",
-                      "Monday",
-                      "Tuesday",
-                      "Wednesday",
-                      "Thursday",
-                      "Friday",
-                      "Saturday",
-                    ];
-                    const days = cohortSchedule
-                      .map((s) => dayNames[s.day_of_week])
-                      .join(", ");
-
-                    return (
-                      <div key={cohort} className="text-sm">
-                        <span className="font-medium">Cohort {cohort}:</span>{" "}
-                        {days}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowScheduleDialog(false);
-                setScheduleCohort("");
-                setSelectedDays([]);
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Add Student Dialog */}
       <Dialog
@@ -2938,9 +2551,11 @@ const TADashboard = ({
                   <SelectValue placeholder="Select cohort" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
+                  {cohorts.map((co) => (
+                    <SelectItem key={co.id} value={co.label}>
+                      Cohort {co.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -3357,9 +2972,11 @@ const TADashboard = ({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Cohorts</SelectItem>
-                        <SelectItem value="a">Cohort A</SelectItem>
-                        <SelectItem value="b">Cohort B</SelectItem>
-                        <SelectItem value="c">Cohort C</SelectItem>
+                        {cohorts.map((co) => (
+                          <SelectItem key={co.id} value={co.label}>
+                            Cohort {co.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <Button
