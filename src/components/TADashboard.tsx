@@ -54,6 +54,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
+import Classes from "@/components/ta/sections/Classes";
 // Semester start date — attendance is only tracked from this date forward.
 // Owned by the export module so the dashboard and the CSV agree on the term.
 import { SEMESTER_START } from "@/lib/attendanceExport";
@@ -77,7 +78,7 @@ interface RosterStudent {
 }
 
 interface TADashboardProps {
-  activeSection?: "attendance" | "analytics" | "students" | "sessions";
+  activeSection?: "attendance" | "analytics" | "students" | "sessions" | "classes";
   presentStudents: Student[];
   roster: RosterStudent[];
   currentPin: string;
@@ -1726,8 +1727,11 @@ const TADashboard = ({
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
   const isSessionsSection = activeSection === "sessions";
+  const isClassesSection = activeSection === "classes";
   const sectionTitle =
-    activeSection === "analytics"
+    activeSection === "classes"
+      ? "Classes"
+      : activeSection === "analytics"
       ? "Attendance Analytics"
       : activeSection === "students"
         ? "Student Management"
@@ -1735,7 +1739,9 @@ const TADashboard = ({
           ? "Class Session Management"
           : "TA Dashboard";
   const sectionDescription =
-    activeSection === "analytics"
+    activeSection === "classes"
+      ? "Create a class, set its cohorts, and choose who can manage it"
+      : activeSection === "analytics"
       ? "Review attendance trends, absences, and flagged records"
       : activeSection === "students"
         ? "Search the roster and manage student records"
@@ -1762,7 +1768,12 @@ const TADashboard = ({
           </Button>
         </div>
 
-        {isAnalyticsSection && (
+        {/* Classes replaces the body rather than sitting beside it: everything
+            below is scoped to one class, and this is the screen that chooses
+            which class that is. */}
+        {isClassesSection && <Classes />}
+
+        {!isClassesSection && isAnalyticsSection && (
           <>
             {/* Stats Overview */}
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">

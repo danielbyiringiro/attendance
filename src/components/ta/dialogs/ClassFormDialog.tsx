@@ -1,0 +1,341 @@
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { createClass, updateClass } from "@/lib/api/classes";
+import type { ClassWithCohorts } from "@/lib/api/types";
+
+interface ClassFormDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Omit to create. Provide to edit. */
+  editing?: ClassWithCohorts | null;
+  onSaved: (classId: string) => void;
+}
+
+// Enough to cover an institution without offering a scrolling list of every
+// zone on earth. Free text would invite a typo that silently shifts every
+// session date by a day.
+const TIMEZONES = [
+  "Africa/Accra",
+  "Africa/Lagos",
+  "Africa/Nairobi",
+  "Africa/Johannesburg",
+  "Europe/London",
+  "America/New_York",
+  "America/Los_Angeles",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Australia/Sydney",
+  "UTC",
+];
+
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+};
+
+const ClassFormDialog = ({
+  open,
+  onOpenChange,
+  editing,
+  onSaved,
+}: ClassFormDialogProps) => {
+  const { toast } = useToast();
+  const isEdit = Boolean(editing);
+
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [termStart, setTermStart] = useState(today());
+  const [termEnd, setTermEnd] = useState(today());
+  const [timezone, setTimezone] = useState("Africa/Accra");
+  const [cohortMode, setCohortMode] = useState<"count" | "labels">("count");
+  const [cohortCount, setCohortCount] = useState("1");
+  const [cohortLabels, setCohortLabels] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      setCode(editing.code);
+      setName(editing.name);
+      setDescription(editing.description ?? "");
+      setTermStart(editing.term_starts_on);
+      setTermEnd(editing.term_ends_on);
+      setTimezone(editing.timezone);
+    } else {
+      setCode("");
+      setName("");
+      setDescription("");
+      setTermStart(today());
+      setTermEnd(today());
+      setTimezone("Africa/Accra");
+      setCohortMode("count");
+      setCohortCount("1");
+      setCohortLabels("");
+    }
+  }, [open, editing]);
+
+  const parsedLabels = cohortLabels
+    .split(",")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const handleSave = async () => {
+    if (!isEdit && code.trim() === "") {
+      toast({
+        title: "A code is needed",
+        description: "It identifies the class, and you type it back to confirm a deletion.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (name.trim() === "") {
+      toast({ title: "A name is needed", variant: "destructive" });
+      return;
+    }
+    if (termEnd < termStart) {
+      toast({
+        title: "The term ends before it starts",
+        description: "Sessions are generated between these two dates.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      if (editing) {
+        await updateClass(editing.id, {
+          name: name.trim(),
+          description: description.trim(),
+          termStartsOn: termStart,
+          termEndsOn: termEnd,
+          timezone,
+        });
+        toast({ title: "Class updated" });
+        onSaved(editing.id);
+      } else {
+        const count = Number(cohortCount);
+        if (
+          cohortMode === "count" &&
+          (!Number.isInteger(count) || count < 1 || count > 26)
+        ) {
+          throw new Error("The number of cohorts must be between 1 and 26.");
+        }
+        if (cohortMode === "labels" && parsedLabels.length === 0) {
+          throw new Error("Give at least one cohort label, or switch to a count.");
+        }
+
+        const result = await createClass({
+          code: code.trim(),
+          name: name.trim(),
+          termStartsOn: termStart,
+          termEndsOn: termEnd,
+          timezone,
+          cohortCount: cohortMode === "count" ? count : undefined,
+          cohortLabels: cohortMode === "labels" ? parsedLabels : undefined,
+        });
+        toast({
+          title: "Class created",
+          description: `${result.cohorts.length} cohort${
+            result.cohorts.length === 1 ? "" : "s"
+          }. Set when each one meets, then generate sessions.`,
+        });
+        onSaved(result.class_id);
+      }
+      onOpenChange(false);
+    } catch (e) {
+      toast({
+        title: isEdit ? "Could not update the class" : "Could not create the class",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? "Edit class" : "New class"}</DialogTitle>
+          <DialogDescription>
+            {isEdit
+              ? "The code cannot change — it is what you type to confirm a deletion."
+              : "Cohorts are the sections of this class. You can add more later."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="class-code">Code</Label>
+              <Input
+                id="class-code"
+                value={code}
+                disabled={isEdit}
+                placeholder="INTRO-AI"
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="class-name">Name</Label>
+              <Input
+                id="class-name"
+                value={name}
+                placeholder="Introduction to AI"
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="class-desc">Description (optional)</Label>
+            <Textarea
+              id="class-desc"
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="term-start">Term starts</Label>
+              <Input
+                id="term-start"
+                type="date"
+                value={termStart}
+                onChange={(e) => setTermStart(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="term-end">Term ends</Label>
+              <Input
+                id="term-end"
+                type="date"
+                value={termEnd}
+                onChange={(e) => setTermEnd(e.target.value)}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Sessions are only generated between these dates.
+          </p>
+
+          <div className="space-y-2">
+            <Label>Timezone</Label>
+            <Select value={timezone} onValueChange={setTimezone}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TIMEZONES.map((tz) => (
+                  <SelectItem key={tz} value={tz}>
+                    {tz}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Each session's date is worked out in this zone, so a late-evening
+              class does not land on the wrong day.
+            </p>
+          </div>
+
+          {/* Cohorts: creation only. Adding is safe, removing is destructive. */}
+          {!isEdit && (
+            <div className="space-y-2 rounded-lg border p-3">
+              <div className="flex items-center justify-between">
+                <Label>Cohorts</Label>
+                <div className="flex gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={cohortMode === "count" ? "secondary" : "ghost"}
+                    onClick={() => setCohortMode("count")}
+                  >
+                    How many
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={cohortMode === "labels" ? "secondary" : "ghost"}
+                    onClick={() => setCohortMode("labels")}
+                  >
+                    Name them
+                  </Button>
+                </div>
+              </div>
+
+              {cohortMode === "count" ? (
+                <>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={26}
+                    value={cohortCount}
+                    onChange={(e) => setCohortCount(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Labelled A, B, C… One is normal.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Input
+                    value={cohortLabels}
+                    placeholder="Morning, Evening"
+                    onChange={(e) => setCohortLabels(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated.
+                    {parsedLabels.length > 0 &&
+                      ` ${parsedLabels.length} cohort${
+                        parsedLabels.length === 1 ? "" : "s"
+                      }: ${parsedLabels.join(", ")}`}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {isEdit ? "Save changes" : "Create class"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+export default ClassFormDialog;

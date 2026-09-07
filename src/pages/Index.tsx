@@ -10,12 +10,14 @@ import {
   BarChart3,
   CalendarDays,
   Clock,
+  GraduationCap,
   History,
   Settings,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ensureStaff } from "@/lib/api/staff";
 import {
   Sidebar,
   SidebarContent,
@@ -45,7 +47,7 @@ interface RosterStudent {
   name?: string;
 }
 
-type TATab = "attendance" | "analytics" | "students" | "sessions";
+type TATab = "attendance" | "analytics" | "students" | "sessions" | "classes";
 
 // One row per sidebar entry. Previously these were four hand-duplicated
 // 14-line SidebarMenuItem blocks, so adding a section meant a fifth copy-paste
@@ -59,6 +61,7 @@ const TA_TABS: ReadonlyArray<{
   { id: "analytics", label: "Attendance Analytics", icon: BarChart3 },
   { id: "students", label: "Students", icon: Users },
   { id: "sessions", label: "Class Sessions", icon: Clock },
+  { id: "classes", label: "Classes", icon: GraduationCap },
 ];
 
 // Keys used to persist the TA dashboard across page reloads. sessionStorage is
@@ -105,14 +108,27 @@ const Index = () => {
   // TA logged in. Any authenticated user is a TA (TA accounts are provisioned
   // in the Supabase dashboard; there is no public signup).
   useEffect(() => {
+    // A staff row is what current_staff_id() resolves to, and without one an
+    // account cannot create a class. The bootstrap in migration 003 only ran
+    // over the accounts that existed then, so anyone provisioned since needs
+    // this. Idempotent, and deliberately not awaited: failing to record the
+    // staff row must not block signing in.
+    const claimStaffRow = () => {
+      void ensureStaff().catch((e) => {
+        console.error("ensure_staff failed:", e);
+      });
+    };
+
     supabase.auth.getSession().then(({ data }) => {
       setIsTA(!!data.session);
+      if (data.session) claimStaffRow();
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsTA(!!session);
+      if (session) claimStaffRow();
     });
 
     return () => subscription.unsubscribe();
