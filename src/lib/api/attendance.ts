@@ -5,7 +5,11 @@
 // derivations do today.
 
 import { supabase } from "@/lib/supabase";
-import type { AttendanceRecordRow, AttendanceState } from "@/lib/api/types";
+import type {
+  AttendanceRecordRow,
+  AttendanceState,
+  SessionStatus,
+} from "@/lib/api/types";
 
 const fail = (what: string, error: { message: string } | null): never => {
   throw new Error(`${what}: ${error?.message ?? "unknown error"}`);
@@ -207,4 +211,217 @@ export const classSummary = async (
   return [...summaries.values()].sort((a, b) =>
     a.student_id.localeCompare(b.student_id),
   );
+};
+
+// ---------------------------------------------------------------------------
+// The attendance log — one read, replacing six derivations
+// ---------------------------------------------------------------------------
+//
+// Every screen that shows attendance used to walk a date range day by day,
+// deciding for itself what a class day was, what timezone the date was in, and
+// what cancelled and excused meant. There were six of those loops, no two of
+// them agreeing, and two were copy-paste of each other.
+//
+// They existed because absence was not stored: with only check-ins to go on, a
+// screen had to reconstruct the days nobody marked. close_session now writes an
+// `unexcused` row, so the whole question is a SELECT. This is that SELECT, in
+// the one shape all six screens can be built from.
+
+export interface LoggedSession {
+  session_id: string;
+  /** Resolved in the class's timezone by a trigger, never by the browser. */
+  session_date: string;
+  starts_at: string;
+  cohort_id: string;
+  cohort_label: string;
+  status: SessionStatus;
+  cancellation_reason: string | null;
+}
+
+export interface LoggedMark {
+  session_id: string;
+  session_date: string;
+  cohort_id: string;
+  cohort_label: string;
+  student_id: string;
+  state: AttendanceState;
+  marked_at: string | null;
+}
+
+export interface AttendanceLog {
+  /** Sessions that happened or are happening. Cancelled ones are included and
+   *  labelled, so a screen can say "no class" rather than silently skip a day. */
+  sessions: LoggedSession[];
+  marks: LoggedMark[];
+  sessionById: Map<string, LoggedSession>;
+  /** Marks per student, newest session first. */
+  byStudent: Map<string, LoggedMark[]>;
+  /** Marks per session_date, across cohorts. */
+  byDate: Map<string, LoggedMark[]>;
+}
+
+/** Present in the sense that counts: late is still attendance. */
+export const isPresentState = (s: AttendanceState | null): boolean =>
+  s === "present" || s === "late";
+
+/** An absence that counts against the student. Excused and exempted do not. */
+export const isAbsentState = (s: AttendanceState | null): boolean =>
+  s === "unexcused";
+
+/** In the denominator of an attendance rate. */
+export const isGradedState = (s: AttendanceState | null): boolean =>
+  s === "present" || s === "late" || s === "unexcused";
+
+/** The one place a state becomes a word shown to a person. */
+export const stateLabel = (s: AttendanceState | null): string => {
+  switch (s) {
+    case "present":
+      return "Present";
+    case "late":
+      return "Late";
+    case "excused":
+      return "Excused";
+    case "unexcused":
+      return "Absent";
+    case "exempted":
+      return "Exempt";
+    case "pending":
+      return "Pending";
+    default:
+      return "No record";
+  }
+};
+
+interface RawMark {
+  student_id: string;
+  state: AttendanceState;
+  marked_at: string | null;
+  session_id: string;
+  class_sessions: {
+    session_date: string;
+    starts_at: string;
+    status: SessionStatus;
+    cohort_id: string;
+    cancellation_reason: string | null;
+    cohorts: { label: string } | null;
+  } | null;
+}
+
+/**
+ * Attendance for a class over a date range, as stored.
+ *
+ * `scheduled` sessions are excluded: a day that has not happened yet is not a
+ * day anyone was absent from. Cancelled sessions are kept, because a screen
+ * showing a term needs to account for the gap.
+ *
+ * Both queries paginate. PostgREST caps a response at 1000 rows and a term of
+ * three cohorts passes that within a few weeks, so an unpaginated read is how a
+ * dashboard ends up quietly reporting a fraction of the truth.
+ */
+export const attendanceLog = async (
+  classId: string,
+  opts: { from?: string; to?: string; cohortId?: string } = {},
+): Promise<AttendanceLog> => {
+  const PAGE = 1000;
+
+  const sessionRows: Array<{
+    id: string;
+    session_date: string;
+    starts_at: string;
+    status: SessionStatus;
+    cohort_id: string;
+    cancellation_reason: string | null;
+    cohorts: { label: string } | null;
+  }> = [];
+
+  for (let offset = 0; ; offset += PAGE) {
+    let q = supabase
+      .from("class_sessions")
+      .select(
+        "id, session_date, starts_at, status, cohort_id, cancellation_reason, cohorts(label)",
+      )
+      .eq("class_id", classId)
+      .neq("status", "scheduled")
+      .order("session_date", { ascending: false })
+      .range(offset, offset + PAGE - 1);
+
+    if (opts.cohortId) q = q.eq("cohort_id", opts.cohortId);
+    if (opts.from) q = q.gte("session_date", opts.from);
+    if (opts.to) q = q.lte("session_date", opts.to);
+
+    const { data, error } = await q;
+    if (error) fail("Could not load sessions", error);
+    const page = (data ?? []) as unknown as typeof sessionRows;
+    sessionRows.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  const sessions: LoggedSession[] = sessionRows.map((s) => ({
+    session_id: s.id,
+    session_date: s.session_date,
+    starts_at: s.starts_at,
+    cohort_id: s.cohort_id,
+    cohort_label: s.cohorts?.label ?? "",
+    status: s.status,
+    cancellation_reason: s.cancellation_reason,
+  }));
+
+  const markRows: RawMark[] = [];
+
+  // Filtered through an inner join on the session rather than by listing every
+  // session id: a term's worth of uuids in an `in.(...)` makes a URL several
+  // kilobytes long, which fails somewhere different on every host.
+  for (let offset = 0; ; offset += PAGE) {
+    let q = supabase
+      .from("attendance_records")
+      .select(
+        "student_id, state, marked_at, session_id, class_sessions!inner(session_date, starts_at, status, cohort_id, cancellation_reason, cohorts(label))",
+      )
+      .eq("class_id", classId)
+      .neq("class_sessions.status", "scheduled")
+      .range(offset, offset + PAGE - 1);
+
+    if (opts.cohortId) q = q.eq("class_sessions.cohort_id", opts.cohortId);
+    if (opts.from) q = q.gte("class_sessions.session_date", opts.from);
+    if (opts.to) q = q.lte("class_sessions.session_date", opts.to);
+
+    const { data, error } = await q;
+    if (error) fail("Could not load attendance", error);
+    const page = (data ?? []) as unknown as RawMark[];
+    markRows.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  const marks: LoggedMark[] = markRows
+    .filter((r) => r.class_sessions !== null)
+    .map((r) => ({
+      session_id: r.session_id,
+      session_date: r.class_sessions!.session_date,
+      cohort_id: r.class_sessions!.cohort_id,
+      cohort_label: r.class_sessions!.cohorts?.label ?? "",
+      student_id: r.student_id,
+      state: r.state,
+      marked_at: r.marked_at,
+    }))
+    .sort((a, b) => b.session_date.localeCompare(a.session_date));
+
+  const byStudent = new Map<string, LoggedMark[]>();
+  const byDate = new Map<string, LoggedMark[]>();
+  marks.forEach((m) => {
+    const forStudent = byStudent.get(m.student_id);
+    if (forStudent) forStudent.push(m);
+    else byStudent.set(m.student_id, [m]);
+
+    const forDate = byDate.get(m.session_date);
+    if (forDate) forDate.push(m);
+    else byDate.set(m.session_date, [m]);
+  });
+
+  return {
+    sessions,
+    marks,
+    sessionById: new Map(sessions.map((s) => [s.session_id, s])),
+    byStudent,
+    byDate,
+  };
 };
