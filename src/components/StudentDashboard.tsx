@@ -33,22 +33,44 @@ import { useToast } from "@/hooks/use-toast";
 
 interface AttendanceRecord {
   date: string;
-  status: "Present" | "Absent" | "Excused";
+  status: string;
+  /** A student can be in more than one class, so a date alone is ambiguous. */
+  className: string;
+  cohort: string;
+  wasCancelled: boolean;
   timestamp?: string;
   isFlagged?: boolean;
-  flagStatus?: "flagged" | "accepted" | "denied" | null; // Track the flag status
+  flagStatus?: "flagged" | "accepted" | "denied" | null;
 }
 
 interface StudentDashboardProps {
   onBack: () => void;
 }
 
-const SEMESTER_START = new Date(Date.UTC(2026, 4, 26)); // May 26, 2026
+/** One session of one class, as get_student_attendance returns it. */
+interface SessionRecord {
+  session_id: string;
+  date: string;
+  class: string;
+  class_code: string;
+  cohort: string;
+  status: "scheduled" | "open" | "closed" | "cancelled";
+  state:
+    | "present"
+    | "late"
+    | "excused"
+    | "unexcused"
+    | "pending"
+    | "exempted"
+    | null;
+  marked_at: string | null;
+}
 
-const isValidClassDay = (date: Date): boolean => {
-  const day = date.getDay();
-  return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
-};
+// This file used to carry its own SEMESTER_START (May 26 2026) and a third copy
+// of the Tue/Wed/Thu isValidClassDay rule, and walked the term day by day to
+// work out which days the student had missed. The exporter's semester start was
+// May 18, so a student's own history and the CSV about them counted from
+// different days. Both are gone: the server returns the sessions.
 
 const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [studentId, setStudentId] = useState("");
@@ -163,14 +185,12 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       }
 
       const payload = (rpcData ?? {}) as {
-        present?: Array<{ timestamp: string; cohort: string }>;
-        cancelled?: string[];
-        excused?: string[];
+        sessions?: SessionRecord[];
         flagged?: Array<{ session_date: string; status: string }>;
       };
-      const presentData = payload.present ?? [];
+      const sessions = payload.sessions ?? [];
 
-      if (presentData.length === 0) {
+      if (sessions.length === 0) {
         setHistory([]);
         setStats({ present: 0, absent: 0, excused: 0, total: 0 });
         toast({
@@ -181,9 +201,6 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         return;
       }
 
-      const cancelledDates = new Set<string>(payload.cancelled ?? []);
-      const excusedDates = new Set<string>(payload.excused ?? []);
-
       const flaggedMap = new Map<string, "flagged" | "accepted" | "denied">();
       (payload.flagged ?? []).forEach((row) => {
         flaggedMap.set(
@@ -192,88 +209,49 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         );
       });
 
-      // Track present dates
-      const presentDatesMap = new Map<string, string>();
-      presentData.forEach((record: any) => {
-        const d = new Date(record.timestamp);
-        const localDateStr = d.toISOString().split("T")[0];
-        presentDatesMap.set(localDateStr, record.timestamp);
+      // Read off the stored state. There is no arithmetic left to get wrong:
+      // "absent" is a row someone wrote, not the absence of one.
+      const label: Record<string, string> = {
+        present: "Present",
+        late: "Late",
+        excused: "Excused",
+        unexcused: "Absent",
+        exempted: "Exempt",
+        pending: "Pending",
+      };
+
+      const historyList: AttendanceRecord[] = sessions.map((sn) => {
+        const flagStatus = flaggedMap.get(sn.date) ?? null;
+        const cancelled = sn.status === "cancelled";
+        return {
+          date: sn.date,
+          className: sn.class,
+          cohort: sn.cohort,
+          wasCancelled: cancelled,
+          status: cancelled ? "No class" : (label[sn.state ?? ""] ?? "No record"),
+          timestamp: sn.marked_at ?? undefined,
+          isFlagged: flagStatus === "flagged",
+          flagStatus,
+        };
       });
 
-      const historyList: AttendanceRecord[] = [];
-      let presentCount = 0;
-      let absentCount = 0;
-      let excusedCount = 0;
+      historyList.sort((a, b) => b.date.localeCompare(a.date));
 
-      const currentDate = new Date(SEMESTER_START);
-      const today = new Date();
-      today.setHours(23, 59, 59, 999);
-
-      while (currentDate <= today) {
-        if (isValidClassDay(currentDate)) {
-          const dateStr = currentDate.toISOString().split("T")[0];
-
-          // If the class wasn't cancelled, it was an expected class day
-          if (!cancelledDates.has(dateStr)) {
-            const flagStatus = flaggedMap.get(dateStr);
-
-            if (presentDatesMap.has(dateStr)) {
-              historyList.push({
-                date: dateStr,
-                status: "Present",
-                timestamp: presentDatesMap.get(dateStr),
-                isFlagged: flagStatus === "flagged", // Only show as flagged if pending
-                flagStatus: flagStatus || null,
-              });
-              presentCount++;
-            } else if (excusedDates.has(dateStr)) {
-              // Absent with permission — not counted as an absence.
-              historyList.push({
-                date: dateStr,
-                status: "Excused",
-                flagStatus: flagStatus || null,
-              });
-              excusedCount++;
-            } else {
-              historyList.push({
-                date: dateStr,
-                status: "Absent",
-                isFlagged: flagStatus === "flagged",
-                flagStatus: flagStatus || null,
-              });
-              absentCount++;
-            }
-          }
-        }
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      // Catch any edge cases where a student was present on a day not typically considered a class day
-      presentDatesMap.forEach((timestamp, dateStr) => {
-        if (!historyList.find((h) => h.date === dateStr)) {
-          const flagStatus = flaggedMap.get(dateStr);
-          historyList.push({
-            date: dateStr,
-            status: "Present",
-            timestamp,
-            isFlagged: flagStatus === "flagged",
-            flagStatus: flagStatus || null,
-          });
-          presentCount++;
-        }
-      });
-
-      // Sort by date descending
-      historyList.sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-      );
+      // Late still counts as attendance; a cancelled class counts as nothing at
+      // all, for or against.
+      const counted = sessions.filter((sn) => sn.status !== "cancelled");
+      const present = counted.filter(
+        (sn) => sn.state === "present" || sn.state === "late",
+      ).length;
+      const excused = counted.filter((sn) => sn.state === "excused").length;
+      const absent = counted.filter((sn) => sn.state === "unexcused").length;
 
       setHistory(historyList);
       setStats({
-        present: presentCount,
-        absent: absentCount,
-        excused: excusedCount,
-        total: presentCount + absentCount + excusedCount,
+        present,
+        absent,
+        excused,
+        total: present + absent + excused,
       });
     } catch (error) {
       console.error("Error fetching history:", error);
@@ -422,6 +400,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
+                        <TableHead>Class</TableHead>
                         <TableHead>Time Recorded</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="text-right">Action</TableHead>
@@ -437,6 +416,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                               <TableCell className="font-medium">
                                 {format(parseISO(record.date), "MMM d, yyyy")}
                               </TableCell>
+                              <TableCell className="text-sm">
+                                {record.className}
+                                <span className="text-muted-foreground">
+                                  {" "}
+                                  · {record.cohort}
+                                </span>
+                              </TableCell>
                               <TableCell className="text-muted-foreground">
                                 {record.timestamp
                                   ? format(new Date(record.timestamp), "h:mm a")
@@ -445,11 +431,15 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                               <TableCell>
                                 <span
                                   className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                    record.status === "Present"
+                                    record.status === "Present" ||
+                                    record.status === "Late"
                                       ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                                      : record.status === "Excused"
+                                      : record.status === "Excused" ||
+                                          record.status === "Exempt"
                                         ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-                                        : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                        : record.status === "Absent"
+                                          ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                          : "bg-muted text-muted-foreground"
                                   }`}
                                 >
                                   {record.status}
@@ -469,6 +459,10 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                 {record.status === "Excused" ? (
                                   <span className="text-xs text-muted-foreground">
                                     Excused by TA
+                                  </span>
+                                ) : record.wasCancelled ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    Class cancelled
                                   </span>
                                 ) : (
                                   <Button
@@ -491,7 +485,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                       ) : (
                         <TableRow>
                           <TableCell
-                            colSpan={4}
+                            colSpan={5}
                             className="text-center py-8 text-muted-foreground"
                           >
                             No class records to display.
