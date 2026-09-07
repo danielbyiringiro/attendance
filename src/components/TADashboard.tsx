@@ -62,14 +62,20 @@ import {
   listEnrolments,
   upsertEnrolments,
 } from "@/lib/api/enrolment";
-// Semester start date — attendance is only tracked from this date forward.
-// Owned by the export module so the dashboard and the CSV agree on the term.
-import { SEMESTER_START } from "@/lib/attendanceExport";
-
-export const isValidClassDay = (date: Date): boolean => {
-  const day = date.getDay();
-  return day === 2 || day === 3 || day === 4;
-};
+import {
+  attendanceLog,
+  isAbsentState,
+  setAttendanceState,
+  type AttendanceLog,
+} from "@/lib/api/attendance";
+import {
+  addDays,
+  fromDateStr,
+  mondayOf,
+  toDateStr,
+  todayStr,
+  weekKeyOf,
+} from "@/lib/dates";
 
 interface Student {
   id: string;
@@ -107,20 +113,31 @@ interface AbsenceHistory {
   was_class_cancelled: boolean;
 }
 
-interface ClassSession {
-  date: string;
-  cohort: "A" | "B" | "C";
-  is_cancelled: boolean;
-}
-
-interface ClassSchedule {
-  cohort: "A" | "B" | "C";
-  day_of_week: number; // 0 = Sunday, 1 = Monday, etc.
-}
+/**
+ * The absences in a log, optionally narrowed to some students.
+ *
+ * The one place an absence becomes a row on a screen. Two dialogs used to build
+ * this with near-identical 190-line loops.
+ */
+const absencesFrom = (
+  log: AttendanceLog,
+  include?: (studentId: string) => boolean,
+): AbsenceHistory[] =>
+  log.marks
+    .filter((m) => isAbsentState(m.state))
+    .filter((m) => !include || include(m.student_id))
+    .map((m) => ({
+      date: m.session_date,
+      student_id: m.student_id,
+      cohort: m.cohort_label,
+      // A cancelled session has no unexcused rows: cancel_session deletes them.
+      was_class_cancelled: false,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
 
 interface WeeklyAbsence {
   student_id: string;
-  cohort: "A" | "B" | "C";
+  cohort: string;
   name?: string;
   absentDays: string[]; // YYYY-MM-DD dates they were absent
   frequency: number;
@@ -203,9 +220,6 @@ const TADashboard = ({
   const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
-  const [cancelledSessions, setCancelledSessions] = useState<ClassSession[]>(
-    [],
-  );
   const [showSearchDialog, setShowSearchDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [studentAbsenceHistory, setStudentAbsenceHistory] = useState<
@@ -220,8 +234,6 @@ const TADashboard = ({
   const [attendanceSearchResults, setAttendanceSearchResults] = useState<
     RosterStudent[]
   >([]);
-  const [classDates, setClassDates] = useState<Map<string, boolean>>(new Map()); // key: "YYYY-MM-DD-cohort"
-  const [classSchedule, setClassSchedule] = useState<ClassSchedule[]>([]);
 
   // Weekly absence search state
   const [showWeeklyAbsenceDialog, setShowWeeklyAbsenceDialog] = useState(false);
@@ -285,24 +297,21 @@ const TADashboard = ({
   );
   const [excusedReason, setExcusedReason] = useState("");
   const [isSavingExcused, setIsSavingExcused] = useState(false);
-  // Set of "studentId-YYYY-MM-DD" for excused days, used to exclude them from
-  // absence calculations.
-  const [excusedAbsences, setExcusedAbsences] = useState<Set<string>>(
-    new Set(),
-  );
 
-  const isValidClassDay = (date: Date): boolean => {
-    const day = date.getDay();
-    return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
-  };
   const allStudents = roster.map((r) => r.student_id);
   const rosterIds = new Set(allStudents);
-  const inferCohort = (id: string): "A" | "B" | "C" =>
-    id.toUpperCase().includes("A")
-      ? "A"
-      : id.toUpperCase().includes("B")
-        ? "B"
-        : "C";
+  /**
+   * Which cohort a student is in, from their enrolment.
+   *
+   * This replaces inferCohort, which guessed by looking for the letters A, B
+   * or C anywhere in the student ID — so it put every ID containing an "A"
+   * into cohort A and everyone else into C. It was only ever reachable when
+   * the roster lookup failed, and the roster is now the class's enrolments,
+   * where the cohort is a fact rather than a guess.
+   */
+  const cohortOf = (studentId: string): string =>
+    roster.find((r) => r.student_id === studentId)?.cohort ?? "";
+
 
   const loadFlaggedRecords = async () => {
     setIsLoadingFlagged(true);
@@ -330,28 +339,29 @@ const TADashboard = ({
     resolution: "accepted" | "denied",
   ) => {
     try {
+      // Accepting a flag marks the student present at the session they say they
+      // attended. This used to insert a present_students row timestamped noon
+      // UTC "to ensure UTC mapping matches date" — a fudge that existed because
+      // the day a check-in belonged to was inferred from its timestamp. The
+      // session owns its date now, so the mark attaches to the session.
       if (resolution === "accepted") {
-        const studentEntry = roster.find(
-          (r) => r.student_id === record.student_id,
+        if (!activeClassId) throw new Error("No class selected.");
+        const log = await attendanceLog(activeClassId, {
+          from: record.session_date,
+          to: record.session_date,
+          cohortId: cohortIdByLabel.get(cohortOf(record.student_id)),
+        });
+        const session = log.sessions.find((sn) => sn.status !== "cancelled");
+        if (!session) {
+          throw new Error(
+            `No session on ${record.session_date} for that student's cohort.`,
+          );
+        }
+        await setAttendanceState(
+          session.session_id,
+          record.student_id,
+          "present",
         );
-        const cohort = studentEntry
-          ? studentEntry.cohort
-          : inferCohort(record.student_id);
-        // Assume the session was at noon on the local date to ensure UTC mapping matches date
-        const sessionTimestamp = new Date(
-          `${record.session_date}T12:00:00Z`,
-        ).toISOString();
-
-        const { error: insertError } = await supabase
-          .from("present_students")
-          .insert([
-            {
-              student_id: record.student_id,
-              cohort,
-              timestamp: sessionTimestamp,
-            },
-          ]);
-        if (insertError) throw insertError;
       }
 
       const { error: updateError } = await supabase
@@ -436,7 +446,7 @@ const TADashboard = ({
       ? absentStudents
       : absentStudents.filter((id) => {
           const rosterEntry = roster.find((r) => r.student_id === id);
-          const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
+          const cohort = rosterEntry ? rosterEntry.cohort : cohortOf(id);
           return cohort === selectedCohort;
         });
 
@@ -449,125 +459,33 @@ const TADashboard = ({
     total: roster.filter((r) => r.cohort === co.label).length,
   }));
 
-  // Load cancelled sessions and class dates
+  // Per-cohort report settings (lecturer + FI). The rest of what this effect
+  // used to fetch — cancelled_sessions, excused_absences, class_schedule and a
+  // "class dates" map built from a column the query never selected, so every
+  // key was the literal "undefined" — fed derivations that no longer exist.
   useEffect(() => {
     (async () => {
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .eq("is_cancelled", true);
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      } else if (cancelledData) {
-        setCancelledSessions(
-          cancelledData.map((row: any) => ({
-            date: row.date,
-            cohort: row.cohort,
-            is_cancelled: row.is_cancelled,
-          })),
-        );
-      }
-
-      // Load excused absences (student_id + date) to exclude from absence views.
-      const { data: excusedData, error: excusedError } = await supabase
-        .from("excused_absences")
-        .select("student_id, date");
-      if (excusedError && excusedError.code !== "PGRST116") {
-        console.error("Failed to load excused absences:", excusedError);
-      } else if (excusedData) {
-        setExcusedAbsences(
-          new Set(
-            excusedData.map((row: any) => `${row.student_id}-${row.date}`),
-          ),
-        );
-      }
-
-      // Load per-cohort report settings (lecturer + FI for each cohort).
-      const { data: settingsData, error: settingsError } = await supabase
+      const { data, error } = await supabase
         .from("report_settings")
         .select("cohort, instructor_name, fi_name");
-      if (settingsError && settingsError.code !== "PGRST116") {
-        console.error("Failed to load report settings:", settingsError);
-      } else if (settingsData) {
-        setReportPairs((prev) => {
-          const next = { ...prev };
-          settingsData.forEach((row: any) => {
-            const c = String(row.cohort).toUpperCase();
-            next[c] = {
+      if (error && error.code !== "PGRST116") {
+        console.error("Failed to load report settings:", error);
+        return;
+      }
+      if (!data) return;
+      setReportPairs((prev) => {
+        const next = { ...prev };
+        (data as Array<{ cohort: string; instructor_name: string; fi_name: string }>)
+          .forEach((row) => {
+            next[String(row.cohort).toUpperCase()] = {
               instructor: row.instructor_name || "",
               fi: row.fi_name || "",
             };
           });
-          return next;
-        });
-      }
-
-      // Load class schedule
-      const { data: scheduleData, error: scheduleError } = await supabase
-        .from("class_schedule")
-        .select("cohort, day_of_week")
-        .order("cohort, day_of_week");
-      if (scheduleError && scheduleError.code !== "PGRST116") {
-        console.error("Failed to load class schedule:", scheduleError);
-      } else if (scheduleData) {
-        setClassSchedule(
-          scheduleData.map((row: any) => ({
-            cohort: row.cohort,
-            day_of_week: row.day_of_week,
-          })),
-        );
-      }
-
-      // Load actual class dates
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_schedule")
-        .select("day_of_week, cohort");
-      if (classDatesError && classDatesError.code !== "PGRST116") {
-        console.error("Failed to load class dates:", classDatesError);
-      } else if (classDatesData) {
-        const datesMap = new Map<string, boolean>();
-        classDatesData.forEach((row: any) => {
-          const key = `${row.date}-${row.cohort}`;
-          datesMap.set(key, true);
-        });
-        setClassDates(datesMap);
-      }
+        return next;
+      });
     })();
   }, []);
-
-  // Helper function to check if a date is a class day
-  const isClassDay = (date: Date, cohort: "A" | "B" | "C"): boolean => {
-    // Only Mon/Wed/Fri count as class days
-    if (!isValidClassDay(date)) {
-      return false;
-    }
-
-    const dateStr = date.toISOString().split("T")[0];
-    const key = `${dateStr}-${cohort}`;
-
-    // First check explicit class_dates table
-    if (classDates.has(key)) {
-      return true;
-    }
-
-    // Then check if it matches the schedule
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    const scheduleMatches = classSchedule.some(
-      (s) => s.cohort === cohort && s.day_of_week === dayOfWeek,
-    );
-
-    // Also check if there was attendance on this date (implies it was a class day)
-    if (scheduleMatches) {
-      // If it matches the schedule, we can assume it's a class day
-      // unless explicitly cancelled
-      const isCancelled = cancelledSessions.some(
-        (s) => s.date === dateStr && s.cohort === cohort && s.is_cancelled,
-      );
-      return !isCancelled;
-    }
-
-    return false;
-  };
 
   // Enrol a student in the active class.
   //
@@ -695,8 +613,15 @@ const TADashboard = ({
     setShowRemoveStudentDialog(false);
   };
 
-  // Mark a student "absent with permission" for every class day in a date range.
+  // Excuse a student from the sessions their cohort actually has in a range.
+  //
+  // This used to expand the range with the Tue/Wed/Thu rule and write a row per
+  // date into excused_absences, which meant excusing someone for days their
+  // cohort never met, and missing any session the rule did not predict. It now
+  // sets state on the sessions that exist. The database trigger logs each
+  // change to attendance_corrections.
   const handleAddExcused = async () => {
+    if (!activeClassId) return;
     if (!excusedStudent) {
       toast({
         title: "No Student Selected",
@@ -722,216 +647,98 @@ const TADashboard = ({
       return;
     }
 
-    // Expand the range into individual class days (Tue/Wed/Thu).
-    const rows: { student_id: string; date: string; reason: string | null }[] =
-      [];
-    const cursor = new Date(
-      excusedStartDate.getFullYear(),
-      excusedStartDate.getMonth(),
-      excusedStartDate.getDate(),
-    );
-    const end = new Date(
-      excusedEndDate.getFullYear(),
-      excusedEndDate.getMonth(),
-      excusedEndDate.getDate(),
-    );
-    while (cursor <= end) {
-      if (isValidClassDay(cursor)) {
-        const y = cursor.getFullYear();
-        const m = String(cursor.getMonth() + 1).padStart(2, "0");
-        const d = String(cursor.getDate()).padStart(2, "0");
-        rows.push({
-          student_id: excusedStudent.student_id,
-          date: `${y}-${m}-${d}`,
-          reason: excusedReason.trim() || null,
-        });
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    if (rows.length === 0) {
-      toast({
-        title: "No Class Days",
-        description: "That range contains no class days (Tue/Wed/Thu).",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsSavingExcused(true);
-    const { error } = await supabase
-      .from("excused_absences")
-      .upsert(rows, { onConflict: "student_id,date" });
-    setIsSavingExcused(false);
+    try {
+      const cohortId = cohortIdByLabel.get(
+        roster.find((r) => r.student_id === excusedStudent.student_id)?.cohort ??
+          "",
+      );
+      const log = await attendanceLog(activeClassId, {
+        from: toDateStr(excusedStartDate),
+        to: toDateStr(excusedEndDate),
+        cohortId,
+      });
 
-    if (error) {
-      console.error("Failed to save excused absence:", error);
+      const sessions = log.sessions.filter((sn) => sn.status !== "cancelled");
+      if (sessions.length === 0) {
+        toast({
+          title: "No Sessions",
+          description:
+            "That range contains no sessions for this student's cohort.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      for (const sn of sessions) {
+        await setAttendanceState(
+          sn.session_id,
+          excusedStudent.student_id,
+          "excused",
+        );
+      }
+
+      toast({
+        title: "Excused Absence Saved",
+        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${sessions.length} session${sessions.length > 1 ? "s" : ""}.`,
+      });
+
+      setShowExcusedDialog(false);
+      setExcusedStudent(null);
+      setExcusedSearchQuery("");
+      setExcusedStartDate(undefined);
+      setExcusedEndDate(undefined);
+      setExcusedReason("");
+    } catch (e) {
+      console.error("Failed to save excused absence:", e);
       toast({
         title: "Error",
-        description: "Failed to save the excused absence.",
+        description:
+          e instanceof Error ? e.message : "Failed to save the excused absence.",
         variant: "destructive",
       });
-      return;
+    } finally {
+      setIsSavingExcused(false);
     }
-
-    // Refresh the local excused set so analytics update immediately.
-    setExcusedAbsences((prev) => {
-      const next = new Set(prev);
-      rows.forEach((r) => next.add(`${r.student_id}-${r.date}`));
-      return next;
-    });
-
-    toast({
-      title: "Excused Absence Saved",
-      description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${rows.length} class day${rows.length > 1 ? "s" : ""}.`,
-    });
-
-    setShowExcusedDialog(false);
-    setExcusedStudent(null);
-    setExcusedSearchQuery("");
-    setExcusedStartDate(undefined);
-    setExcusedEndDate(undefined);
-    setExcusedReason("");
   };
 
-  // Filtered roster for the remove dialog search
-  // Compute Monday of the week containing a given date (local time)
-  const getMonday = (date: Date): Date => {
-    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const day = d.getDay(); // 0=Sun … 6=Sat
-    const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-    d.setDate(d.getDate() + diff);
-    return d;
-  };
-
-  // Load weekly absences for the week containing the selected date
+  // Absences in the week containing `date`, read rather than reconstructed.
+  //
+  // This used to walk Monday to Friday, ask a hardcoded Tue/Wed/Thu rule
+  // whether each day was a class day, then treat any student without a
+  // check-in as absent. Which days ran is now a fact about the cohort's
+  // sessions, and so is who missed them.
   const loadWeeklyAbsences = async (date: Date) => {
+    if (!activeClassId) return;
     setIsLoadingWeeklyAbsences(true);
     setWeeklyAbsences([]);
-
     try {
-      const monday = getMonday(date);
-      const saturday = new Date(monday);
-      saturday.setDate(saturday.getDate() + 5); // Saturday (exclusive upper bound for the query)
-      const todayStr = new Date().toISOString().split("T")[0];
-      // Valid class days in this week (Mon=1, Wed=3, Fri=5)
-      const classDaysInWeek: Date[] = [];
+      const monday = mondayOf(date);
+      const log = await attendanceLog(activeClassId, {
+        from: toDateStr(monday),
+        to: toDateStr(addDays(monday, 4)),
+      });
 
-      for (let d = new Date(monday); d < saturday; d.setDate(d.getDate() + 1)) {
-        if (!isValidClassDay(d)) continue;
-
-        const dateStr = d.toISOString().split("T")[0];
-
-        // Only include days up to today
-        if (dateStr <= todayStr && d >= SEMESTER_START) {
-          classDaysInWeek.push(new Date(d));
+      const byStudent = new Map<string, WeeklyAbsence>();
+      log.marks.filter((m) => isAbsentState(m.state)).forEach((m) => {
+        const entry = byStudent.get(m.student_id);
+        if (entry) {
+          entry.absentDays.push(m.session_date);
+          entry.frequency += 1;
+          return;
         }
-      }
-
-      if (classDaysInWeek.length === 0) {
-        setIsLoadingWeeklyAbsences(false);
-        return;
-      }
-
-      // Format dates as YYYY-MM-DD in local time (avoids UTC shift)
-      const toDateStr = (d: Date): string => {
-        return d.toISOString().split("T")[0];
-      };
-
-      const classDayStrings = classDaysInWeek.map(toDateStr);
-
-      const mondayStr = toDateStr(monday);
-      const saturdayStr = toDateStr(saturday);
-
-      // Get attendance records for the week
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .gte("timestamp", mondayStr + "T00:00:00")
-        .lt("timestamp", saturdayStr + "T00:00:00");
-
-      if (attendanceError) {
-        console.error("Failed to load weekly attendance:", attendanceError);
-        setIsLoadingWeeklyAbsences(false);
-        return;
-      }
-
-      // Get cancelled sessions for the week
-      const { data: cancelledData } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .gte("date", classDayStrings[0])
-        .lte("date", classDayStrings[classDayStrings.length - 1])
-        .eq("is_cancelled", true);
-
-      const cancelledSet = new Set<string>();
-      if (cancelledData) {
-        cancelledData.forEach((row: any) => {
-          cancelledSet.add(row.date);
-        });
-      }
-
-      // Build a set of present student+date combos
-      const presentSet = new Set<string>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          const recordDate = toDateStr(d);
-          presentSet.add(`${record.student_id}-${recordDate}`);
-        });
-      }
-
-      // For each student in the roster, check each class day
-      const absenceMap = new Map<
-        string,
-        {
-          student_id: string;
-          cohort: "A" | "B" | "C";
-          name?: string;
-          absentDays: string[];
-        }
-      >();
-
-      roster.forEach((student) => {
-        const normalizedCohort = String(student.cohort).toUpperCase();
-        let cohort: "A" | "B" | "C" = inferCohort(student.student_id);
-        if (
-          normalizedCohort === "A" ||
-          normalizedCohort === "B" ||
-          normalizedCohort === "C"
-        ) {
-          cohort = normalizedCohort;
-        }
-
-        classDayStrings.forEach((dateStr) => {
-          if (cancelledSet.has(dateStr)) return; // ignore any cancelled session
-          const presentKey = `${student.student_id}-${dateStr}`;
-          // Excused ("absent with permission") days don't count as absences.
-          if (excusedAbsences.has(presentKey)) return;
-          if (!presentSet.has(presentKey)) {
-            if (!absenceMap.has(student.student_id)) {
-              absenceMap.set(student.student_id, {
-                student_id: student.student_id,
-                cohort: student.cohort as "A" | "B" | "C",
-                name: student.name,
-                absentDays: [],
-              });
-            }
-            absenceMap.get(student.student_id)!.absentDays.push(dateStr);
-          }
+        byStudent.set(m.student_id, {
+          student_id: m.student_id,
+          cohort: m.cohort_label,
+          name: roster.find((r) => r.student_id === m.student_id)?.name,
+          absentDays: [m.session_date],
+          frequency: 1,
         });
       });
 
-      // Convert to array and compute frequency, sort by frequency descending
-      const result: WeeklyAbsence[] = Array.from(absenceMap.values()).map(
-        (entry) => ({
-          ...entry,
-          frequency: entry.absentDays.length,
-        }),
+      setWeeklyAbsences(
+        [...byStudent.values()].sort((a, b) => b.frequency - a.frequency),
       );
-      result.sort((a, b) => b.frequency - a.frequency);
-
-      setWeeklyAbsences(result);
     } catch (error) {
       console.error("Error loading weekly absences:", error);
     } finally {
@@ -948,125 +755,73 @@ const TADashboard = ({
 
   // Build the full week-by-week report from the semester start through today.
   // One fetch, computed client-side per week (excludes cancelled + excused days).
+  // The week-by-week report, grouped off the sessions that actually ran.
+  //
+  // The previous version stepped through the term a day at a time applying a
+  // fixed Tue/Wed/Thu rule, and treated a cancellation as cancelling that day
+  // for every cohort — cancelled_sessions has a cohort column it ignored. A
+  // session belongs to one cohort, so grouping its marks cannot make that
+  // mistake.
   const buildWeeklyReport = async () => {
+    if (!activeClassId) return;
     setIsBuildingReport(true);
     setWeeklyReport([]);
     try {
-      const toDateStr = (d: Date) => d.toISOString().split("T")[0];
-      const now = new Date();
-      const todayStr = toDateStr(now);
+      const log = await attendanceLog(activeClassId, { to: todayStr() });
 
-      // Fetch ALL attendance from semester start to today. Paginate, because
-      // PostgREST caps a single response (default 1000 rows) — without this,
-      // present check-ins get silently dropped and students are mis-flagged.
-      const presentSet = new Set<string>();
-      const pageSize = 1000;
-      let from = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data: page, error: pageError } = await supabase
-          .from("present_students")
-          .select("student_id, timestamp")
-          .gte("timestamp", toDateStr(SEMESTER_START) + "T00:00:00")
-          .order("timestamp", { ascending: true })
-          .range(from, from + pageSize - 1);
-        if (pageError) {
-          console.error("Failed to load attendance:", pageError);
-          break;
-        }
-        (page || []).forEach((r: any) => {
-          const recordDate = toDateStr(new Date(r.timestamp));
-          presentSet.add(`${r.student_id}-${recordDate}`);
+      // Which weeks ran at all, so a week with sessions but no absences still
+      // appears — an empty week is a result, not a gap.
+      const weeks = new Map<string, Set<string>>();
+      log.sessions
+        .filter((sn) => sn.status !== "cancelled")
+        .forEach((sn) => {
+          const key = weekKeyOf(sn.session_date);
+          const days = weeks.get(key);
+          if (days) days.add(sn.session_date);
+          else weeks.set(key, new Set([sn.session_date]));
         });
-        if (!page || page.length < pageSize) break;
-        from += pageSize;
-      }
 
-      // Cancelled sessions (any cohort) → treat that date as no-class.
-      const { data: cancelledData } = await supabase
-        .from("cancelled_sessions")
-        .select("date")
-        .eq("is_cancelled", true);
-      const cancelledSet = new Set<string>(
-        (cancelledData || []).map((r: any) => r.date),
-      );
-
-      // Excused absences → never count as an absence.
-      const { data: excusedData } = await supabase
-        .from("excused_absences")
-        .select("student_id, date");
-      const excusedSet = new Set<string>(
-        (excusedData || []).map((r: any) => `${r.student_id}-${r.date}`),
-      );
-
-      const report: WeekReport[] = [];
-      // Start from the Monday of the semester-start week, then step weekly so
-      // week boundaries are stable regardless of which weekday the term starts.
-      const weekStart = new Date(SEMESTER_START);
-      const startDow = weekStart.getUTCDay(); // 0=Sun … 6=Sat
-      weekStart.setUTCDate(
-        weekStart.getUTCDate() + (startDow === 0 ? -6 : 1 - startDow),
-      );
-      let weekNumber = 0;
-
-      while (toDateStr(weekStart) <= todayStr) {
-        weekNumber += 1;
-
-        // Class days (Tue/Wed/Thu) in this week, on/after semester start, up to today.
-        const classDays: string[] = [];
-        for (let i = 0; i < 7; i++) {
-          const day = new Date(weekStart);
-          day.setUTCDate(day.getUTCDate() + i);
-          const dow = day.getUTCDay(); // 0=Sun … 6=Sat
-          if (dow !== 2 && dow !== 3 && dow !== 4) continue;
-          const ds = toDateStr(day);
-          if (ds < toDateStr(SEMESTER_START)) continue;
-          if (ds > todayStr) continue;
-          if (cancelledSet.has(ds)) continue;
-          classDays.push(ds);
+      const absencesByWeek = new Map<string, Map<string, WeeklyAbsence>>();
+      log.marks.filter((m) => isAbsentState(m.state)).forEach((m) => {
+        const key = weekKeyOf(m.session_date);
+        let forWeek = absencesByWeek.get(key);
+        if (!forWeek) {
+          forWeek = new Map();
+          absencesByWeek.set(key, forWeek);
         }
-
-        // Week 1 had no attendance taken — skip it so it doesn't show everyone
-        // as absent.
-        if (classDays.length > 0 && weekNumber > 1) {
-          const absences: WeeklyAbsence[] = [];
-          roster.forEach((student) => {
-            const missed: string[] = [];
-            classDays.forEach((ds) => {
-              if (excusedSet.has(`${student.student_id}-${ds}`)) return;
-              if (!presentSet.has(`${student.student_id}-${ds}`)) {
-                missed.push(ds);
-              }
-            });
-            if (missed.length > 0) {
-              absences.push({
-                student_id: student.student_id,
-                cohort: student.cohort as "A" | "B" | "C",
-                name: student.name,
-                absentDays: missed,
-                frequency: missed.length,
-              });
-            }
-          });
-          absences.sort((a, b) => b.frequency - a.frequency);
-
-          const first = new Date(classDays[0] + "T00:00:00");
-          const last = new Date(classDays[classDays.length - 1] + "T00:00:00");
-          const rangeLabel =
-            classDays.length === 1
-              ? format(first, "MMM dd")
-              : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`;
-
-          report.push({
-            weekNumber,
-            startStr: toDateStr(weekStart),
-            rangeLabel,
-            absences,
-          });
+        const entry = forWeek.get(m.student_id);
+        if (entry) {
+          entry.absentDays.push(m.session_date);
+          entry.frequency += 1;
+          return;
         }
+        forWeek.set(m.student_id, {
+          student_id: m.student_id,
+          cohort: m.cohort_label,
+          name: roster.find((r) => r.student_id === m.student_id)?.name,
+          absentDays: [m.session_date],
+          frequency: 1,
+        });
+      });
 
-        weekStart.setUTCDate(weekStart.getUTCDate() + 7);
-      }
+      const report: WeekReport[] = [...weeks.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([weekStart, dayStrings], index) => {
+          const days = [...dayStrings].sort();
+          const first = fromDateStr(days[0]);
+          const last = fromDateStr(days[days.length - 1]);
+          return {
+            weekNumber: index + 1,
+            startStr: weekStart,
+            rangeLabel:
+              days.length === 1
+                ? format(first, "MMM dd")
+                : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`,
+            absences: [...(absencesByWeek.get(weekStart)?.values() ?? [])].sort(
+              (a, b) => b.frequency - a.frequency,
+            ),
+          };
+        });
 
       setWeeklyReport(report);
     } catch (error) {
@@ -1189,192 +944,23 @@ const TADashboard = ({
     }
   };
 
+  // Absences across the class, or on one day.
+  //
+  // Was ~190 lines that rebuilt the term day by day from four tables, guessing
+  // which days were class days from a fixed weekday rule plus "somebody checked
+  // in, so it must have happened". An absence is a stored row now, so this
+  // filters rather than infers. searchStudent below was a copy of that same
+  // loop, 140 of 180 lines identical, and had already drifted from it.
   const loadAbsenceHistory = async (date?: Date) => {
+    if (!activeClassId) return;
     setIsLoadingHistory(true);
     try {
-      let startDate: Date;
-      let endDate: Date;
-
-      if (date) {
-        // Load for specific date
-        startDate = new Date(
-          Date.UTC(
-            date.getUTCFullYear(),
-            date.getUTCMonth(),
-            date.getUTCDate(),
-            0,
-            0,
-            0,
-          ),
-        );
-        endDate = new Date(
-          Date.UTC(
-            date.getUTCFullYear(),
-            date.getUTCMonth(),
-            date.getUTCDate() + 1,
-            0,
-            0,
-            0,
-          ),
-        );
-      } else {
-        // Load from semester start
-        endDate = new Date();
-        startDate = new Date(SEMESTER_START);
-      }
-
-      // Get all attendance records for the date range
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .gte("timestamp", startDate.toISOString())
-        .lt("timestamp", endDate.toISOString());
-
-      if (attendanceError) {
-        console.error("Failed to load attendance:", attendanceError);
-        return;
-      }
-
-      // Get cancelled sessions for the date range
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0])
-        .eq("is_cancelled", true);
-
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      }
-
-      const cancelledSessionsMap = new Map<string, boolean>();
-      if (cancelledData) {
-        cancelledData.forEach((session: any) => {
-          const key = session.date;
-          cancelledSessionsMap.set(key, true);
-        });
-      }
-
-      // Get all students
-      const allStudentIds = roster.map((r) => r.student_id);
-
-      // Group attendance by date
-      const attendanceByDate = new Map<string, Set<string>>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const recordDate = new Date(record.timestamp)
-            .toISOString()
-            .split("T")[0];
-          if (!attendanceByDate.has(recordDate)) {
-            attendanceByDate.set(recordDate, new Set());
-          }
-          attendanceByDate.get(recordDate)!.add(record.student_id);
-        });
-      }
-
-      // Get class dates for the range
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_dates")
-        .select("date, cohort")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0]);
-
-      const classDatesMap = new Map<string, boolean>();
-      if (classDatesData) {
-        classDatesData.forEach((row: any) => {
-          // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00");
-          if (!isValidClassDay(d)) return;
-          const key = `${row.date}-${row.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check attendance records to infer class days (if someone was present, it was a class day)
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          if (!isValidClassDay(d)) return;
-          const recordDate = d.toISOString().split("T")[0];
-          const key = `${recordDate}-${record.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check if dates match the schedule
-      const currentDateCheck = new Date(startDate);
-      while (currentDateCheck < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDateCheck)) {
-          currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDateCheck.toISOString().split("T")[0];
-        const dayOfWeek = currentDateCheck.getDay();
-
-        classSchedule.forEach((schedule) => {
-          if (schedule.day_of_week === dayOfWeek) {
-            const key = `${dateStr}-${schedule.cohort}`;
-            // Only add if not already in map and not cancelled
-            if (!classDatesMap.has(key)) {
-              const wasCancelled = cancelledSessionsMap.get(key) || false;
-              if (!wasCancelled) {
-                classDatesMap.set(key, true);
-              }
-            }
-          }
-        });
-
-        currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-      }
-
-      // Find absences - only on Mon/Wed/Fri when classes actually occurred
-      const absences: AbsenceHistory[] = [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDate.toISOString().split("T")[0];
-        const presentOnDate = attendanceByDate.get(dateStr) || new Set();
-
-        // Check each student
-        allStudentIds.forEach((studentId) => {
-          const studentRoster = roster.find((r) => r.student_id === studentId);
-          const cohort = studentRoster?.cohort || inferCohort(studentId);
-          const classDateKey = `${dateStr}-${cohort}`;
-
-          // Only check absences on days when classes actually occurred
-          const isClassDate = classDatesMap.has(classDateKey);
-
-          // Check if class was cancelled for this cohort on this date
-          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
-
-          // Excused ("absent with permission") days don't count as absences.
-          const isExcused = excusedAbsences.has(`${studentId}-${dateStr}`);
-
-          if (
-            isClassDate &&
-            !presentOnDate.has(studentId) &&
-            !wasCancelled &&
-            !isExcused
-          ) {
-            absences.push({
-              date: dateStr,
-              student_id: studentId,
-              cohort: cohort,
-              was_class_cancelled: false,
-            });
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      setAbsenceHistory(absences);
+      const day = date ? toDateStr(date) : undefined;
+      const log = await attendanceLog(activeClassId, {
+        from: day,
+        to: day,
+      });
+      setAbsenceHistory(absencesFrom(log));
     } catch (error) {
       console.error("Error loading absence history:", error);
     } finally {
@@ -1383,183 +969,27 @@ const TADashboard = ({
   };
 
   const searchStudent = async (query: string) => {
-    if (!query.trim()) {
+    if (!query.trim() || !activeClassId) {
       setStudentAbsenceHistory([]);
       return;
     }
-
     setIsLoadingStudentHistory(true);
     try {
-      // Search for student by ID or name (case-insensitive partial match)
-      const searchLower = query.toLowerCase().trim();
-      const matchingStudents = roster.filter(
-        (r) =>
-          r.student_id.toLowerCase().includes(searchLower) ||
-          (r.name && r.name.toLowerCase().includes(searchLower)),
+      const needle = query.trim().toLowerCase();
+      const matching = new Set(
+        roster
+          .filter(
+            (r) =>
+              r.student_id.toLowerCase().includes(needle) ||
+              (r.name ?? "").toLowerCase().includes(needle),
+          )
+          .map((r) => r.student_id),
       );
 
-      if (matchingStudents.length === 0) {
-        setStudentAbsenceHistory([]);
-        toast({
-          title: "No Results",
-          description: "No student found matching your search.",
-          variant: "default",
-        });
-        setIsLoadingStudentHistory(false);
-        return;
-      }
-
-      // If multiple matches, take the first one (or show all)
-      // For now, let's show all matches
-      const studentIds = matchingStudents.map((s) => s.student_id);
-
-      // Get all attendance records for these students
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .in("student_id", studentIds)
-        .order("timestamp", { ascending: false });
-
-      if (attendanceError) {
-        console.error("Failed to load attendance:", attendanceError);
-        setIsLoadingStudentHistory(false);
-        return;
-      }
-
-      // Get cancelled sessions for all dates
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .eq("is_cancelled", true);
-
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      }
-
-      const cancelledSessionsMap = new Map<string, boolean>();
-      if (cancelledData) {
-        cancelledData.forEach((session: any) => {
-          const key = session.date;
-          cancelledSessionsMap.set(key, true);
-        });
-      }
-
-      // Group attendance by student and date
-      const attendanceByStudentAndDate = new Map<string, Set<string>>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const recordDate = new Date(record.timestamp)
-            .toISOString()
-            .split("T")[0];
-          const key = `${record.student_id}-${recordDate}`;
-          if (!attendanceByStudentAndDate.has(record.student_id)) {
-            attendanceByStudentAndDate.set(record.student_id, new Set());
-          }
-          attendanceByStudentAndDate.get(record.student_id)!.add(recordDate);
-        });
-      }
-
-      // Get class dates for the range (from semester start)
-      const endDate = new Date();
-      const startDate = new Date(SEMESTER_START);
-
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_dates")
-        .select("date, cohort")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0]);
-
-      const classDatesMap = new Map<string, boolean>();
-      if (classDatesData) {
-        classDatesData.forEach((row: any) => {
-          // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00");
-          if (!isValidClassDay(d)) return;
-          const key = `${row.date}-${row.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check attendance records to infer class days (if someone was present, it was a class day)
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          if (!isValidClassDay(d)) return;
-          const recordDate = d.toISOString().split("T")[0];
-          const key = `${recordDate}-${record.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check if dates match the schedule
-      const currentDateCheck = new Date(startDate);
-      while (currentDateCheck < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDateCheck)) {
-          currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDateCheck.toISOString().split("T")[0];
-        const dayOfWeek = currentDateCheck.getDay();
-
-        classSchedule.forEach((schedule) => {
-          if (schedule.day_of_week === dayOfWeek) {
-            const key = `${dateStr}-${schedule.cohort}`;
-            // Only add if not already in map and not cancelled
-            if (!classDatesMap.has(key)) {
-              const wasCancelled = cancelledSessionsMap.get(key) || false;
-              if (!wasCancelled) {
-                classDatesMap.set(key, true);
-              }
-            }
-          }
-        });
-
-        currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-      }
-
-      // Find absences - only on Mon/Wed/Fri when classes actually occurred
-      const absences: AbsenceHistory[] = [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDate.toISOString().split("T")[0];
-
-        // Check each matching student
-        matchingStudents.forEach((student) => {
-          const presentOnDate =
-            attendanceByStudentAndDate.get(student.student_id)?.has(dateStr) ||
-            false;
-          const classDateKey = `${dateStr}-${student.cohort}`;
-          const isClassDate = classDatesMap.has(classDateKey);
-          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
-          const isExcused = excusedAbsences.has(
-            `${student.student_id}-${dateStr}`,
-          );
-
-          if (isClassDate && !presentOnDate && !wasCancelled && !isExcused) {
-            absences.push({
-              date: dateStr,
-              student_id: student.student_id,
-              cohort: student.cohort,
-              was_class_cancelled: false,
-            });
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      // Sort by date descending
-      absences.sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      const log = await attendanceLog(activeClassId);
+      setStudentAbsenceHistory(
+        absencesFrom(log, (studentId) => matching.has(studentId)),
       );
-      setStudentAbsenceHistory(absences);
     } catch (error) {
       console.error("Error searching student:", error);
       toast({
@@ -2035,7 +1465,7 @@ const TADashboard = ({
                               );
                               const cohort = rosterEntry
                                 ? rosterEntry.cohort
-                                : inferCohort(studentId);
+                                : cohortOf(studentId);
                               const studentName = rosterEntry?.name;
                               return (
                                 <div
@@ -2447,7 +1877,7 @@ const TADashboard = ({
                   {attendanceSearchResults.map((student) => {
                     const cohort = student.cohort
                       ? String(student.cohort).toUpperCase()
-                      : inferCohort(student.student_id);
+                      : cohortOf(student.student_id);
                     const isAlreadyPresent = presentStudents.some(
                       (p) => p.id === student.student_id,
                     );
