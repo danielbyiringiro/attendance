@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS public.canvas_row_mappings (
 --   * on 27 May only B met               -> A must get no session that day
 --   * on 28 May only A met               -> B and C must get no session that day
 --   * S001 checked in twice on 19 May    -> the dedupe path (no unique constraint)
+--   * S001 also checked in on 27 May     -> a check-in on a cancelled session
 --   * S999 has a check-in but no student -> the reconciliation orphan bucket
 --   * S002 is excused on 28 May          -> a day A met and S002 did not attend
 --   * S004 disputes 26 May               -> a flag with no matching check-in
@@ -151,7 +152,10 @@ INSERT INTO public.present_students (student_id, cohort, timestamp) VALUES
   ('S002', 'A', '2026-05-26T09:02:00Z'),
   ('S003', 'B', '2026-05-26T11:04:00Z'),
   ('S005', 'C', '2026-05-26T14:03:00Z'),
-  -- Wed 27 May: cancelled for A, so only B has check-ins
+  -- Wed 27 May: cancelled for A. S001 checked in anyway - the class was called
+  -- off after some people had already marked, which is ordinary. Their record
+  -- must survive: cancel_session() keeps present rows for exactly this reason.
+  ('S001', 'A', '2026-05-27T09:02:00Z'),
   ('S003', 'B', '2026-05-27T11:00:00Z'),
   ('S004', 'B', '2026-05-27T11:06:00Z'),
   -- Thu 28 May: only A met

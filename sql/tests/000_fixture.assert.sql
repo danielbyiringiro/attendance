@@ -33,8 +33,8 @@ BEGIN
 
   -- --- check-ins ------------------------------------------------------------
   SELECT count(*) INTO n FROM public.present_students;
-  IF n <> 17 THEN
-    RAISE EXCEPTION 'expected 17 check-in rows, found %', n;
+  IF n <> 18 THEN
+    RAISE EXCEPTION 'expected 18 check-in rows, found %', n;
   END IF;
 
   -- The duplicate the table has no constraint against. The backfill must
@@ -71,11 +71,13 @@ BEGIN
     RAISE EXCEPTION 'expected 2 cohort B check-ins on the day A was cancelled, found %', n;
   END IF;
 
+  -- Somebody marked before the class was called off. The backfill must keep
+  -- that record, matching cancel_session(), which deletes only unexcused rows.
   SELECT count(*) INTO n
   FROM public.present_students
   WHERE timestamp::date = DATE '2026-05-27' AND cohort = 'A';
-  IF n <> 0 THEN
-    RAISE EXCEPTION 'cohort A must have no check-ins on its cancelled day, found %', n;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'expected 1 cohort A check-in on the cancelled day, found %', n;
   END IF;
 
   -- --- days only one cohort met --------------------------------------------

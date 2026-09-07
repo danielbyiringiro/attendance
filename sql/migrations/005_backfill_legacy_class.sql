@@ -225,7 +225,10 @@ BEGIN
       ON e.student_id = f.student_id AND e.class_id = v_class
     JOIN public.class_sessions s
       ON s.cohort_id = e.cohort_id AND s.session_date = f.on_date
-    WHERE s.status <> 'cancelled'
+    -- Cancelled sessions included on purpose. Somebody marked before the class
+    -- was called off, and cancel_session() keeps present rows for exactly that
+    -- reason; dropping them here would contradict the runtime rule and silently
+    -- lose attendance.
     ON CONFLICT (session_id, student_id) DO NOTHING
     RETURNING 1
   )
@@ -243,7 +246,6 @@ BEGIN
       ON e.student_id = ea.student_id AND e.class_id = v_class
     JOIN public.class_sessions s
       ON s.cohort_id = e.cohort_id AND s.session_date = ea.date
-    WHERE s.status <> 'cancelled'
     ON CONFLICT (session_id, student_id) DO NOTHING
     RETURNING 1
   )
@@ -264,7 +266,6 @@ BEGIN
     JOIN public.class_sessions s
       ON s.cohort_id = e.cohort_id AND s.session_date = f.session_date
     WHERE f.status = 'accepted'
-      AND s.status <> 'cancelled'
     ON CONFLICT (session_id, student_id) DO NOTHING
     RETURNING 1
   )
@@ -284,6 +285,9 @@ BEGIN
      AND e.enrolled_on <= s.session_date
      AND (e.dropped_on IS NULL OR e.dropped_on >= s.session_date)
     WHERE s.class_id = v_class
+      -- The one pass that DOES skip cancellations: a class that never ran
+      -- cannot produce an absence. Mirrors cancel_session(), which deletes
+      -- unexcused rows and leaves present ones alone.
       AND s.status <> 'cancelled'
     ON CONFLICT (session_id, student_id) DO NOTHING
     RETURNING 1

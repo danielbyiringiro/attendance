@@ -12,8 +12,12 @@
 --   C (S005, S006) met 19, 26 May, plus 21 May recovered from an upheld dispute
 --
 -- Check-ins by student-day, after collapsing S001's duplicate on the 19th:
---   S001 19,20,21,28   S002 19,21,26   S003 19,20,26,27
---   S004 21,27         S005 19,26      S999 19 (orphan, not on the roster)
+--   S001 19,20,21,27,28   S002 19,21,26   S003 19,20,26,27
+--   S004 21,27            S005 19,26      S999 19 (orphan, not on the roster)
+--
+-- S001's 27 May check-in lands on a session that was cancelled. It is kept: the
+-- class was called off after they marked, and cancel_session() preserves present
+-- rows for exactly that reason.
 -- ============================================================================
 
 DO $assert$
@@ -137,13 +141,24 @@ BEGIN
       'cohort B''s 27 May session should have survived cohort A''s cancellation, is %', st;
   END IF;
 
-  -- Nobody is marked absent for a cancelled class.
+  -- Nobody is marked ABSENT for a class that never ran...
   SELECT count(*) INTO n
   FROM public.attendance_records ar
   JOIN public.class_sessions s ON s.id = ar.session_id
-  WHERE s.status = 'cancelled';
+  WHERE s.status = 'cancelled' AND ar.state IN ('unexcused', 'pending');
   IF n <> 0 THEN
-    RAISE EXCEPTION '% records were written against a cancelled session', n;
+    RAISE EXCEPTION '% absences were written against a cancelled session', n;
+  END IF;
+
+  -- ...but someone who marked before it was called off keeps their record.
+  -- Dropping it would contradict cancel_session() and lose real attendance.
+  SELECT count(*) INTO n
+  FROM public.attendance_records ar
+  JOIN public.class_sessions s ON s.id = ar.session_id
+  WHERE s.status = 'cancelled' AND ar.state = 'present';
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'expected 1 present record on the cancelled session, found % — a check-in was lost', n;
   END IF;
 
   -- --------------------------------------------------------------------------
@@ -151,8 +166,8 @@ BEGIN
   -- --------------------------------------------------------------------------
   SELECT count(*) INTO n
   FROM public.attendance_records WHERE class_id = v_class AND state = 'present';
-  IF n <> 16 THEN     -- 15 check-ins + 1 upheld dispute
-    RAISE EXCEPTION 'expected 16 present records, found %', n;
+  IF n <> 17 THEN     -- 16 check-in days + 1 upheld dispute
+    RAISE EXCEPTION 'expected 17 present records, found %', n;
   END IF;
 
   -- The duplicate check-in collapsed to one record.
@@ -284,9 +299,9 @@ DECLARE
 BEGIN
   SELECT * INTO r FROM public.v_bridge_reconciliation;
 
-  -- 16 distinct student-days in the fixture, including the orphan.
-  IF r.legacy_unique_checkins <> 16 THEN
-    RAISE EXCEPTION 'expected 16 legacy check-in days, view reports %',
+  -- 17 distinct student-days in the fixture, including the orphan.
+  IF r.legacy_unique_checkins <> 17 THEN
+    RAISE EXCEPTION 'expected 17 legacy check-in days, view reports %',
       r.legacy_unique_checkins;
   END IF;
 
