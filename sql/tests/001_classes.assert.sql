@@ -138,7 +138,12 @@ BEGIN
   INSERT INTO public.enrolments (class_id, cohort_id, student_id)
   SELECT v_class_b, id, 'S001' FROM public.cohorts WHERE class_id = v_class_b LIMIT 1;
 
-  SELECT count(*) INTO n FROM public.enrolments WHERE student_id = 'S001';
+  -- Scoped to this file's own classes: the backfill in 005 also enrols S001,
+  -- and counting every enrolment would make this assertion depend on how much
+  -- legacy data happens to exist.
+  SELECT count(*) INTO n
+  FROM public.enrolments
+  WHERE student_id = 'S001' AND class_id IN (v_class, v_class_b);
   IF n <> 2 THEN
     RAISE EXCEPTION 'a student should be enrollable in two classes, found % enrolments', n;
   END IF;
