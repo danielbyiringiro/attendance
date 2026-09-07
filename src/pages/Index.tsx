@@ -4,6 +4,8 @@ import StudentLogin from "@/components/StudentLogin";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
+import ClassSwitcher from "@/components/ta/ClassSwitcher";
+import { ClassProvider } from "@/lib/classContext";
 import {
   BarChart3,
   CalendarDays,
@@ -11,6 +13,7 @@ import {
   History,
   Settings,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -43,6 +46,20 @@ interface RosterStudent {
 }
 
 type TATab = "attendance" | "analytics" | "students" | "sessions";
+
+// One row per sidebar entry. Previously these were four hand-duplicated
+// 14-line SidebarMenuItem blocks, so adding a section meant a fifth copy-paste
+// and a fifth chance to wire the wrong tab to the wrong label.
+const TA_TABS: ReadonlyArray<{
+  id: TATab;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { id: "attendance", label: "Attendance", icon: CalendarDays },
+  { id: "analytics", label: "Attendance Analytics", icon: BarChart3 },
+  { id: "students", label: "Students", icon: Users },
+  { id: "sessions", label: "Class Sessions", icon: Clock },
+];
 
 // Keys used to persist the TA dashboard across page reloads. sessionStorage is
 // used (not localStorage) so the session is cleared when the tab/browser closes,
@@ -499,76 +516,32 @@ const Index = () => {
 
   if (isTA) {
     return (
+      <ClassProvider>
       <SidebarProvider defaultOpen>
         <Sidebar collapsible="offcanvas">
           <SidebarHeader>
-            <div className="px-2 py-3 text-sm font-semibold">TA Dashboard</div>
+            <div className="px-2 pt-3 pb-1 text-sm font-semibold">TA Dashboard</div>
+            <ClassSwitcher />
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
               <SidebarGroupLabel>Navigation</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={taTab === "attendance"}
-                      tooltip="Attendance"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSetTaTab("attendance")}
+                  {TA_TABS.map(({ id, label, icon: Icon }) => (
+                    <SidebarMenuItem key={id}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={taTab === id}
+                        tooltip={label}
                       >
-                        <CalendarDays />
-                        <span>Attendance</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={taTab === "analytics"}
-                      tooltip="Attendance Analytics"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSetTaTab("analytics")}
-                      >
-                        <BarChart3 />
-                        <span>Attendance Analytics</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={taTab === "students"}
-                      tooltip="Students"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSetTaTab("students")}
-                      >
-                        <Users />
-                        <span>Students</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={taTab === "sessions"}
-                      tooltip="Class Sessions"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSetTaTab("sessions")}
-                      >
-                        <Clock />
-                        <span>Class Sessions</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                        <button type="button" onClick={() => handleSetTaTab(id)}>
+                          <Icon />
+                          <span>{label}</span>
+                        </button>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -594,6 +567,7 @@ const Index = () => {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      </ClassProvider>
     );
   }
 
