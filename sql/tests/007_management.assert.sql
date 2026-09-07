@@ -66,30 +66,54 @@ BEGIN
   END IF;
 
   -- ==========================================================================
-  -- set_cohort_schedule replaces, atomically
+  -- set_cohort_schedules: per-day times, several cohorts at once
   -- ==========================================================================
-  SELECT public.set_cohort_schedule(v_a, ARRAY[2,3,4]::smallint[], TIME '09:00', 60) INTO n;
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'expected 3 schedule rows, created %', n;
+  SELECT public.set_cohort_schedules(ARRAY[v_a], '[
+    {"weekday": 2, "start_time": "09:00", "duration_minutes": 60},
+    {"weekday": 4, "start_time": "14:00", "duration_minutes": 90}
+  ]'::jsonb) INTO n;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'expected 2 schedule rows, created %', n;
   END IF;
 
-  -- Replacing with fewer days leaves exactly the new set, not a union.
-  SELECT public.set_cohort_schedule(v_a, ARRAY[1]::smallint[], TIME '14:00', 90) INTO n;
+  -- Each day keeps its own time. One time across every weekday was the old
+  -- shape and could not express a class that meets Tue 09:00 and Thu 14:00.
+  SELECT count(*) INTO n
+  FROM public.cohort_schedules
+  WHERE cohort_id = v_a AND weekday = 4
+    AND start_time = TIME '14:00' AND duration_minutes = 90;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'the Thursday slot did not keep its own time and duration';
+  END IF;
+
+  -- Applied to several cohorts in one call.
+  SELECT public.set_cohort_schedules(ARRAY[v_a, v_b], '[
+    {"weekday": 3, "start_time": "11:00"}
+  ]'::jsonb) INTO n;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'expected 1 slot across 2 cohorts, created %', n;
+  END IF;
+
+  -- Replacing leaves exactly the new set, not a union with the old.
   SELECT count(*) INTO n FROM public.cohort_schedules WHERE cohort_id = v_a;
   IF n <> 1 THEN
     RAISE EXCEPTION 'replacing the schedule left % rows, expected 1', n;
   END IF;
 
+  -- Omitted duration inherits the class default at generation time.
   SELECT count(*) INTO n
   FROM public.cohort_schedules
-  WHERE cohort_id = v_a AND weekday = 1 AND start_time = TIME '14:00' AND duration_minutes = 90;
+  WHERE cohort_id = v_b AND weekday = 3 AND duration_minutes IS NULL;
   IF n <> 1 THEN
-    RAISE EXCEPTION 'the replacement schedule did not take';
+    RAISE EXCEPTION 'an omitted duration was not left null to inherit';
   END IF;
 
+  -- A bad slot is refused BEFORE anything is deleted, so a typo cannot wipe a
+  -- schedule and then fail.
   failed := false;
   BEGIN
-    PERFORM public.set_cohort_schedule(v_a, ARRAY[9]::smallint[], TIME '09:00');
+    PERFORM public.set_cohort_schedules(ARRAY[v_a],
+      '[{"weekday": 9, "start_time": "09:00"}]'::jsonb);
   EXCEPTION WHEN others THEN
     failed := true;
   END;
@@ -97,16 +121,38 @@ BEGIN
     RAISE EXCEPTION 'weekday 9 was accepted';
   END IF;
 
+  SELECT count(*) INTO n FROM public.cohort_schedules WHERE cohort_id = v_a;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'a rejected slot destroyed the existing schedule: % rows remain', n;
+  END IF;
+
+  -- Cohorts of two different classes cannot be written in one call.
+  failed := false;
+  BEGIN
+    PERFORM public.set_cohort_schedules(
+      ARRAY[v_a, (SELECT id FROM public.cohorts
+                  WHERE class_id <> v_class ORDER BY created_at LIMIT 1)],
+      '[{"weekday": 2, "start_time": "09:00"}]'::jsonb);
+  EXCEPTION WHEN others THEN
+    failed := true;
+  END;
+  IF NOT failed THEN
+    RAISE EXCEPTION 'a schedule was written across two classes at once';
+  END IF;
+
   -- Sessions already generated keep their own timing: changing a pattern must
   -- not silently rewrite what already happened.
-  PERFORM public.set_cohort_schedule(v_a, ARRAY[2]::smallint[], TIME '09:00', 60);
+  PERFORM public.set_cohort_schedules(ARRAY[v_a],
+    '[{"weekday": 2, "start_time": "09:00", "duration_minutes": 60}]'::jsonb);
   PERFORM public.generate_sessions(v_class, v_a);
   SELECT count(*) INTO n FROM public.class_sessions WHERE cohort_id = v_a;
   IF n = 0 THEN
     RAISE EXCEPTION 'no sessions were generated to test against';
   END IF;
 
-  PERFORM public.set_cohort_schedule(v_a, ARRAY[2]::smallint[], TIME '16:00', 30);
+  PERFORM public.set_cohort_schedules(ARRAY[v_a],
+    '[{"weekday": 2, "start_time": "16:00", "duration_minutes": 30}]'::jsonb);
   SELECT count(*) INTO n
   FROM public.class_sessions WHERE cohort_id = v_a AND duration_minutes = 30;
   IF n <> 0 THEN

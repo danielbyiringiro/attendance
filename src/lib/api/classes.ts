@@ -21,8 +21,9 @@ const fail = (what: string, error: { message: string } | null): never => {
 };
 
 /**
- * Classes the signed-in user can reach. RLS does the filtering, so this is a
- * plain select — an admin sees everything, everyone else sees theirs.
+ * Classes the signed-in user is on. RLS does the filtering, so this is a plain
+ * select: since migration 008 there is no admin bypass, and membership in
+ * class_staff is the only thing that makes a class visible.
  */
 export const listClasses = async (
   includeArchived = false,
@@ -159,22 +160,38 @@ export const listSchedules = async (
   return (data ?? []) as CohortScheduleRow[];
 };
 
+/** One weekday a cohort meets, with its own time. */
+export interface ScheduleSlot {
+  /** 0 = Sunday .. 6 = Saturday. */
+  weekday: number;
+  /** "HH:MM". */
+  startTime: string;
+  /** Omit to inherit the class default at generation time. */
+  durationMinutes?: number;
+}
+
 /**
- * Replace a cohort's meeting pattern. Server-side and atomic — the old
- * client-side delete-then-insert could leave a cohort with no schedule if the
- * second request failed. Returns how many slots were written.
+ * Replace the meeting pattern for one or more cohorts of a single class.
+ *
+ * Each slot carries its own time, so a cohort can meet Tuesday at 09:00 and
+ * Thursday at 14:00 — the previous shape applied one time to every weekday and
+ * could not say that.
+ *
+ * Server-side and atomic, and it validates every slot BEFORE deleting anything,
+ * so a typo cannot wipe a schedule and then fail. Returns how many slots were
+ * written across all the cohorts given.
  */
-export const setCohortSchedule = async (
-  cohortId: string,
-  weekdays: number[],
-  startTime: string,
-  durationMinutes?: number,
+export const setCohortSchedules = async (
+  cohortIds: string[],
+  slots: ScheduleSlot[],
 ): Promise<number> => {
-  const { data, error } = await supabase.rpc("set_cohort_schedule", {
-    p_cohort_id: cohortId,
-    p_weekdays: weekdays,
-    p_start_time: startTime,
-    p_duration_minutes: durationMinutes ?? null,
+  const { data, error } = await supabase.rpc("set_cohort_schedules", {
+    p_cohort_ids: cohortIds,
+    p_slots: slots.map((s) => ({
+      weekday: s.weekday,
+      start_time: s.startTime,
+      duration_minutes: s.durationMinutes ?? null,
+    })),
   });
   if (error) fail("Could not save the schedule", error);
   return (data as number) ?? 0;

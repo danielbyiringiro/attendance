@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, UserMinus, UserPlus } from "lucide-react";
+import { Loader2, Mail, Search, UserMinus, UserPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   addClassMember,
+  addClassMemberById,
   listClassMembers,
   removeClassMember,
+  searchAddableStaff,
+  type AddableStaff,
   type ClassMember,
 } from "@/lib/api/staff";
 
@@ -16,18 +19,24 @@ interface ClassMembersProps {
   className?: string;
 }
 
+const looksLikeEmail = (v: string) => /\S+@\S+\.\S+/.test(v.trim());
+
 /**
  * Who can reach this class.
  *
- * Adding is by exact email rather than by picking from a list: a member can add
- * someone they can name, but nobody can enumerate every account in the
- * institution.
+ * Typing searches people you already share a class with — the set you actually
+ * want to pick from. It deliberately does not search every account: that would
+ * be a directory of the whole institution. Anyone outside that circle is added
+ * by typing their full email, which reveals nothing you did not already know,
+ * so the box does both.
  */
 const ClassMembers = ({ classId, className }: ClassMembersProps) => {
   const { toast } = useToast();
   const [members, setMembers] = useState<ClassMember[]>([]);
-  const [email, setEmail] = useState("");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<AddableStaff[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
 
   const load = useCallback(async () => {
@@ -49,17 +58,63 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
     void load();
   }, [load]);
 
-  const handleAdd = async () => {
-    if (email.trim() === "") return;
+  // Debounced, so typing an email does not fire a request per keystroke.
+  useEffect(() => {
+    const q = query.trim();
+    if (q === "") {
+      setResults([]);
+      return;
+    }
+    setIsSearching(true);
+    const timer = setTimeout(() => {
+      searchAddableStaff(classId, q)
+        .then(setResults)
+        .catch(() => setResults([]))
+        .finally(() => setIsSearching(false));
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      setIsSearching(false);
+    };
+  }, [query, classId]);
+
+  const afterChange = async () => {
+    setQuery("");
+    setResults([]);
+    await load();
+  };
+
+  const handleAddById = async (person: AddableStaff) => {
     setIsWorking(true);
     try {
-      await addClassMember(classId, email.trim());
+      await addClassMemberById(classId, person.staff_id);
       toast({
         title: "Added",
-        description: `${email.trim()} can now see and manage this class.`,
+        description: `${
+          person.display_name || person.email
+        } can now see and manage this class.`,
       });
-      setEmail("");
-      await load();
+      await afterChange();
+    } catch (e) {
+      toast({
+        title: "Could not add them",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleAddByEmail = async () => {
+    setIsWorking(true);
+    try {
+      await addClassMember(classId, query.trim());
+      toast({
+        title: "Added",
+        description: `${query.trim()} can now see and manage this class.`,
+      });
+      await afterChange();
     } catch (e) {
       toast({
         title: "Could not add them",
@@ -106,6 +161,9 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
           >
             <span className="truncate text-sm">
               {m.display_name || m.email || "(unnamed account)"}
+              {m.display_name && m.email && (
+                <span className="text-muted-foreground"> · {m.email}</span>
+              )}
               {m.is_you && (
                 <Badge variant="outline" className="ml-2 text-xs">
                   you
@@ -132,27 +190,66 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
         )}
       </div>
 
-      <div className="flex gap-2">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
-          value={email}
-          placeholder="colleague@example.edu"
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void handleAdd();
-          }}
+          className="pl-8"
+          value={query}
+          placeholder="Search a colleague, or type a full email"
+          onChange={(e) => setQuery(e.target.value)}
         />
-        <Button
-          variant="outline"
-          disabled={isWorking || email.trim() === ""}
-          onClick={handleAdd}
-        >
-          <UserPlus className="h-4 w-4 mr-1" />
-          Add
-        </Button>
+        {isSearching && (
+          <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin opacity-60" />
+        )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        They need to have signed in at least once. Everyone here has the same
-        rights as you.
+
+      {results.length > 0 && (
+        <div className="mt-1 space-y-1 rounded-md border p-1">
+          {results.map((p) => (
+            <button
+              key={p.staff_id}
+              type="button"
+              disabled={isWorking}
+              className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50"
+              onClick={() => handleAddById(p)}
+            >
+              <span className="truncate">
+                {p.display_name || p.email}
+                {p.display_name && p.email && (
+                  <span className="text-muted-foreground"> · {p.email}</span>
+                )}
+              </span>
+              <UserPlus className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Nobody in your circle matched, but a full address still reaches them. */}
+      {query.trim() !== "" && !isSearching && results.length === 0 && (
+        <div className="mt-1">
+          {looksLikeEmail(query) ? (
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              disabled={isWorking}
+              onClick={handleAddByEmail}
+            >
+              <Mail className="h-4 w-4 mr-2" />
+              Add {query.trim()} by email
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground px-1">
+              No colleague matches. Type someone's full email address to add them.
+            </p>
+          )}
+        </div>
+      )}
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        Search covers people you already share a class with. Anyone else can be
+        added by their full email, and they must have signed in at least once.
+        Everyone here has the same rights as you.
       </p>
     </div>
   );

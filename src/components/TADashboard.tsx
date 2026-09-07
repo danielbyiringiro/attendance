@@ -55,6 +55,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import Classes from "@/components/ta/sections/Classes";
+import Schedule from "@/components/ta/sections/Schedule";
 // Semester start date — attendance is only tracked from this date forward.
 // Owned by the export module so the dashboard and the CSV agree on the term.
 import { SEMESTER_START } from "@/lib/attendanceExport";
@@ -1728,26 +1729,33 @@ const TADashboard = ({
   const isStudentsSection = activeSection === "students";
   const isSessionsSection = activeSection === "sessions";
   const isClassesSection = activeSection === "classes";
-  const sectionTitle =
-    activeSection === "classes"
-      ? "Classes"
-      : activeSection === "analytics"
-      ? "Attendance Analytics"
-      : activeSection === "students"
-        ? "Student Management"
-        : activeSection === "sessions"
-          ? "Class Session Management"
-          : "TA Dashboard";
-  const sectionDescription =
-    activeSection === "classes"
-      ? "Create a class, set its cohorts, and choose who can manage it"
-      : activeSection === "analytics"
-      ? "Review attendance trends, absences, and flagged records"
-      : activeSection === "students"
-        ? "Search the roster and manage student records"
-        : activeSection === "sessions"
-          ? "Manage attendance windows, cancelled classes, and schedules"
-          : "Manage live attendance and monitor student participation";
+  // A lookup rather than a five-deep ternary: adding a section to the nested
+  // version meant threading a branch into two of them and leaving a dead arm
+  // behind, which is exactly what happened.
+  const SECTION_COPY: Record<string, { title: string; description: string }> = {
+    classes: {
+      title: "Classes",
+      description: "Create a class, set its cohorts, and choose who can manage it",
+    },
+    sessions: {
+      title: "Class Sessions",
+      description: "Set when each cohort meets, then create the term's sessions",
+    },
+    analytics: {
+      title: "Attendance Analytics",
+      description: "Review attendance trends, absences, and flagged records",
+    },
+    students: {
+      title: "Student Management",
+      description: "Search the roster and manage student records",
+    },
+    attendance: {
+      title: "TA Dashboard",
+      description: "Manage live attendance and monitor student participation",
+    },
+  };
+  const { title: sectionTitle, description: sectionDescription } =
+    SECTION_COPY[activeSection] ?? SECTION_COPY.attendance;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
@@ -1768,10 +1776,11 @@ const TADashboard = ({
           </Button>
         </div>
 
-        {/* Classes replaces the body rather than sitting beside it: everything
-            below is scoped to one class, and this is the screen that chooses
-            which class that is. */}
+        {/* Classes and Class Sessions replace the body rather than sitting
+            beside it: everything below is scoped to one class, and these are
+            the screens that choose and shape that class. */}
         {isClassesSection && <Classes />}
+        {isSessionsSection && <Schedule />}
 
         {!isClassesSection && isAnalyticsSection && (
           <>
@@ -1851,7 +1860,7 @@ const TADashboard = ({
         )}
 
         {/* Action Buttons */}
-        {(isAnalyticsSection || isStudentsSection || isSessionsSection) && (
+        {(isAnalyticsSection || isStudentsSection) && (
           <div className="flex gap-4 flex-wrap">
             {isAnalyticsSection && (
               <>
@@ -1992,10 +2001,10 @@ const TADashboard = ({
         )}
 
         {/* Controls and Student Lists */}
-        {(isAttendanceSection || isSessionsSection || isStudentsSection) && (
+        {(isAttendanceSection || isStudentsSection) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Controls */}
-            {(isAttendanceSection || isSessionsSection) && (
+            {isAttendanceSection && (
               <Card className="border-2 shadow-medium">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">

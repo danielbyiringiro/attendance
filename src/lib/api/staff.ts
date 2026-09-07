@@ -89,3 +89,45 @@ export const removeClassMember = async (
   if (error) fail("Could not remove them", error);
   return data as { removed: boolean; remaining: number };
 };
+
+export interface AddableStaff {
+  staff_id: string;
+  email: string | null;
+  display_name: string | null;
+}
+
+/**
+ * Search people you could add to a class.
+ *
+ * Scoped to those you already share a class with, and never the whole staff
+ * table: search over every account would be the institution directory that
+ * migration 008 deliberately refused to build. Anyone outside that circle is
+ * still reachable by typing their full email, which reveals nothing the caller
+ * did not already know.
+ *
+ * Already-added members are excluded — they belong in the list, not the picker.
+ */
+export const searchAddableStaff = async (
+  classId: string,
+  query: string,
+): Promise<AddableStaff[]> => {
+  const { data, error } = await supabase.rpc("search_addable_staff", {
+    p_class_id: classId,
+    p_query: query,
+  });
+  if (error) fail("Could not search", error);
+  return (data ?? []) as AddableStaff[];
+};
+
+/** Add someone picked from the search. Held to the same circle rule. */
+export const addClassMemberById = async (
+  classId: string,
+  staffId: string,
+): Promise<{ staff_id: string; email: string; added: boolean }> => {
+  const { data, error } = await supabase.rpc("add_class_member_by_id", {
+    p_class_id: classId,
+    p_staff_id: staffId,
+  });
+  if (error) fail("Could not add them", error);
+  return data as { staff_id: string; email: string; added: boolean };
+};
