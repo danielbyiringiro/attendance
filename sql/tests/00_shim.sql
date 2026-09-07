@@ -57,6 +57,20 @@ $$;
 
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 
+-- auth.users. Supabase owns this table; migration 003 reads it to bootstrap the
+-- staff list, and the suites SET request.jwt.claim.sub to one of these ids to
+-- act as that person.
+CREATE TABLE IF NOT EXISTS auth.users (
+  id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text UNIQUE
+);
+
+INSERT INTO auth.users (id, email) VALUES
+  ('11111111-1111-1111-1111-111111111111', 'ta.one@example.edu'),
+  ('22222222-2222-2222-2222-222222222222', 'ta.two@example.edu'),
+  ('33333333-3333-3333-3333-333333333333', 'newcomer@example.edu')
+ON CONFLICT (id) DO NOTHING;
+
 -- gen_random_uuid() lives in pgcrypto on older servers; on 13+ it is built in.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

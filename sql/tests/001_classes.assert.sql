@@ -227,13 +227,15 @@ BEGIN
     RAISE EXCEPTION 'expected RLS enabled on all 3 new tables, got %', n;
   END IF;
 
-  SELECT count(*) INTO n
+  -- Every table carries at least one policy. WHICH policy is 003's business:
+  -- it replaces the blanket _auth_all pattern with per-class scoping, so
+  -- asserting the policy name here would just encode the order of migrations.
+  SELECT count(DISTINCT tablename) INTO n
   FROM pg_policies
   WHERE schemaname = 'public'
-    AND tablename IN ('classes', 'cohorts', 'enrolments')
-    AND policyname LIKE '%_auth_all';
+    AND tablename IN ('classes', 'cohorts', 'enrolments');
   IF n <> 3 THEN
-    RAISE EXCEPTION 'expected the 3 _auth_all policies, got %', n;
+    RAISE EXCEPTION 'expected all 3 new tables to carry a policy, got %', n;
   END IF;
 
   -- anon must not reach these tables directly.
