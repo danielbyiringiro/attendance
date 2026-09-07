@@ -39,7 +39,6 @@ import {
   buildAttendanceExport,
   downloadCsv,
   FORMATS,
-  SEMESTER_START,
   type ExportFormat,
   type ExportResult,
   type ExportShape,
@@ -48,6 +47,8 @@ import {
   applyCohortChanges,
   type CohortChange,
 } from "@/lib/rosterUpdates";
+import { useActiveClass } from "@/lib/classContext";
+import { fromDateStr } from "@/lib/dates";
 import {
   applyRememberedMappings,
   forgetCanvasMapping,
@@ -74,13 +75,6 @@ interface AttendanceExportDialogProps {
   roster: RosterStudent[];
 }
 
-// The semester start is a UTC-constructed date, so read it back in UTC.
-const semesterStartLocal = new Date(
-  SEMESTER_START.getUTCFullYear(),
-  SEMESTER_START.getUTCMonth(),
-  SEMESTER_START.getUTCDate(),
-);
-
 const AttendanceExportDialog = ({
   open,
   onOpenChange,
@@ -88,11 +82,21 @@ const AttendanceExportDialog = ({
 }: AttendanceExportDialogProps) => {
   const { toast } = useToast();
 
+  // The term comes from the class being exported. This file used to derive it
+  // from a module-level constant in attendanceExport, whose lower bound
+  // silently disagreed with the clamp inside the exporter itself.
+  const { activeClass, activeClassId, cohorts } = useActiveClass();
+  const termStart = activeClass
+    ? fromDateStr(activeClass.term_starts_on)
+    : new Date();
+
+  // "all", or a cohort uuid — two classes can each have a Cohort A, so a label
+  // no longer identifies one.
   const [cohort, setCohort] = useState<string>("all");
   const [shape, setShape] = useState<ExportShape>("summary");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("default");
   const [mergeExcused, setMergeExcused] = useState(false);
-  const [startDate, setStartDate] = useState<Date>(semesterStartLocal);
+  const [startDate, setStartDate] = useState<Date>(termStart);
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [studentQuery, setStudentQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<RosterStudent | null>(
@@ -279,17 +283,18 @@ const AttendanceExportDialog = ({
     }
   };
 
-  // Cohort options come from the roster, so an extra cohort added later shows
-  // up here without a code change.
-  const cohortOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          roster.map((r) => String(r.cohort || "").toUpperCase()).filter(Boolean),
-        ),
-      ).sort(),
-    [roster],
-  );
+  // The class's own cohorts, by id. Derived from the roster before, which meant
+  // a cohort with nobody enrolled in it could not be selected.
+  const cohortOptions = cohorts;
+
+  /** The label of the selected cohort, for filtering the label-keyed roster. */
+  const selectedCohortLabel =
+    cohort === "all"
+      ? null
+      : (cohorts.find((c) => c.id === cohort)?.label ?? null);
+
+  const inScope = (r: RosterStudent) =>
+    selectedCohortLabel === null || r.cohort === selectedCohortLabel;
 
   // The student picker only offers students inside the chosen cohort, so the
   // two filters can never contradict each other.
@@ -297,27 +302,24 @@ const AttendanceExportDialog = ({
     const q = studentQuery.trim().toLowerCase();
     if (!q) return [];
     return roster
-      .filter(
-        (r) =>
-          cohort === "all" || String(r.cohort).toUpperCase() === cohort,
-      )
+      .filter(inScope)
       .filter(
         (r) =>
           r.student_id.toLowerCase().includes(q) ||
           (r.name || "").toLowerCase().includes(q),
       )
       .slice(0, 8);
-  }, [studentQuery, roster, cohort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentQuery, roster, cohort, selectedCohortLabel]);
 
   const studentsInScope = useMemo(() => {
     if (selectedStudent) return 1;
-    return roster.filter(
-      (r) => cohort === "all" || String(r.cohort).toUpperCase() === cohort,
-    ).length;
-  }, [roster, cohort, selectedStudent]);
+    return roster.filter(inScope).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roster, cohort, selectedStudent, selectedCohortLabel]);
 
   const setRangeToTerm = () => {
-    setStartDate(semesterStartLocal);
+    setStartDate(termStart);
     setEndDate(new Date());
   };
 
@@ -325,7 +327,7 @@ const AttendanceExportDialog = ({
     const end = new Date();
     const start = new Date();
     start.setDate(start.getDate() - (days - 1));
-    setStartDate(start < semesterStartLocal ? semesterStartLocal : start);
+    setStartDate(start < termStart ? termStart : start);
     setEndDate(end);
   };
 
@@ -344,6 +346,15 @@ const AttendanceExportDialog = ({
       return;
     }
 
+    if (!activeClassId) {
+      toast({
+        title: "No class selected",
+        description: "Choose a class in the sidebar before exporting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsExporting(true);
     setLastResult(null);
     try {
@@ -353,6 +364,7 @@ const AttendanceExportDialog = ({
       const scoped = !FORMATS[exportFormat].requiresCanvasExport;
 
       const result = await buildAttendanceExport({
+        classId: activeClassId,
         start: startDate,
         end: endDate,
         cohort: scoped ? cohort : "all",
@@ -495,8 +507,8 @@ const AttendanceExportDialog = ({
                 <SelectContent>
                   <SelectItem value="all">All cohorts</SelectItem>
                   {cohortOptions.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      Cohort {c}
+                    <SelectItem key={c.id} value={c.id}>
+                      Cohort {c.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -736,10 +748,10 @@ const AttendanceExportDialog = ({
               </Popover>
             </div>
             <p className="text-xs text-muted-foreground">
-              Only sessions that actually ran are counted — a Tue/Wed/Thu with
-              check-ins or a scheduled class date, minus anything cancelled. A
-              day the cohort never met is left out entirely rather than marking
-              everyone absent.
+              Each student is counted over their own cohort's sessions.
+              Cancelled sessions are excluded for the cohort they belonged to,
+              so cancelling one cohort's Wednesday does not remove it from the
+              others.
             </p>
           </div>
 
@@ -758,7 +770,9 @@ const AttendanceExportDialog = ({
               <span>
                 Exporting {studentsInScope} student
                 {studentsInScope === 1 ? "" : "s"}
-                {cohort === "all" ? " across all cohorts" : ` in cohort ${cohort}`}
+                {selectedCohortLabel === null
+                  ? " across all cohorts"
+                  : ` in cohort ${selectedCohortLabel}`}
                 .
               </span>
             )}
