@@ -48,13 +48,15 @@ import {
   Copy,
   ChevronDown,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-
-// Semester start date — attendance is only tracked from this date forward
-const SEMESTER_START = new Date(Date.UTC(2026, 4, 18)); // May 26, 2026 (month is 0-indexed)
+import AttendanceExportDialog from "@/components/AttendanceExportDialog";
+// Semester start date — attendance is only tracked from this date forward.
+// Owned by the export module so the dashboard and the CSV agree on the term.
+import { SEMESTER_START } from "@/lib/attendanceExport";
 
 export const isValidClassDay = (date: Date): boolean => {
   const day = date.getDay();
@@ -220,6 +222,9 @@ const TADashboard = ({
     cohort: "A" | "B" | "C";
     name?: string;
   } | null>(null);
+
+  // Attendance CSV export (date range + cohort/student scope).
+  const [showExportDialog, setShowExportDialog] = useState(false);
 
   const [showFlaggedDialog, setShowFlaggedDialog] = useState(false);
   const [flaggedRecords, setFlaggedRecords] = useState<FlaggedRecord[]>([]);
@@ -1870,6 +1875,14 @@ const TADashboard = ({
                   <Flag className="h-4 w-4" />
                   Review Flags
                 </Button>
+                <Button
+                  onClick={() => setShowExportDialog(true)}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Export Attendance
+                </Button>
               </>
             )}
             {isStudentsSection && (
@@ -3033,6 +3046,13 @@ const TADashboard = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Attendance Export Dialog */}
+      <AttendanceExportDialog
+        open={showExportDialog}
+        onOpenChange={setShowExportDialog}
+        roster={roster}
+      />
 
       {/* Excused Absence Dialog */}
       <Dialog open={showExcusedDialog} onOpenChange={setShowExcusedDialog}>
