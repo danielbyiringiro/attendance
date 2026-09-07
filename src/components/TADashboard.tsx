@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
+import StudentRoster from "@/components/ta/StudentRoster";
 import { useActiveClass } from "@/lib/classContext";
 import {
   dropEnrolment,
@@ -220,20 +221,6 @@ const TADashboard = ({
   const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
-  const [showSearchDialog, setShowSearchDialog] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [studentAbsenceHistory, setStudentAbsenceHistory] = useState<
-    AbsenceHistory[]
-  >([]);
-  const [isLoadingStudentHistory, setIsLoadingStudentHistory] = useState(false);
-
-  // Student search (mark attendance) state
-  const [showAttendanceSearchDialog, setShowAttendanceSearchDialog] =
-    useState(false);
-  const [attendanceSearchQuery, setAttendanceSearchQuery] = useState("");
-  const [attendanceSearchResults, setAttendanceSearchResults] = useState<
-    RosterStudent[]
-  >([]);
 
   // Weekly absence search state
   const [showWeeklyAbsenceDialog, setShowWeeklyAbsenceDialog] = useState(false);
@@ -968,76 +955,6 @@ const TADashboard = ({
     }
   };
 
-  const searchStudent = async (query: string) => {
-    if (!query.trim() || !activeClassId) {
-      setStudentAbsenceHistory([]);
-      return;
-    }
-    setIsLoadingStudentHistory(true);
-    try {
-      const needle = query.trim().toLowerCase();
-      const matching = new Set(
-        roster
-          .filter(
-            (r) =>
-              r.student_id.toLowerCase().includes(needle) ||
-              (r.name ?? "").toLowerCase().includes(needle),
-          )
-          .map((r) => r.student_id),
-      );
-
-      const log = await attendanceLog(activeClassId);
-      setStudentAbsenceHistory(
-        absencesFrom(log, (studentId) => matching.has(studentId)),
-      );
-    } catch (error) {
-      console.error("Error searching student:", error);
-      toast({
-        title: "Error",
-        description: "Failed to search student",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingStudentHistory(false);
-    }
-  };
-
-  const searchStudentForAttendance = (query: string) => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      setAttendanceSearchResults([]);
-      return;
-    }
-
-    const results = roster.filter(
-      (r) =>
-        r.student_id.toLowerCase().includes(normalizedQuery) ||
-        (r.name && r.name.toLowerCase().includes(normalizedQuery)),
-    );
-
-    setAttendanceSearchResults(results);
-  };
-
-  useEffect(() => {
-    if (showHistoryDialog) {
-      loadAbsenceHistory();
-    }
-  }, [showHistoryDialog, roster]);
-
-  // Debounce search query
-  useEffect(() => {
-    if (!showSearchDialog || !searchQuery.trim()) {
-      setStudentAbsenceHistory([]);
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      searchStudent(searchQuery);
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, showSearchDialog, roster]);
-
   const isAttendanceSection = activeSection === "attendance";
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
@@ -1170,6 +1087,28 @@ const TADashboard = ({
                 </Card>
               ))}
             </div>
+
+            {/* Per-student standing. Was reachable only by opening a dialog,
+                typing a name and pressing a button, which could not show you
+                the class. */}
+            <Card className="border-2">
+              <CardHeader>
+                <CardTitle className="text-base">Students</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {activeClass && (
+                  <StudentRoster
+                    classId={activeClass.id}
+                    cohorts={cohorts}
+                    roster={roster}
+                    presentIds={new Set(validPresentStudents.map((p) => p.id))}
+                    minAttendancePercentage={
+                      activeClass.min_attendance_percentage
+                    }
+                  />
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
 
@@ -1223,30 +1162,6 @@ const TADashboard = ({
               <>
                 <Button
                   onClick={() => {
-                    setShowSearchDialog(true);
-                    setSearchQuery("");
-                    setStudentAbsenceHistory([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Search className="h-4 w-4" />
-                  Search Absences
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowAttendanceSearchDialog(true);
-                    setAttendanceSearchQuery("");
-                    setAttendanceSearchResults([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Search className="h-4 w-4" />
-                  Mark Attendance (Search)
-                </Button>
-                <Button
-                  onClick={() => {
                     setShowAddStudentDialog(true);
                     setAddStudentId("");
                     setAddStudentName("");
@@ -1290,8 +1205,30 @@ const TADashboard = ({
           </div>
         )}
 
-        {/* Controls and Student Lists */}
-        {(isAttendanceSection || isStudentsSection) && (
+        {/* Students: the whole class, filtered as you type. */}
+        {isStudentsSection && activeClass && (
+          <Card className="border-2 shadow-medium">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                {roster.length} student{roster.length === 1 ? "" : "s"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <StudentRoster
+                classId={activeClass.id}
+                cohorts={cohorts}
+                roster={roster}
+                presentIds={new Set(validPresentStudents.map((p) => p.id))}
+                onMarkPresent={handleMarkAttendanceManually}
+                minAttendancePercentage={activeClass.min_attendance_percentage}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Controls and today's lists */}
+        {isAttendanceSection && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Controls */}
             {isAttendanceSection && (
@@ -1360,13 +1297,8 @@ const TADashboard = ({
               </Card>
             )}
 
-            {/* Student Lists */}
-            {(isAttendanceSection || isStudentsSection) && (
-              <div
-                className={cn(
-                  isStudentsSection ? "lg:col-span-3" : "lg:col-span-2",
-                )}
-              >
+            {/* Today's present and absent */}
+            <div className="lg:col-span-2">
                 <Card className="border-2 shadow-medium">
                   <CardHeader>
                     <div className="flex items-center justify-between">
@@ -1511,8 +1443,7 @@ const TADashboard = ({
                     </Tabs>
                   </CardContent>
                 </Card>
-              </div>
-            )}
+            </div>
           </div>
         )}
       </div>
@@ -1712,232 +1643,6 @@ const TADashboard = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Search Student Dialog */}
-      <Dialog open={showSearchDialog} onOpenChange={setShowSearchDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
-          <DialogHeader>
-            <DialogTitle>Search Student Absence History</DialogTitle>
-            <DialogDescription>
-              Search for a student by name or ID to view all classes they
-              missed. Enter part of their name or ID.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Input
-                placeholder="Enter student name or ID..."
-                value={searchQuery}
-                onChange={(e) => {
-                  const query = e.target.value;
-                  setSearchQuery(query);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    searchStudent(searchQuery);
-                  }
-                }}
-                className="flex-1"
-              />
-              <Button
-                onClick={() => searchStudent(searchQuery)}
-                variant="default"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </Button>
-            </div>
-
-            {isLoadingStudentHistory ? (
-              <p className="text-center text-muted-foreground py-8">
-                Searching...
-              </p>
-            ) : studentAbsenceHistory.length === 0 && searchQuery ? (
-              <p className="text-center text-muted-foreground py-8">
-                No absences found for this student.
-              </p>
-            ) : studentAbsenceHistory.length > 0 ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm font-medium">
-                    {studentAbsenceHistory.length}{" "}
-                    {studentAbsenceHistory.length === 1
-                      ? "absence"
-                      : "absences"}{" "}
-                    found
-                  </p>
-                </div>
-                <div className="grid grid-cols-4 gap-2 font-semibold text-sm border-b pb-2">
-                  <div>Date</div>
-                  <div>Student ID</div>
-                  <div>Cohort</div>
-                  <div>Status</div>
-                </div>
-                {studentAbsenceHistory.map((absence, index) => {
-                  const student = roster.find(
-                    (r) => r.student_id === absence.student_id,
-                  );
-                  return (
-                    <div
-                      key={`${absence.date}-${absence.student_id}-${index}`}
-                      className="grid grid-cols-4 gap-2 p-2 bg-muted/50 rounded-lg text-sm"
-                    >
-                      <div>
-                        {format(new Date(absence.date), "MMM dd, yyyy")}
-                      </div>
-                      <div className="font-medium">{absence.student_id}</div>
-                      <div>
-                        <Badge variant="outline">Cohort {absence.cohort}</Badge>
-                      </div>
-                      <div>
-                        {absence.was_class_cancelled ? (
-                          <Badge variant="secondary">Class Cancelled</Badge>
-                        ) : (
-                          <Badge variant="destructive">Absent</Badge>
-                        )}
-                      </div>
-                      {student?.name && (
-                        <div className="col-span-4 text-xs text-muted-foreground mt-1">
-                          {student.name}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                Enter a name or ID to search.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setShowSearchDialog(false);
-                setSearchQuery("");
-                setStudentAbsenceHistory([]);
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Search Student (Mark Attendance) Dialog */}
-      <Dialog
-        open={showAttendanceSearchDialog}
-        onOpenChange={setShowAttendanceSearchDialog}
-      >
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
-          <DialogHeader>
-            <DialogTitle>Search Student to Mark Attendance</DialogTitle>
-            <DialogDescription>
-              Search for a student by name or ID, then mark attendance for them.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Input
-                placeholder="Enter student name or ID..."
-                value={attendanceSearchQuery}
-                onChange={(e) => setAttendanceSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    searchStudentForAttendance(attendanceSearchQuery);
-                  }
-                }}
-                className="flex-1"
-              />
-              <Button
-                onClick={() =>
-                  searchStudentForAttendance(attendanceSearchQuery)
-                }
-                variant="default"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </Button>
-            </div>
-
-            {attendanceSearchResults.length === 0 && attendanceSearchQuery ? (
-              <p className="text-center text-muted-foreground py-8">
-                No students found.
-              </p>
-            ) : attendanceSearchResults.length > 0 ? (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">
-                  {attendanceSearchResults.length} student
-                  {attendanceSearchResults.length === 1 ? "" : "s"} found
-                </p>
-
-                <div className="space-y-2">
-                  {attendanceSearchResults.map((student) => {
-                    const cohort = student.cohort
-                      ? String(student.cohort).toUpperCase()
-                      : cohortOf(student.student_id);
-                    const isAlreadyPresent = presentStudents.some(
-                      (p) => p.id === student.student_id,
-                    );
-
-                    return (
-                      <div
-                        key={student.student_id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-muted/50 rounded-lg border gap-3"
-                      >
-                        <div className="space-y-1">
-                          <div className="font-medium">
-                            {student.name
-                              ? `${student.name} (${student.student_id})`
-                              : student.student_id}
-                          </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Badge variant="outline">Cohort {cohort}</Badge>
-                            {isAlreadyPresent && (
-                              <Badge variant="secondary">Already Present</Badge>
-                            )}
-                          </div>
-                        </div>
-
-                        <Button
-                          onClick={() =>
-                            handleMarkAttendanceManually(
-                              student.student_id,
-                              cohort,
-                            )
-                          }
-                          disabled={isAlreadyPresent}
-                        >
-                          Mark Present
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                Enter a name or ID to search.
-              </p>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setShowAttendanceSearchDialog(false);
-                setAttendanceSearchQuery("");
-                setAttendanceSearchResults([]);
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
 
       {/* Add Student Dialog */}
       <Dialog
