@@ -268,12 +268,9 @@ RESET request.jwt.claim.sub;
 -- Scoping: attendance is invisible outside the class it belongs to
 -- ----------------------------------------------------------------------------
 
-DO $setup_scope$
-BEGIN
-  UPDATE public.staff SET is_admin = false
-  WHERE user_id = '22222222-2222-2222-2222-222222222222';
-END
-$setup_scope$;
+-- Staff two is a member of the rescued class, but was never put on the class
+-- this file created. Scoping every count below to that class is what makes
+-- "non-member" mean something now that there is no admin bypass to remove.
 
 SET ROLE authenticated;
 SET request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
@@ -282,14 +279,20 @@ DO $scoped$
 DECLARE
   n bigint;
 BEGIN
-  SELECT count(*) INTO n FROM public.attendance_records;
+  SELECT count(*) INTO n
+  FROM public.attendance_records ar
+  JOIN public.classes c ON c.id = ar.class_id
+  WHERE c.code = 'ASSERT-004';
   IF n <> 0 THEN
-    RAISE EXCEPTION 'a non-member sees % attendance records', n;
+    RAISE EXCEPTION 'a non-member sees % attendance records of that class', n;
   END IF;
 
-  SELECT count(*) INTO n FROM public.attendance_corrections;
+  SELECT count(*) INTO n
+  FROM public.attendance_corrections ac
+  JOIN public.classes c ON c.id = ac.class_id
+  WHERE c.code = 'ASSERT-004';
   IF n <> 0 THEN
-    RAISE EXCEPTION 'a non-member sees % corrections', n;
+    RAISE EXCEPTION 'a non-member sees % corrections of that class', n;
   END IF;
 END
 $scoped$;

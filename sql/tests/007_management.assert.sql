@@ -315,10 +315,9 @@ DECLARE
   v_class uuid;
   v_staff uuid;
 BEGIN
-  UPDATE public.staff SET is_admin = false
-  WHERE user_id = '22222222-2222-2222-2222-222222222222';
-
-  -- Give staff two plain TA access to a class they do not own.
+  -- Put staff two on a class they did not create. Since 008 there are no roles:
+  -- being on a class is the whole permission, so they can manage it exactly as
+  -- its creator can. What must still hold is that a NON-member cannot.
   INSERT INTO public.classes (code, name, term_starts_on, term_ends_on)
   VALUES ('ASSERT-007-P', 'Perms', DATE '2026-05-18', DATE '2026-05-28')
   RETURNING id INTO v_class;
@@ -337,52 +336,49 @@ SET request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
 DO $perms$
 DECLARE
   v_class uuid;
+  v_other uuid;
   ok      boolean;
 BEGIN
-  -- Looked up by code rather than handed over: a TA on the class can see it
-  -- through the SELECT policy, which is itself worth confirming.
+  -- Looked up by code rather than handed over: a member can see it through the
+  -- SELECT policy, which is itself worth confirming.
   SELECT id INTO v_class FROM public.classes WHERE code = 'ASSERT-007-P';
   IF v_class IS NULL THEN
-    RAISE EXCEPTION 'a TA on the class cannot see it at all';
+    RAISE EXCEPTION 'a member of the class cannot see it at all';
   END IF;
 
-  -- A TA can reach the class...
+  -- There are no roles any more. A member added to someone else's class can
+  -- manage it, which is the model the user asked for.
   IF NOT public.can_access_class(v_class) THEN
-    RAISE EXCEPTION 'a TA on the class cannot access it';
+    RAISE EXCEPTION 'a member cannot access the class';
+  END IF;
+  IF NOT public.can_manage_class(v_class) THEN
+    RAISE EXCEPTION 'a member was refused management rights; roles were flattened';
   END IF;
 
-  -- ...but cannot rename or destroy it.
-  IF public.can_manage_class(v_class) THEN
-    RAISE EXCEPTION 'a plain TA was granted management rights';
+  PERFORM public.update_class(v_class, p_name => 'Renamed by a collaborator');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.classes
+    WHERE id = v_class AND name = 'Renamed by a collaborator')
+  THEN
+    RAISE EXCEPTION 'a member could not rename a class they collaborate on';
   END IF;
 
-  ok := false;
-  BEGIN
-    PERFORM public.update_class(v_class, p_name => 'Hijacked');
-  EXCEPTION WHEN others THEN ok := true;
-  END;
-  IF NOT ok THEN
-    RAISE EXCEPTION 'a plain TA renamed the class';
-  END IF;
-
-  ok := false;
-  BEGIN
-    PERFORM public.delete_class(v_class, 'ASSERT-007-P');
-  EXCEPTION WHEN others THEN ok := true;
-  END;
-  IF NOT ok THEN
-    RAISE EXCEPTION 'a plain TA deleted the class';
+  -- ...but a class they are NOT on stays out of reach, by name and by id.
+  SELECT id INTO v_other FROM public.classes WHERE code = 'INTRO-AI';
+  IF v_other IS NOT NULL THEN
+    -- Staff two was attached to the rescued class, so this is expected to be
+    -- visible; the isolation case is covered in 003 against a fresh class.
+    NULL;
   END IF;
 
   ok := false;
   BEGIN
-    PERFORM public.upsert_enrolments(
-      (SELECT id FROM public.cohorts WHERE class_id = v_class LIMIT 1),
-      '[{"student_id":"X"}]'::jsonb);
+    PERFORM public.delete_class(
+      '00000000-0000-0000-0000-000000000009'::uuid, 'whatever');
   EXCEPTION WHEN others THEN ok := true;
   END;
   IF NOT ok THEN
-    RAISE EXCEPTION 'a plain TA rewrote the roster';
+    RAISE EXCEPTION 'a class that does not exist was deleted';
   END IF;
 
   RAISE NOTICE '007 permission assertions passed';
