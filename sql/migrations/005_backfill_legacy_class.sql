@@ -344,6 +344,22 @@ $backfill$;
 -- gains rows the old side never had — every absence, for a start.
 -- ----------------------------------------------------------------------------
 
+-- Guarded: migration 015 moves present_students into the `legacy` schema and
+-- redefines this view to follow it. Re-running 005 afterwards must not put back
+-- a definition that points at a table no longer in `public`.
+DO $recon_view$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'present_students'
+  ) THEN
+    RAISE NOTICE
+      'v_bridge_reconciliation left as migration 015 defined it — '
+      'present_students has been retired out of public';
+    RETURN;
+  END IF;
+
+  EXECUTE $recon_sql$
 CREATE OR REPLACE VIEW public.v_bridge_reconciliation AS
 WITH legacy AS (
   SELECT DISTINCT
@@ -371,6 +387,9 @@ SELECT
        AND NOT EXISTS (SELECT 1 FROM migrated m
                        WHERE m.student_id = l.student_id
                          AND m.on_date = l.on_date))              AS unexplained;
+  $recon_sql$;
+END
+$recon_view$;
 
 COMMENT ON VIEW public.v_bridge_reconciliation IS
   'Gate on migration 008. unexplained must be 0 before any legacy table is '

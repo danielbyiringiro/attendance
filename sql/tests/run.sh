@@ -169,7 +169,9 @@ fi
 # Summary
 # ----------------------------------------------------------------------------
 echo
-echo "fixture:      $(query 'SELECT count(*) FROM public.students') students, $(query 'SELECT count(*) FROM public.present_students') check-ins"
+# present_students lives in the `legacy` schema after migration 015.
+echo "fixture:      $(query 'SELECT count(*) FROM public.students') students, $(query 'SELECT count(*) FROM legacy.present_students') check-ins"
+echo "reconciled:   $(query 'SELECT unexplained FROM public.v_bridge_reconciliation') unexplained, $(query 'SELECT orphan_checkins FROM public.v_bridge_reconciliation') orphaned"
 if [ ${#MIGRATIONS[@]} -gt 0 ]; then
   echo "migrations:   ${#MIGRATIONS[@]} applied twice"
 fi

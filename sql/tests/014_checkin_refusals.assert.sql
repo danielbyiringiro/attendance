@@ -154,10 +154,8 @@ $happy$;
 
 DO $bridge$
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.present_students WHERE student_id = 'S014-IN') THEN
-    RAISE EXCEPTION
-      'mark_attendance still dual-writes present_students; nothing reads it any more';
-  END IF;
+  -- present_students itself is retired by 015 and unreachable from here; that
+  -- the write stopped is asserted in 006, which still runs as superuser.
 
   IF NOT EXISTS (
     SELECT 1 FROM public.attendance_records

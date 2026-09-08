@@ -191,6 +191,23 @@ GRANT EXECUTE ON FUNCTION public.mark_attendance(text, text) TO anon, authentica
 -- keys go once the screen reads this one.
 -- ----------------------------------------------------------------------------
 
+-- Guarded: migration 015 retires present_students, cancelled_sessions and
+-- excused_absences out of `public` and redefines this function to stop reading
+-- them. Re-running 006 afterwards must not restore a body that references
+-- tables that are no longer there.
+DO $gsa$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'present_students'
+  ) THEN
+    RAISE NOTICE
+      'get_student_attendance left as migration 015 defined it — the legacy '
+      'tables it derived four of its keys from have been retired';
+    RETURN;
+  END IF;
+
+  EXECUTE $gsa_sql$
 CREATE OR REPLACE FUNCTION public.get_student_attendance(p_student_id text)
 RETURNS jsonb
 LANGUAGE sql
@@ -244,6 +261,9 @@ AS $fn$
       WHERE s.status <> 'scheduled'), '[]'::jsonb)
   );
 $fn$;
+  $gsa_sql$;
+END
+$gsa$;
 
 REVOKE ALL ON FUNCTION public.get_student_attendance(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_student_attendance(text) TO anon, authenticated;

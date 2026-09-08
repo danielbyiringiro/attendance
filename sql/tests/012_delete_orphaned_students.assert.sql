@@ -51,10 +51,7 @@ BEGIN
          dropped_on  = CURRENT_DATE - 1
    WHERE class_id = v_keeper AND student_id = 'A012-DROPPED';
 
-  -- Legacy rows with no foreign key to students: nothing cascades into these.
-  INSERT INTO public.present_students (student_id, cohort, timestamp) VALUES
-    ('A012-SOLO',   'A', now()),
-    ('A012-SHARED', 'A', now());
+  -- flagged has no foreign key to students, so nothing cascades into it.
   INSERT INTO public.flagged (student_id, session_date, status) VALUES
     ('A012-SOLO',   CURRENT_DATE, 'flagged'),
     ('A012-SHARED', CURRENT_DATE, 'flagged');
@@ -127,25 +124,22 @@ END
 $delete$;
 
 -- ----------------------------------------------------------------------------
--- The legacy tables that have no foreign key were cleared by hand
+-- flagged has no foreign key to students, so it is cleared by hand
+--
+-- 012 cleared present_students the same way. 015 retired that table out of
+-- `public`, so delete_class no longer touches it: rows left there for a
+-- deleted student count as orphan check-ins in the reconciliation, never as
+-- unexplained ones.
 -- ----------------------------------------------------------------------------
 
 DO $legacy$
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.present_students WHERE student_id = 'A012-SOLO') THEN
-    RAISE EXCEPTION
-      'present_students still holds check-ins for a deleted student — no FK cascades there';
-  END IF;
-
   IF EXISTS (SELECT 1 FROM public.flagged WHERE student_id = 'A012-SOLO') THEN
     RAISE EXCEPTION
       'flagged still holds rows for a deleted student — no FK cascades there';
   END IF;
 
-  -- And the surviving student's legacy rows were NOT collateral damage.
-  IF NOT EXISTS (SELECT 1 FROM public.present_students WHERE student_id = 'A012-SHARED') THEN
-    RAISE EXCEPTION 'a surviving student lost their check-ins';
-  END IF;
+  -- And the surviving student's rows were NOT collateral damage.
   IF NOT EXISTS (SELECT 1 FROM public.flagged WHERE student_id = 'A012-SHARED') THEN
     RAISE EXCEPTION 'a surviving student lost their flags';
   END IF;

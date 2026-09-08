@@ -215,22 +215,10 @@ BEGIN
     RAISE EXCEPTION 'clearing an absence by checking in was not audited';
   END IF;
 
-  -- --------------------------------------------------------------------------
-  -- The bridge is gone
-  --
-  -- 006 dual-wrote present_students so the dashboard, exporter and weekly
-  -- report kept working while they were ported one at a time. They all read
-  -- attendance_records now, so 014 stopped the write. A dual-write with no
-  -- reader is a second copy of the truth waiting to disagree with the first.
-  -- --------------------------------------------------------------------------
-  SELECT count(*) INTO n
-  FROM public.present_students
-  WHERE student_id = 'S001'
-    AND (timestamp AT TIME ZONE 'UTC')::date = (now() AT TIME ZONE 'UTC')::date;
-  IF n <> 0 THEN
-    RAISE EXCEPTION
-      'mark_attendance still writes present_students (% rows); nothing reads it', n;
-  END IF;
+  -- The bridge is gone: mark_attendance no longer dual-writes
+  -- present_students. Asserted in 015's suite, which runs as superuser —
+  -- 015 retires that table into a schema `authenticated` cannot reach, and
+  -- this file has SET ROLE authenticated above.
 
   -- --------------------------------------------------------------------------
   -- The anon countdown, without the singleton
