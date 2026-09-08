@@ -110,24 +110,37 @@ BEGIN
   IF (r ->> 'success')::boolean THEN
     RAISE EXCEPTION 'a student marked the same session twice';
   END IF;
-  IF r ->> 'error' <> 'You have already marked your attendance.' THEN
-    RAISE EXCEPTION 'unexpected duplicate message: %', r ->> 'error';
+  IF r ->> 'reason' <> 'already_marked' THEN
+    RAISE EXCEPTION 'unexpected duplicate refusal: %', r;
   END IF;
 
   -- --------------------------------------------------------------------------
-  -- Every refusal is the same sentence
+  -- Every refusal that depends on the STUDENT is the same sentence
   --
-  -- The student ID is printed on a card. If "wrong PIN" and "not enrolled" read
-  -- differently, anyone holding one can enumerate who is in which class.
+  -- The student ID is printed on a card. If "not enrolled in this class" and
+  -- "no such student" read differently, anyone holding one can enumerate who
+  -- is in which class.
+  --
+  -- 014 narrowed this: a refusal that depends only on the PIN — no open
+  -- session has that code — is allowed to say so, because the answer is the
+  -- same for every person in the building and reveals nothing about any of
+  -- them. The two below are the ones that must stay indistinguishable.
   -- --------------------------------------------------------------------------
   refusal_a := public.mark_attendance('S002', 'ZZZZZ')  ->> 'error';  -- no such PIN
   refusal_b := public.mark_attendance('S002', 'XBBBB')  ->> 'error';  -- real PIN, not their cohort
   refusal_c := public.mark_attendance('S999', 'XAAAA')  ->> 'error';  -- not a student at all
 
-  IF refusal_a IS DISTINCT FROM refusal_b OR refusal_b IS DISTINCT FROM refusal_c THEN
+  IF refusal_b IS DISTINCT FROM refusal_c THEN
     RAISE EXCEPTION
-      'refusals differ and leak enrolment: wrong-pin=%, wrong-cohort=%, unknown-student=%',
-      refusal_a, refusal_b, refusal_c;
+      'refusals differ and leak enrolment: wrong-cohort=%, unknown-student=%',
+      refusal_b, refusal_c;
+  END IF;
+
+  -- The PIN-only refusal must NOT be the student-dependent one, or the
+  -- narrowing in 014 silently did nothing.
+  IF refusal_a IS NOT DISTINCT FROM refusal_b THEN
+    RAISE EXCEPTION
+      'a wrong code says the same as a wrong student, so the specific message was lost';
   END IF;
 
   -- And no record was created by any of them.
@@ -163,8 +176,8 @@ BEGIN
   IF (r ->> 'success')::boolean THEN
     RAISE EXCEPTION 'a check-in was accepted after the window closed';
   END IF;
-  IF r ->> 'error' <> 'The attendance window has closed.' THEN
-    RAISE EXCEPTION 'unexpected closed-window message: %', r ->> 'error';
+  IF r ->> 'reason' <> 'window_closed' THEN
+    RAISE EXCEPTION 'unexpected closed-window refusal: %', r;
   END IF;
 
   -- --------------------------------------------------------------------------
@@ -203,16 +216,20 @@ BEGIN
   END IF;
 
   -- --------------------------------------------------------------------------
-  -- The bridge: legacy readers still see check-ins
+  -- The bridge is gone
+  --
+  -- 006 dual-wrote present_students so the dashboard, exporter and weekly
+  -- report kept working while they were ported one at a time. They all read
+  -- attendance_records now, so 014 stopped the write. A dual-write with no
+  -- reader is a second copy of the truth waiting to disagree with the first.
   -- --------------------------------------------------------------------------
   SELECT count(*) INTO n
   FROM public.present_students
   WHERE student_id = 'S001'
     AND (timestamp AT TIME ZONE 'UTC')::date = (now() AT TIME ZONE 'UTC')::date;
-  IF n <> 1 THEN
+  IF n <> 0 THEN
     RAISE EXCEPTION
-      'expected exactly 1 bridged present_students row for today, found % — the '
-      'dashboard and exporter still read this table', n;
+      'mark_attendance still writes present_students (% rows); nothing reads it', n;
   END IF;
 
   -- --------------------------------------------------------------------------
