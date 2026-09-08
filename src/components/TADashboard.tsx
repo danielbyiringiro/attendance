@@ -59,6 +59,7 @@ import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
 import Sessions from "@/components/ta/sections/Sessions";
 import SessionActions from "@/components/ta/SessionActions";
+import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import StudentRoster from "@/components/ta/StudentRoster";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -156,6 +157,9 @@ const TADashboard = ({
   // against this class's sessions today — which is the same thing the roster,
   // the analytics and the exporter count.
   const [todaySessions, setTodaySessions] = useState<SessionRow[]>([]);
+  // Which session's roster is open — "who is missing" is the question a TA has
+  // mid-class, and the count alone does not answer it.
+  const [rosterFor, setRosterFor] = useState<SessionRow | null>(null);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
 
   const loadToday = useCallback(async () => {
@@ -1248,9 +1252,14 @@ const TADashboard = ({
                             >
                               {sn.status}
                             </Badge>
-                            <span className="ml-auto text-sm tabular-nums text-muted-foreground">
+                            <button
+                              type="button"
+                              className="ml-auto rounded px-1.5 py-0.5 text-sm tabular-nums text-muted-foreground underline-offset-2 hover:bg-muted hover:underline"
+                              title="Who is here, and who is not"
+                              onClick={() => setRosterFor(sn)}
+                            >
                               {here}/{enrolled} here
-                            </span>
+                            </button>
                           </div>
 
                           {sn.status === "open" && sn.pin && (
@@ -1445,6 +1454,15 @@ const TADashboard = ({
           </div>
         )}
       </div>
+
+      <SessionRosterDialog
+        session={rosterFor}
+        cohortLabel={
+          cohorts.find((c) => c.id === rosterFor?.cohort_id)?.label ?? ""
+        }
+        onOpenChange={(o) => !o && setRosterFor(null)}
+        onChanged={loadToday}
+      />
 
       <AbsenceHistoryDialog
         open={showHistoryDialog}

@@ -46,18 +46,6 @@ export const listTodaySessions = async (
   return listSessions({ classId, from: iso, to: iso });
 };
 
-export const listOpenSessions = async (
-  classId: string,
-): Promise<SessionRow[]> => {
-  const { data, error } = await supabase
-    .from("class_sessions")
-    .select("*")
-    .eq("class_id", classId)
-    .eq("status", "open");
-  if (error) fail("Could not load open sessions", error);
-  return (data ?? []) as SessionRow[];
-};
-
 /**
  * Expand the cohort schedules into session rows. Re-runnable: it returns how
  * many it created and skips anything that already exists, so adding a weekday
@@ -127,28 +115,6 @@ export const cancelSession = async (
   });
   if (error) fail("Could not cancel the session", error);
   return (data as number) ?? 0;
-};
-
-/** Create a session that the schedule did not produce — a one-off or make-up. */
-export const createAdHocSession = async (
-  cohortId: string,
-  startsAt: Date,
-  opts: { durationMinutes?: number; notes?: string } = {},
-): Promise<SessionRow> => {
-  const { data, error } = await supabase
-    .from("class_sessions")
-    .insert({
-      cohort_id: cohortId,
-      starts_at: startsAt.toISOString(),
-      // Overwritten by the trigger, which resolves it in the class's timezone.
-      session_date: "1970-01-01",
-      duration_minutes: opts.durationMinutes ?? 60,
-      notes: opts.notes ?? null,
-    })
-    .select()
-    .single();
-  if (error) fail("Could not create the session", error);
-  return data as SessionRow;
 };
 
 /**
