@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import StudentLogin from "@/components/StudentLogin";
+import StudentLogin, { type MarkResult } from "@/components/StudentLogin";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
@@ -75,11 +75,8 @@ const TA_TABS: ReadonlyArray<{
 const TA_TAB_KEY = "ta_active_tab";
 
 const Index = () => {
-  // The public countdown, from get_open_session_summary. There is no shared
-  // PIN and no shared timer any more: each session carries its own, and the
-  // logged-out page is told only that a window is open and when it shuts.
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const [isTimeUp, setIsTimeUp] = useState(true);
+  // Informational only — see the effect below.
+  const [openCount, setOpenCount] = useState(0);
   const [isTA, setIsTA] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
@@ -126,7 +123,7 @@ const Index = () => {
   const handleStudentMarkAttendance = async (
     studentId: string,
     pin: string,
-  ): Promise<{ success: boolean; error?: string; name?: string }> => {
+  ): Promise<MarkResult> => {
     const { data, error } = await supabase.rpc("mark_attendance", {
       p_student_id: studentId.trim(),
       p_pin: pin,
@@ -140,11 +137,7 @@ const Index = () => {
       };
     }
 
-    const result = (data ?? {}) as {
-      success?: boolean;
-      error?: string;
-      name?: string;
-    };
+    const result = (data ?? {}) as MarkResult;
 
     if (!result.success) {
       return {
@@ -153,7 +146,16 @@ const Index = () => {
       };
     }
 
-    return { success: true, name: result.name };
+    // class and cohort come back so the confirmation can name which class was
+    // marked: the PIN decides that, and a student in two courses cannot
+    // otherwise tell.
+    return {
+      success: true,
+      name: result.name,
+      class: result.class,
+      cohort: result.cohort,
+      state: result.state,
+    };
   };
 
   // Persist tab selection so a reload returns the TA to the same section.
@@ -168,10 +170,16 @@ const Index = () => {
     handleSetTaTab("attendance");
   };
 
-  // The pre-login countdown. Polled rather than subscribed: it reads an RPC
-  // that deliberately exposes only a count and a closing time, and there is no
-  // table behind it to watch. Twenty seconds is well inside the shortest
-  // sign-up window anyone would set.
+  // How many check-in windows are open anywhere, for the status line on the
+  // public page. Polled rather than subscribed: it reads an RPC that
+  // deliberately exposes only a count and a closing time, and there is no
+  // table behind it to watch.
+  //
+  // It is not a gate. A single countdown made sense when the installation had
+  // one class; with several it is wrong in both directions — it locks out a
+  // student whose own class IS open because another one is not, and it invites
+  // a student whose class is NOT open to type into a form counting down
+  // somebody else's window. mark_attendance decides.
   useEffect(() => {
     if (isTA) return;
     let cancelled = false;
@@ -179,41 +187,21 @@ const Index = () => {
     const check = async () => {
       try {
         const summary = await getOpenSessionSummary();
-        if (cancelled) return;
-        const closesAt = summary.closes_at
-          ? new Date(summary.closes_at).getTime()
-          : 0;
-        const left = closesAt
-          ? Math.max(0, Math.floor((closesAt - Date.now()) / 1000))
-          : 0;
-        setSecondsLeft(left);
-        setIsTimeUp(summary.open_count === 0 || left === 0);
+        if (!cancelled) setOpenCount(summary.open_count);
       } catch (e) {
-        // A failed check must not claim a window is open.
+        // A failed check reports nothing open rather than inventing a number.
+        // It is a hint either way — the form is not gated on it.
         console.error("Could not check for open sessions:", e);
-        if (!cancelled) setIsTimeUp(true);
+        if (!cancelled) setOpenCount(0);
       }
     };
 
     void check();
     const poll = setInterval(check, 20_000);
-    // Tick the displayed number down between polls so it does not sit still.
-    const tick = setInterval(
-      () =>
-        setSecondsLeft((n) => {
-          if (n <= 1) {
-            setIsTimeUp(true);
-            return 0;
-          }
-          return n - 1;
-        }),
-      1000,
-    );
 
     return () => {
       cancelled = true;
       clearInterval(poll);
-      clearInterval(tick);
     };
   }, [isTA]);
 
@@ -277,8 +265,7 @@ const Index = () => {
   return (
     <div className="relative">
       <StudentLogin
-        timeLimit={secondsLeft}
-        isTimeUp={isTimeUp}
+        openCount={openCount}
         onMarkAttendance={handleStudentMarkAttendance}
       />
 
