@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Search, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { attendanceLog, type AttendanceLog } from "@/lib/api/attendance";
+import {
+  attendanceLog,
+  sessionStatesFor,
+  tallyStates,
+  type AttendanceLog,
+} from "@/lib/api/attendance";
 import type { CohortRow } from "@/lib/api/types";
 import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
 
@@ -86,26 +91,44 @@ const StudentRoster = ({
     void load();
   }, [load]);
 
+  const cohortIdOf = useMemo(
+    () => new Map(cohorts.map((c) => [c.label, c.id])),
+    [cohorts],
+  );
+
   const standings = useMemo<StudentStanding[]>(() => {
+    if (!log) {
+      return roster.map((student) => ({
+        ...student,
+        sessions: 0,
+        present: 0,
+        late: 0,
+        excused: 0,
+        absent: 0,
+        rate: 0,
+      }));
+    }
+
     return roster.map((student) => {
-      const marks = log?.byStudent.get(student.student_id) ?? [];
-      const present = marks.filter((m) => m.state === "present").length;
-      const late = marks.filter((m) => m.state === "late").length;
-      const excused = marks.filter((m) => m.state === "excused").length;
-      const absent = marks.filter((m) => m.state === "unexcused").length;
-      // Excused and exempted leave the denominator: they neither help nor hurt.
-      const graded = present + late + absent;
+      // Driven from the sessions their cohort held, not the records they have:
+      // a session still open shows as null and is excluded, rather than being
+      // invisible here and an absence in the exported CSV.
+      const cohortId = cohortIdOf.get(student.cohort);
+      const t = tallyStates(
+        cohortId ? sessionStatesFor(log, student.student_id, cohortId) : [],
+      );
+
       return {
         ...student,
-        sessions: marks.length,
-        present,
-        late,
-        excused,
-        absent,
-        rate: graded > 0 ? Math.round(((present + late) / graded) * 1000) / 10 : 0,
+        sessions: t.sessions,
+        present: t.present,
+        late: t.late,
+        excused: t.excused,
+        absent: t.absent,
+        rate: t.rate,
       };
     });
-  }, [roster, log]);
+  }, [roster, log, cohortIdOf]);
 
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();

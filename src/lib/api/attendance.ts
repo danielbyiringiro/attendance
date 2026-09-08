@@ -370,3 +370,129 @@ export const markAllPresent = async (
   if (error) fail("Could not mark the session", error);
   return data as MarkAllResult;
 };
+
+// ---------------------------------------------------------------------------
+// The attendance rate — one definition
+// ---------------------------------------------------------------------------
+//
+// StudentRoster and attendanceExport each worked this out from the same stored
+// states, and they disagreed. The roster counted MARKS, so a session with no
+// record simply did not exist for it. The exporter counted SESSIONS and looked
+// the state up, so a session with no record landed in its denominator
+// contributing nothing.
+//
+// A session has no record while it is still open. Exporting during a live class
+// therefore charged everybody who had not scanned yet with an absence for a
+// class that had not finished, while the dashboard beside it said otherwise.
+//
+// Neither was wrong about arithmetic; they were answering different questions
+// because nobody had written the question down. This is the question.
+
+export interface AttendanceTally {
+  /** Sessions that applied to the student at all, before any exclusion. */
+  sessions: number;
+  present: number;
+  late: number;
+  excused: number;
+  absent: number;
+  exempted: number;
+  /** No record yet — the session is still open. Never counted either way. */
+  pending: number;
+  /** The denominator. */
+  graded: number;
+  /** The numerator. */
+  attended: number;
+  /** attended / graded as a percentage, one decimal place. 0 when graded is 0. */
+  rate: number;
+}
+
+/**
+ * Turn the states of a student's sessions into a rate.
+ *
+ * One entry per session that applies to them, `null` where no record exists.
+ *
+ *   present, late      attended, and in the denominator
+ *   unexcused          in the denominator only
+ *   excused            out of both — a TA decided it should not count
+ *   exempted           out of both — the session did not apply to them
+ *   null               out of both — the session has not closed yet
+ *
+ * `mergeExcused` is the one legitimate variation: it reports an excused day as
+ * attendance and puts it back in the denominator, which is what a gradebook
+ * expecting a raw percentage wants.
+ */
+export const tallyStates = (
+  states: ReadonlyArray<AttendanceState | null>,
+  opts: { mergeExcused?: boolean } = {},
+): AttendanceTally => {
+  const merge = opts.mergeExcused ?? false;
+
+  let present = 0;
+  let late = 0;
+  let excused = 0;
+  let absent = 0;
+  let exempted = 0;
+  let pending = 0;
+
+  states.forEach((state) => {
+    switch (state) {
+      case "present":
+        present += 1;
+        break;
+      case "late":
+        late += 1;
+        break;
+      case "excused":
+        excused += 1;
+        break;
+      case "unexcused":
+        absent += 1;
+        break;
+      case "exempted":
+        exempted += 1;
+        break;
+      default:
+        // null, or `pending` — no decision has been recorded yet.
+        pending += 1;
+    }
+  });
+
+  const attended = present + late + (merge ? excused : 0);
+  const graded = present + late + absent + (merge ? excused : 0);
+
+  return {
+    sessions: states.length,
+    present,
+    late,
+    excused,
+    absent,
+    exempted,
+    pending,
+    graded,
+    attended,
+    rate: graded > 0 ? Math.round((attended / graded) * 1000) / 10 : 0,
+  };
+};
+
+/**
+ * The state of every session that applied to one student, oldest first.
+ *
+ * Driven from the sessions their cohort held, not from the records they have,
+ * so a session they never marked is present as `null` rather than absent from
+ * the list. Cancelled sessions are dropped: nobody attended a class that did
+ * not run, and it should not count against them.
+ */
+export const sessionStatesFor = (
+  log: AttendanceLog,
+  studentId: string,
+  cohortId: string,
+): Array<AttendanceState | null> => {
+  const byId = new Map(
+    (log.byStudent.get(studentId) ?? []).map((m) => [m.session_id, m.state]),
+  );
+
+  return log.sessions
+    .filter((s) => s.cohort_id === cohortId && s.status !== "cancelled")
+    .sort((a, b) => a.session_date.localeCompare(b.session_date))
+    .map((s) => byId.get(s.session_id) ?? null);
+};

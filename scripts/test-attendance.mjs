@@ -69,7 +69,15 @@ await build({
 const mod = await import(pathToFileURL(out).href);
 const stub = await import(stubUrl);
 
-const { attendanceLog, isPresentState, isAbsentState, isGradedState, stateLabel } = mod;
+const {
+  attendanceLog,
+  isPresentState,
+  isAbsentState,
+  isGradedState,
+  stateLabel,
+  tallyStates,
+  sessionStatesFor,
+} = mod;
 
 // ---------------------------------------------------------------------------
 // Fixture: one class, two cohorts, four sessions, one of them cancelled and one
@@ -207,6 +215,84 @@ eq("exempted leaves the denominator",   isGradedState("exempted"), false);
 eq("excused leaves the denominator",    isGradedState("excused"), false);
 eq("unexcused is in the denominator",   isGradedState("unexcused"), true);
 eq("labels are the words screens show", [stateLabel("unexcused"), stateLabel("late"), stateLabel(null)], ["Absent", "Late", "No record"]);
+// ---------------------------------------------------------------------------
+
+console.log("\ntallyStates — the one definition of a rate");
+
+eq("present and late are attendance", tallyStates(["present", "late"]).rate, 100);
+eq("unexcused is the denominator only", tallyStates(["present", "unexcused"]).rate, 50);
+eq("excused leaves both sides", tallyStates(["present", "excused"]).rate, 100);
+eq("exempted leaves both sides", tallyStates(["present", "exempted"]).rate, 100);
+
+// The disagreement this function exists to end. StudentRoster counted MARKS,
+// so a session with no record was invisible to it; the exporter counted
+// SESSIONS and looked the state up, so the same session landed in its
+// denominator contributing nothing and read as an absence. A session has no
+// record while it is still open — so exporting mid-class charged everyone who
+// had not scanned yet with an absence for a class still running.
+eq(
+  "a session with no record yet does not count against anybody",
+  tallyStates(["present", null]).rate,
+  100,
+);
+eq(
+  "and is reported as pending, not absent",
+  [tallyStates(["present", null]).pending, tallyStates(["present", null]).absent],
+  [1, 0],
+);
+
+eq(
+  "mergeExcused puts an excused day back on both sides",
+  tallyStates(["present", "excused"], { mergeExcused: true }).rate,
+  100,
+);
+eq(
+  "and it lifts a rate that excusal alone does not",
+  [
+    tallyStates(["unexcused", "excused"]).rate,
+    tallyStates(["unexcused", "excused"], { mergeExcused: true }).rate,
+  ],
+  [0, 50],
+);
+eq("nothing graded is 0, not NaN", tallyStates(["excused", null]).rate, 0);
+
+// ---------------------------------------------------------------------------
+
+console.log("\nsessionStatesFor");
+
+stub.__setTables({
+  class_sessions: sessions,
+  attendance_records: records,
+  cohorts: [
+    { id: "coh-a", class_id: CLASS, label: "A" },
+    { id: "coh-b", class_id: CLASS, label: "B" },
+    { id: "coh-z", class_id: "class-2", label: "Z" },
+  ],
+});
+const forRate = await attendanceLog(CLASS);
+
+// s1 closed, s2 cancelled (dropped), s4 scheduled (never in the log).
+eq(
+  "one entry per session the cohort held, cancelled ones dropped",
+  sessionStatesFor(forRate, "stu-1", "coh-a"),
+  ["present"],
+);
+eq(
+  "the state comes from the record when there is one",
+  sessionStatesFor(forRate, "stu-2", "coh-a"),
+  ["unexcused"],
+);
+eq(
+  "somebody who marked nothing is null, not an empty list",
+  sessionStatesFor(forRate, "never-marked", "coh-a"),
+  [null],
+);
+eq(
+  "and that null does not become an absence",
+  tallyStates(sessionStatesFor(forRate, "never-marked", "coh-a")).absent,
+  0,
+);
+
 
 // ---------------------------------------------------------------------------
 
