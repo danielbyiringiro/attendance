@@ -425,3 +425,45 @@ export const attendanceLog = async (
     byDate,
   };
 };
+
+export interface MarkAllResult {
+  session_id: string;
+  state: AttendanceState;
+  /** Everyone enrolled in the cohort on that day. */
+  roll: number;
+  /** Had no record at all. */
+  filled: number;
+  /** Had a state this replaced. Each one is logged as a correction. */
+  changed: number;
+  /** Already at this state, or deliberately protected. */
+  left_alone: number;
+}
+
+/**
+ * Record one state for everyone enrolled in a session.
+ *
+ * For the day the projector died and the register went round on paper. One
+ * call rather than one correction per student.
+ *
+ * By default it only fills in students with no record and those marked
+ * unexcused or pending. An excused absence, an exemption, and a late arrival
+ * are left as they are: someone chose those, and `late` is a more specific
+ * truth than `present`. `overwrite` takes everything except exempted, which
+ * means the session does not apply to that student at all.
+ *
+ * A session that has not been closed is closed by this, because a `scheduled`
+ * session is excluded from every count — marking everyone present and leaving
+ * it open would look like nothing happened.
+ */
+export const markAllPresent = async (
+  sessionId: string,
+  opts: { state?: AttendanceState; overwrite?: boolean } = {},
+): Promise<MarkAllResult> => {
+  const { data, error } = await supabase.rpc("mark_all_present", {
+    p_session_id: sessionId,
+    p_state: opts.state ?? "present",
+    p_overwrite: opts.overwrite ?? false,
+  });
+  if (error) fail("Could not mark the session", error);
+  return data as MarkAllResult;
+};

@@ -25,6 +25,7 @@ import {
   PencilLine,
   PlayCircle,
   RefreshCw,
+  UserCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -34,6 +35,8 @@ import {
   openSession,
   updateSession,
 } from "@/lib/api/sessions";
+import { markAllPresent } from "@/lib/api/attendance";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
 import { addDays, toDateStr, todayStr } from "@/lib/dates";
 
@@ -102,6 +105,8 @@ const SessionList = ({
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
   const [editSignup, setEditSignup] = useState("");
+  const [markingAll, setMarkingAll] = useState<SessionRow | null>(null);
+  const [overwriteAll, setOverwriteAll] = useState(false);
 
   const cohortLabel = useMemo(
     () => new Map(cohorts.map((c) => [c.id, c.label])),
@@ -240,6 +245,38 @@ const SessionList = ({
     } catch (e) {
       toast({
         title: "Could not change the session",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // The register went round on paper, or the PIN never went up.
+  const handleMarkAll = async () => {
+    if (!markingAll) return;
+    setBusyId(markingAll.id);
+    try {
+      const r = await markAllPresent(markingAll.id, { overwrite: overwriteAll });
+      const parts = [
+        r.filled > 0 && `${r.filled} had no mark`,
+        r.changed > 0 && `${r.changed} changed`,
+        r.left_alone > 0 && `${r.left_alone} left as ${r.left_alone === 1 ? "it was" : "they were"}`,
+      ].filter(Boolean);
+      toast({
+        title: `${r.filled + r.changed} of ${r.roll} marked present`,
+        description:
+          parts.length > 0
+            ? `${parts.join(", ")}. Every change is logged as a correction.`
+            : "Everyone was already accounted for.",
+      });
+      setMarkingAll(null);
+      setOverwriteAll(false);
+      await load();
+    } catch (e) {
+      toast({
+        title: "Could not mark the session",
         description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
@@ -456,6 +493,15 @@ const SessionList = ({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
+                        onClick={() => {
+                          setMarkingAll(s);
+                          setOverwriteAll(false);
+                        }}
+                      >
+                        <UserCheck className="mr-2 h-4 w-4" />
+                        Mark everyone present…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         className="text-destructive"
                         onClick={() => {
                           setCancelling(s);
@@ -473,6 +519,72 @@ const SessionList = ({
           ))}
         </div>
       )}
+
+      <Dialog
+        open={markingAll !== null}
+        onOpenChange={(o) => !o && setMarkingAll(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark everyone present</DialogTitle>
+            <DialogDescription>
+              {markingAll && (
+                <>
+                  {dateOf(markingAll.session_date)}, cohort{" "}
+                  {cohortLabel.get(markingAll.cohort_id)}. Everyone on the roster
+                  that day is recorded present.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Students with no mark, and anyone already recorded absent, become
+              present. An excused absence, an exemption and a late arrival are
+              left alone — someone chose those, and "late" says more than
+              "present" does.
+            </p>
+
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3 hover:bg-muted/50">
+              <Checkbox
+                className="mt-0.5"
+                checked={overwriteAll}
+                onCheckedChange={(v) => setOverwriteAll(v === true)}
+              />
+              <span className="text-sm">
+                Replace excused and late marks too
+                <span className="block text-xs text-muted-foreground">
+                  For when the paper register is the record and what is stored
+                  is wrong. Exempt students are never changed.
+                </span>
+              </span>
+            </label>
+
+            {markingAll?.status === "scheduled" && (
+              <p className="text-xs text-muted-foreground">
+                This session has not run yet, so it will also be closed —
+                otherwise the marks would not count towards anything.
+              </p>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              Every state this replaces is recorded as a correction, with what it
+              was and who changed it.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMarkingAll(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleMarkAll} disabled={busyId !== null}>
+              <UserCheck className="mr-2 h-4 w-4" />
+              Mark everyone present
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="max-w-md">
