@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import ClassFormDialog from "@/components/ta/dialogs/ClassFormDialog";
 import DeleteClassDialog from "@/components/ta/dialogs/DeleteClassDialog";
 import ClassMembers from "@/components/ta/ClassMembers";
+import CohortReportSettings from "@/components/ta/CohortReportSettings";
 import type { ClassWithCohorts } from "@/lib/api/types";
 
 /**
@@ -268,7 +269,14 @@ const Classes = () => {
         </div>
 
         {expanded === c.id && !isArchived && (
-          <ClassMembers classId={c.id} className="mt-4 border-t pt-4" />
+          <>
+            <ClassMembers classId={c.id} className="mt-4 border-t pt-4" />
+            <CohortReportSettings
+              classId={c.id}
+              cohorts={c.cohorts}
+              className="mt-4 border-t pt-4"
+            />
+          </>
         )}
       </CardContent>
     </Card>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +54,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
+import AbsenceHistoryDialog from "@/components/ta/AbsenceHistoryDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
 import Sessions from "@/components/ta/sections/Sessions";
@@ -106,35 +107,6 @@ interface TADashboardProps {
     | "classes";
   onLogout: () => void;
 }
-
-interface AbsenceHistory {
-  date: string;
-  student_id: string;
-  cohort: string;
-  was_class_cancelled: boolean;
-}
-
-/**
- * The absences in a log, optionally narrowed to some students.
- *
- * The one place an absence becomes a row on a screen. Two dialogs used to build
- * this with near-identical 190-line loops.
- */
-const absencesFrom = (
-  log: AttendanceLog,
-  include?: (studentId: string) => boolean,
-): AbsenceHistory[] =>
-  log.marks
-    .filter((m) => isAbsentState(m.state))
-    .filter((m) => !include || include(m.student_id))
-    .map((m) => ({
-      date: m.session_date,
-      student_id: m.student_id,
-      cohort: m.cohort_label,
-      // A cancelled session has no unexcused rows: cancel_session deletes them.
-      was_class_cancelled: false,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
 
 interface WeeklyAbsence {
   student_id: string;
@@ -252,9 +224,8 @@ const TADashboard = ({
 
   const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
+  // "day" answers "who missed this session"; "student" answers "who is missing
+  // too many", which is a different question and needs the whole term.
 
   // Weekly absence search state
   const [showWeeklyAbsenceDialog, setShowWeeklyAbsenceDialog] = useState(false);
@@ -277,8 +248,6 @@ const TADashboard = ({
     B: { instructor: "", fi: "" },
     C: { instructor: "", fi: "" },
   });
-  const [isSavingReportSettings, setIsSavingReportSettings] = useState(false);
-  const [showReportConfig, setShowReportConfig] = useState(false);
   const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
 
   // Add/Remove student state
@@ -893,39 +862,6 @@ const TADashboard = ({
     }
   };
 
-  const handleSaveReportSettings = async () => {
-    if (!activeClassId) return;
-    setIsSavingReportSettings(true);
-
-    // One row per cohort this class actually has, not the fixed A/B/C the old
-    // table's primary key forced.
-    const rows = cohorts.map((co) => ({
-      cohort_id: co.id,
-      class_id: activeClassId,
-      instructor_name: reportPairs[co.label]?.instructor || "",
-      fi_name: reportPairs[co.label]?.fi || "",
-      updated_at: new Date().toISOString(),
-    }));
-
-    const { error } = await supabase
-      .from("cohort_report_settings")
-      .upsert(rows, { onConflict: "cohort_id" });
-    setIsSavingReportSettings(false);
-    if (error) {
-      console.error("Failed to save report settings:", error);
-      toast({
-        title: "Error",
-        description: "Failed to save instructor / FI.",
-        variant: "destructive",
-      });
-      return;
-    }
-    toast({
-      title: "Saved",
-      description: "Instructor and FI updated.",
-    });
-  };
-
   const filteredRosterForRemoval = removeSearchQuery.trim()
     ? roster.filter(
         (r) =>
@@ -987,23 +923,6 @@ const TADashboard = ({
   // in, so it must have happened". An absence is a stored row now, so this
   // filters rather than infers. searchStudent below was a copy of that same
   // loop, 140 of 180 lines identical, and had already drifted from it.
-  const loadAbsenceHistory = async (date?: Date) => {
-    if (!activeClassId) return;
-    setIsLoadingHistory(true);
-    try {
-      const day = date ? toDateStr(date) : undefined;
-      const log = await attendanceLog(activeClassId, {
-        from: day,
-        to: day,
-      });
-      setAbsenceHistory(absencesFrom(log));
-    } catch (error) {
-      console.error("Error loading absence history:", error);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
   const isAttendanceSection = activeSection === "attendance";
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
@@ -1527,121 +1446,13 @@ const TADashboard = ({
         )}
       </div>
 
-      {/* History Dialog */}
-      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Absence History</DialogTitle>
-            <DialogDescription>
-              View students who missed class on specific days. Select a date to
-              filter, or view all absences since January 26.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-[240px] justify-start text-left font-normal",
-                      !historyDate && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {historyDate
-                      ? format(historyDate, "PPP")
-                      : "Filter by date (optional)"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={historyDate}
-                    onSelect={(date) => {
-                      setHistoryDate(date);
-                      if (date) {
-                        loadAbsenceHistory(date);
-                      } else {
-                        loadAbsenceHistory();
-                      }
-                    }}
-                    initialFocus
-                  />
-                  {historyDate && (
-                    <div className="p-3 border-t">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          setHistoryDate(undefined);
-                          loadAbsenceHistory();
-                        }}
-                      >
-                        Clear Filter
-                      </Button>
-                    </div>
-                  )}
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            {isLoadingHistory ? (
-              <p className="text-center text-muted-foreground py-8">
-                Loading history...
-              </p>
-            ) : absenceHistory.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No absences found for the selected period.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-4 gap-2 font-semibold text-sm border-b pb-2">
-                  <div>Date</div>
-                  <div>Student ID</div>
-                  <div>Cohort</div>
-                  <div>Status</div>
-                </div>
-                {absenceHistory.map((absence, index) => {
-                  const student = roster.find(
-                    (r) => r.student_id === absence.student_id,
-                  );
-                  return (
-                    <div
-                      key={`${absence.date}-${absence.student_id}-${index}`}
-                      className="grid grid-cols-4 gap-2 p-2 bg-muted/50 rounded-lg text-sm"
-                    >
-                      <div>
-                        {format(new Date(absence.date), "MMM dd, yyyy")}
-                      </div>
-                      <div className="font-medium">{absence.student_id}</div>
-                      <div>
-                        <Badge variant="outline">Cohort {absence.cohort}</Badge>
-                      </div>
-                      <div>
-                        {absence.was_class_cancelled ? (
-                          <Badge variant="secondary">Class Cancelled</Badge>
-                        ) : (
-                          <Badge variant="destructive">Absent</Badge>
-                        )}
-                      </div>
-                      {student?.name && (
-                        <div className="col-span-4 text-xs text-muted-foreground mt-1">
-                          {student.name}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setShowHistoryDialog(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AbsenceHistoryDialog
+        open={showHistoryDialog}
+        onOpenChange={setShowHistoryDialog}
+        classId={activeClassId}
+        classCode={activeClass?.code}
+        roster={roster}
+      />
 
       {/* Flagged Records Dialog */}
       <Dialog open={showFlaggedDialog} onOpenChange={setShowFlaggedDialog}>
@@ -2128,91 +1939,31 @@ const TADashboard = ({
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Per-cohort lecturer / FI — collapsed by default */}
-            <div className="rounded-lg border bg-muted/30">
-              <button
-                type="button"
-                onClick={() => setShowReportConfig((v) => !v)}
-                className="w-full flex items-center justify-between gap-2 p-3 text-sm font-medium"
+            {/* The lecturer and FI names this report pastes are set under
+                Classes, next to who can manage the class. They change about
+                once a term, and a settings form in the middle of a report is
+                a hard place to find them when they are wrong. */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Select
+                value={weeklyAbsenceCohortFilter}
+                onValueChange={setWeeklyAbsenceCohortFilter}
               >
-                <span>Lecturer &amp; FI per cohort</span>
-                {showReportConfig ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                )}
-              </button>
-              {showReportConfig && (
-                <div className="p-3 pt-0 space-y-3">
-                  <div className="space-y-2">
-                    <div className="hidden sm:grid grid-cols-[60px_1fr_1fr] gap-3 text-xs font-medium text-muted-foreground">
-                      <div>Cohort</div>
-                      <div>Instructor / Lecturer</div>
-                      <div>FI</div>
-                    </div>
-                    {/* The class's own cohorts. Fixed at A/B/C before, because
-                        report_settings had one row per letter for the whole
-                        installation. */}
-                    {cohorts.map(({ id, label: c }) => (
-                      <div
-                        key={id}
-                        className="grid grid-cols-1 sm:grid-cols-[60px_1fr_1fr] gap-3 items-center"
-                      >
-                        <Badge variant="outline" className="w-fit">
-                          Cohort {c}
-                        </Badge>
-                        <Input
-                          value={reportPairs[c]?.instructor || ""}
-                          onChange={(e) =>
-                            setReportPairs((prev) => ({
-                              ...prev,
-                              [c]: { ...prev[c], instructor: e.target.value },
-                            }))
-                          }
-                          placeholder={`Cohort ${c} instructor`}
-                        />
-                        <Input
-                          value={reportPairs[c]?.fi || ""}
-                          onChange={(e) =>
-                            setReportPairs((prev) => ({
-                              ...prev,
-                              [c]: { ...prev[c], fi: e.target.value },
-                            }))
-                          }
-                          placeholder={`Cohort ${c} FI`}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <Select
-                      value={weeklyAbsenceCohortFilter}
-                      onValueChange={setWeeklyAbsenceCohortFilter}
-                    >
-                      <SelectTrigger className="w-[140px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Cohorts</SelectItem>
-                        {cohorts.map((co) => (
-                          <SelectItem key={co.id} value={co.label}>
-                            Cohort {co.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      size="sm"
-                      onClick={handleSaveReportSettings}
-                      disabled={isSavingReportSettings}
-                    >
-                      {isSavingReportSettings
-                        ? "Saving..."
-                        : "Save Instructor / FI"}
-                    </Button>
-                  </div>
-                </div>
-              )}
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Cohorts</SelectItem>
+                  {cohorts.map((co) => (
+                    <SelectItem key={co.id} value={co.label}>
+                      Cohort {co.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <p className="text-xs text-muted-foreground">
+                Lecturer and FI come from Classes → the people icon.
+              </p>
             </div>
 
             {isBuildingReport ? (

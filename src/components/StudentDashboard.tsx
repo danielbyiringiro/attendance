@@ -122,6 +122,24 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
               "This record has already been flagged and is pending review.",
             variant: "default",
           });
+        } else if (result.error === "already_present") {
+          toast({
+            title: "Already recorded",
+            description:
+              "You are marked as present for this session, so there is nothing to dispute.",
+          });
+        } else if (result.error === "not_an_absence") {
+          toast({
+            title: "Nothing to dispute",
+            description:
+              "Your TA excused you from this session, so it does not count against you.",
+          });
+        } else if (result.error === "not_your_session") {
+          toast({
+            title: "Not your session",
+            description: "That session belongs to a class you are not enrolled in.",
+            variant: "destructive",
+          });
         } else if (result.error === "denied") {
           toast({
             title: "Cannot Flag",
@@ -474,9 +492,22 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                 )}
                               </TableCell>
                               <TableCell className="text-right">
-                                {record.status === "Excused" ? (
+                                {/* Only an absence can be disputed. Migration
+                                    017 enforces this server-side too — the RPC
+                                    is granted to anon, so a hidden button is
+                                    not a rule. */}
+                                {record.status === "Present" ||
+                                record.status === "Late" ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    Recorded
+                                  </span>
+                                ) : record.status === "Excused" ? (
                                   <span className="text-xs text-muted-foreground">
                                     Excused by TA
+                                  </span>
+                                ) : record.status === "Exempt" ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    Not required
                                   </span>
                                 ) : record.wasCancelled ? (
                                   <span className="text-xs text-muted-foreground">
