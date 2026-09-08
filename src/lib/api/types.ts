@@ -86,6 +86,11 @@ export interface SessionRow {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   notes: string | null;
+  /**
+   * Moved by hand rather than by the weekly pattern.
+   * apply_schedule_to_future leaves these where they are.
+   */
+  moved_manually: boolean;
 }
 
 export interface EnrolmentRow {

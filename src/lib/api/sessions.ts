@@ -150,3 +150,71 @@ export const createAdHocSession = async (
   if (error) fail("Could not create the session", error);
   return data as SessionRow;
 };
+
+/**
+ * Change one session's date, time, length or notes.
+ *
+ * Only a session that has not run yet can be moved: the server refuses a
+ * closed, open or cancelled one. Moving a closed session would carry the
+ * attendance already recorded against it onto a different day.
+ *
+ * The wall-clock date and time are sent, not an instant. The server resolves it
+ * in the class's timezone, the same way generate_sessions does — a browser that
+ * computed the instant itself would reintroduce exactly the disagreement the
+ * session model was built to remove.
+ */
+export const updateSession = async (
+  sessionId: string,
+  changes: {
+    /** YYYY-MM-DD. */
+    date?: string;
+    /** "HH:MM". */
+    startTime?: string;
+    durationMinutes?: number;
+    notes?: string;
+  },
+): Promise<SessionRow> => {
+  const { data, error } = await supabase.rpc("update_session", {
+    p_session_id: sessionId,
+    p_date: changes.date ?? null,
+    p_start_time: changes.startTime ?? null,
+    p_duration_minutes: changes.durationMinutes ?? null,
+    p_notes: changes.notes ?? null,
+  });
+  if (error) fail("Could not change the session", error);
+  return data as SessionRow;
+};
+
+export interface ApplyScheduleResult {
+  from: string;
+  /** Sessions whose weekday still runs, moved to the new time. */
+  moved: number;
+  /** Sessions on a weekday the cohort no longer meets. */
+  removed: number;
+  created: number;
+}
+
+/**
+ * Bring future sessions into line with the current schedule.
+ *
+ * generate_sessions alone cannot do this: it is ON CONFLICT DO NOTHING, so
+ * moving a cohort from Tuesday 09:00 to Tuesday 14:00 left every 09:00 session
+ * standing and added a second one at 14:00 — two sessions a day, and everyone's
+ * denominator doubled.
+ *
+ * Never touches a day that has already happened, a session someone cancelled,
+ * or one edited by hand. `from` defaults to today on the server, so a missing
+ * argument cannot reach into the past.
+ */
+export const applyScheduleToFuture = async (
+  classId: string,
+  opts: { cohortIds?: string[]; from?: string } = {},
+): Promise<ApplyScheduleResult> => {
+  const { data, error } = await supabase.rpc("apply_schedule_to_future", {
+    p_class_id: classId,
+    p_cohort_ids: opts.cohortIds ?? null,
+    p_from: opts.from ?? null,
+  });
+  if (error) fail("Could not update the future sessions", error);
+  return data as ApplyScheduleResult;
+};

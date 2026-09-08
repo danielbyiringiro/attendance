@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CalendarPlus, Loader2, Save } from "lucide-react";
+import { CalendarPlus, CalendarSync, Loader2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -13,7 +13,7 @@ import {
   setCohortSchedules,
   type ScheduleSlot,
 } from "@/lib/api/classes";
-import { generateSessions } from "@/lib/api/sessions";
+import { applyScheduleToFuture, generateSessions } from "@/lib/api/sessions";
 import SessionList from "@/components/ta/SessionList";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
@@ -54,6 +54,7 @@ const Schedule = () => {
   const [genFrom, setGenFrom] = useState("");
   const [genTo, setGenTo] = useState("");
   const [sessionsToken, setSessionsToken] = useState(0);
+  const [isApplying, setIsApplying] = useState(false);
 
   const loadSchedules = useCallback(async () => {
     if (!activeClass) return;
@@ -165,6 +166,46 @@ const Schedule = () => {
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Push a pattern change onto the sessions it should have changed.
+  //
+  // Saving a pattern only rewrites cohort_schedules. Generating then adds the
+  // days that are missing but, being ON CONFLICT DO NOTHING, leaves every
+  // session already sitting at the old time — so moving Tuesday from 09:00 to
+  // 14:00 gave the cohort both.
+  const handleApplyToFuture = async () => {
+    if (!activeClass) return;
+    setIsApplying(true);
+    try {
+      const result = await applyScheduleToFuture(activeClass.id, {
+        cohortIds: selectedCohorts.length > 0 ? selectedCohorts : undefined,
+      });
+      const parts = [
+        result.moved > 0 && `${result.moved} moved`,
+        result.removed > 0 && `${result.removed} removed`,
+        result.created > 0 && `${result.created} added`,
+      ].filter(Boolean);
+      toast({
+        title:
+          parts.length === 0
+            ? "Already up to date"
+            : "Future sessions updated",
+        description:
+          parts.length === 0
+            ? "Every session from today onward already matches the pattern."
+            : `${parts.join(", ")}. Nothing before today was touched, and cancelled or hand-edited sessions were left alone.`,
+      });
+      setSessionsToken((n) => n + 1);
+    } catch (e) {
+      toast({
+        title: "Could not update the future sessions",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplying(false);
     }
   };
 
@@ -382,20 +423,37 @@ const Schedule = () => {
             </div>
           </div>
 
-          <Button variant="outline" onClick={handleGenerate} disabled={isGenerating}>
-            {isGenerating ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <CalendarPlus className="h-4 w-4 mr-2" />
-            )}
-            Generate sessions
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={handleGenerate} disabled={isGenerating}>
+              {isGenerating ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CalendarPlus className="h-4 w-4 mr-2" />
+              )}
+              Generate sessions
+            </Button>
+
+            <Button onClick={handleApplyToFuture} disabled={isApplying}>
+              {isApplying ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CalendarSync className="h-4 w-4 mr-2" />
+              )}
+              Apply pattern to future sessions
+            </Button>
+          </div>
 
           <p className="text-xs text-muted-foreground">
-            Safe to run more than once: days that already have a session are left
-            alone, so adding a weekday and regenerating only creates the new ones.
-            Sessions already created keep their own times, so changing the pattern
-            above never rewrites a day that has happened.
+            <strong>Generate</strong> only adds days that have no session yet,
+            over the range above. Use it when you first set up a term.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <strong>Apply to future sessions</strong> is what you want after
+            changing a time: from today onward it moves sessions to the new
+            time, removes days the cohort no longer meets, and adds the ones it
+            now does — for the cohorts ticked above, or all of them if none is.
+            Nothing before today changes, and a session you cancelled or moved
+            by hand is left where it is.
           </p>
         </CardContent>
       </Card>
@@ -409,6 +467,7 @@ const Schedule = () => {
           <SessionList
             classId={activeClass.id}
             cohorts={cohorts}
+            timezone={activeClass.timezone}
             refreshToken={sessionsToken}
           />
         </CardContent>

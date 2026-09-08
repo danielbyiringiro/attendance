@@ -11,19 +11,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Ban, Loader2, Lock, PlayCircle, RefreshCw } from "lucide-react";
+import { Ban, Loader2, Lock, PencilLine, PlayCircle, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   cancelSession,
   closeSession,
   listSessions,
   openSession,
+  updateSession,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
 
 interface SessionListProps {
   classId: string;
   cohorts: CohortRow[];
+  /** The class's own timezone, so times read as the room saw them. */
+  timezone: string;
   /** Defaults to the last fortnight and the next fortnight. */
   from?: string;
   to?: string;
@@ -46,10 +49,13 @@ const shiftDays = (days: number) => {
   ).padStart(2, "0")}`;
 };
 
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString(undefined, {
+/** An instant as the class's own wall clock, not the viewer's. */
+const timeIn = (iso: string, timezone: string, hour12 = true) =>
+  new Date(iso).toLocaleTimeString(hour12 ? undefined : "en-GB", {
+    timeZone: timezone,
     hour: "2-digit",
     minute: "2-digit",
+    hour12,
   });
 
 const dateOf = (d: string) =>
@@ -70,6 +76,7 @@ const dateOf = (d: string) =>
 const SessionList = ({
   classId,
   cohorts,
+  timezone,
   from,
   to,
   refreshToken = 0,
@@ -82,6 +89,10 @@ const SessionList = ({
   const [rangeTo, setRangeTo] = useState(to ?? shiftDays(14));
   const [cancelling, setCancelling] = useState<SessionRow | null>(null);
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState<SessionRow | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editDuration, setEditDuration] = useState("");
 
   const cohortLabel = useMemo(
     () => new Map(cohorts.map((c) => [c.id, c.label])),
@@ -147,6 +158,43 @@ const SessionList = ({
     } catch (e) {
       toast({
         title: "Could not close the session",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startEditing = (s: SessionRow) => {
+    setEditing(s);
+    setEditDate(s.session_date);
+    // Read back in the class's timezone, because that is the clock the server
+    // will resolve the value against when it is sent back. Formatting in the
+    // viewer's zone would show a TA abroad a time the room never met at, and
+    // saving it unchanged would then move the session.
+    setEditTime(timeIn(s.starts_at, timezone, false));
+    setEditDuration(String(s.duration_minutes));
+  };
+
+  const handleEdit = async () => {
+    if (!editing) return;
+    setBusyId(editing.id);
+    try {
+      await updateSession(editing.id, {
+        date: editDate || undefined,
+        startTime: editTime || undefined,
+        durationMinutes: editDuration ? Number(editDuration) : undefined,
+      });
+      toast({
+        title: "Session moved",
+        description: "Only this one session changed.",
+      });
+      setEditing(null);
+      await load();
+    } catch (e) {
+      toast({
+        title: "Could not change the session",
         description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
@@ -243,6 +291,11 @@ const SessionList = ({
                   >
                     {s.status}
                   </span>
+                  {s.moved_manually && (
+                    <Badge variant="secondary" className="text-xs">
+                      moved
+                    </Badge>
+                  )}
                   {s.status === "open" && s.pin && (
                     <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-xs tracking-widest text-emerald-700 dark:text-emerald-400">
                       {s.pin}
@@ -250,12 +303,23 @@ const SessionList = ({
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {timeOf(s.starts_at)} · {s.duration_minutes} min
+                  {timeIn(s.starts_at, timezone)} · {s.duration_minutes} min
                   {s.cancellation_reason && ` · ${s.cancellation_reason}`}
                 </p>
               </div>
 
               <div className="flex shrink-0 gap-1">
+                {s.status === "scheduled" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Change the date or time"
+                    disabled={busyId === s.id}
+                    onClick={() => startEditing(s)}
+                  >
+                    <PencilLine className="h-4 w-4" />
+                  </Button>
+                )}
                 {s.status !== "cancelled" && s.status !== "open" && (
                   <Button
                     size="sm"
@@ -297,6 +361,69 @@ const SessionList = ({
           ))}
         </div>
       )}
+
+      <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Move this session</DialogTitle>
+            <DialogDescription>
+              {editing && (
+                <>
+                  {dateOf(editing.session_date)}, cohort{" "}
+                  {cohortLabel.get(editing.cohort_id)}. This changes one session
+                  only — the pattern it came from is left alone.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-3 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="edit-date">Date</Label>
+              <Input
+                id="edit-date"
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-time">Start</Label>
+              <Input
+                id="edit-time"
+                type="time"
+                value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-duration">Length (minutes)</Label>
+              <Input
+                id="edit-duration"
+                type="number"
+                min={1}
+                value={editDuration}
+                onChange={(e) => setEditDuration(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Only a session that has not run yet can be moved. A closed one has
+            attendance recorded against it, so moving it would put those marks
+            on a different day.
+          </p>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleEdit} disabled={busyId !== null}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={cancelling !== null}
