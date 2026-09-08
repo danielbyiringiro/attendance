@@ -87,6 +87,42 @@ const Index = () => {
     () => (sessionStorage.getItem(TA_TAB_KEY) as TATab) || "attendance",
   );
 
+  // Who is signed in. Supabase persists the session across reloads, so
+  // refreshing keeps the TA logged in. Any authenticated user is a TA — TA
+  // accounts are provisioned in the Supabase dashboard, there is no public
+  // signup.
+  useEffect(() => {
+    // A staff row is what current_staff_id() resolves to, and without one an
+    // account cannot create a class. The bootstrap in migration 003 only ran
+    // over the accounts that existed then, so anyone provisioned since needs
+    // this. Idempotent, and deliberately not awaited: failing to record the
+    // staff row must not block signing in.
+    const claimStaffRow = () => {
+      void ensureStaff().catch((e) => {
+        console.error("ensure_staff failed:", e);
+      });
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      setIsTA(!!data.session);
+      if (data.session) claimStaffRow();
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsTA(!!session);
+      if (session) claimStaffRow();
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Students mark attendance through a server-side RPC. The PIN is verified
+  // inside the database, so the browser never needs to know it and every rule
+  // — which session the PIN belongs to, whether its window is open, whether
+  // the student is enrolled in that cohort — is enforced where it cannot be
+  // bypassed from the console.
   const handleStudentMarkAttendance = async (
     studentId: string,
     pin: string,
