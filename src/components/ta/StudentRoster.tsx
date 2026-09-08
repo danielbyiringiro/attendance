@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Search, UserCheck } from "lucide-react";
+import { Download, Loader2, Search, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   attendanceLog,
@@ -12,6 +12,9 @@ import {
 } from "@/lib/api/attendance";
 import type { CohortRow } from "@/lib/api/types";
 import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
+import { toCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/attendanceExport";
+import { todayStr } from "@/lib/dates";
 
 export interface RosterEntry {
   student_id: string;
@@ -72,6 +75,10 @@ const StudentRoster = ({
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [cohortFilter, setCohortFilter] = useState<string>("all");
+  // Narrowing to the students who need attention. "Everyone, sorted worst
+  // first" answers a different question from "who is actually below the line".
+  const [risk, setRisk] = useState<"all" | "below" | "absences">("all");
+  const [minAbsences, setMinAbsences] = useState("3");
   const [openStudent, setOpenStudent] = useState<StudentStanding | null>(null);
 
   const load = useCallback(async () => {
@@ -133,10 +140,21 @@ const StudentRoster = ({
     });
   }, [roster, log, cohortIdOf]);
 
+  const absenceFloor = Math.max(1, Number(minAbsences) || 1);
+
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return standings
       .filter((s) => cohortFilter === "all" || s.cohort === cohortFilter)
+      .filter((s) => {
+        if (risk === "all") return true;
+        // Somebody with no graded sessions has no rate to be below; excluding
+        // them keeps a new class from listing everybody as at risk.
+        if (risk === "below") {
+          return s.sessions > 0 && s.rate < minAttendancePercentage;
+        }
+        return s.absent >= absenceFloor;
+      })
       .filter(
         (s) =>
           needle === "" ||
@@ -144,7 +162,46 @@ const StudentRoster = ({
           (s.name ?? "").toLowerCase().includes(needle),
       )
       .sort((a, b) => a.rate - b.rate || a.student_id.localeCompare(b.student_id));
-  }, [standings, query, cohortFilter]);
+  }, [
+    standings,
+    query,
+    cohortFilter,
+    risk,
+    absenceFloor,
+    minAttendancePercentage,
+  ]);
+
+  // Whatever is on screen, as a file. The point of narrowing to "below 75%" is
+  // usually to do something about those students, which happens outside this
+  // app.
+  const downloadShown = () => {
+    if (shown.length === 0) return;
+    const csv = toCsv(
+      ["Student ID", "Name", "Cohort", "Sessions", "Present", "Late", "Excused", "Absent", "Rate %"],
+      shown.map((s) => [
+        s.student_id,
+        s.name ?? "",
+        s.cohort,
+        String(s.sessions),
+        String(s.present),
+        String(s.late),
+        String(s.excused),
+        String(s.absent),
+        String(s.rate),
+      ]),
+    );
+    const scope =
+      risk === "below"
+        ? `below-${minAttendancePercentage}`
+        : risk === "absences"
+          ? `min-${absenceFloor}-absences`
+          : "all";
+    downloadCsv(csv, `students-${scope}-${todayStr()}.csv`);
+    toast({
+      title: "Downloaded",
+      description: `${shown.length} student${shown.length === 1 ? "" : "s"}.`,
+    });
+  };
 
   return (
     <div className="space-y-3">
@@ -180,6 +237,56 @@ const StudentRoster = ({
         </div>
 
         {isLoading && <Loader2 className="h-4 w-4 animate-spin opacity-60" />}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant={risk === "all" ? "secondary" : "ghost"}
+          onClick={() => setRisk("all")}
+        >
+          Everyone
+        </Button>
+        <Button
+          size="sm"
+          variant={risk === "below" ? "secondary" : "ghost"}
+          onClick={() => setRisk("below")}
+        >
+          Below {minAttendancePercentage}%
+        </Button>
+        <Button
+          size="sm"
+          variant={risk === "absences" ? "secondary" : "ghost"}
+          onClick={() => setRisk("absences")}
+        >
+          Absences
+        </Button>
+
+        {risk === "absences" && (
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-muted-foreground">at least</span>
+            <Input
+              type="number"
+              min={1}
+              className="h-8 w-16"
+              value={minAbsences}
+              onChange={(e) => setMinAbsences(e.target.value)}
+            />
+          </div>
+        )}
+
+        {risk !== "all" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            disabled={shown.length === 0}
+            onClick={downloadShown}
+          >
+            <Download className="mr-1 h-4 w-4" />
+            Download {shown.length}
+          </Button>
+        )}
       </div>
 
       <p className="text-xs text-muted-foreground">
