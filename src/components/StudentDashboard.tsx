@@ -28,6 +28,11 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import {
+  tallyStates,
+  type AttendanceTally,
+} from "@/lib/api/attendance";
+import type { AttendanceState } from "@/lib/api/types";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -43,6 +48,17 @@ interface AttendanceRecord {
   timestamp?: string;
   isFlagged?: boolean;
   flagStatus?: "flagged" | "accepted" | "denied" | null;
+}
+
+/** One class the student is in, with its own record and its own rate. */
+interface ClassHistory {
+  classCode: string;
+  className: string;
+  cohort: string;
+  /** The percentage this class requires. */
+  threshold: number;
+  records: AttendanceRecord[];
+  tally: AttendanceTally;
 }
 
 interface StudentDashboardProps {
@@ -66,6 +82,8 @@ interface SessionRecord {
     | "exempted"
     | null;
   marked_at: string | null;
+  /** What this class requires, so the screen does not have to assume. */
+  min_attendance: number | null;
 }
 
 // This file used to carry its own SEMESTER_START (May 26 2026) and a third copy
@@ -76,13 +94,11 @@ interface SessionRecord {
 
 const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [studentId, setStudentId] = useState("");
-  const [history, setHistory] = useState<AttendanceRecord[]>([]);
-  const [stats, setStats] = useState({
-    present: 0,
-    absent: 0,
-    excused: 0,
-    total: 0,
-  });
+  // Grouped by class. A single blended figure across every course describes
+  // none of them: 90% in one and 40% in another reads as 65%, and the number
+  // that actually matters — am I at risk in THIS class — is not shown at all.
+  const [classes, setClasses] = useState<ClassHistory[]>([]);
+  const [selectedClass, setSelectedClass] = useState<string>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [flaggingInProgress, setFlaggingInProgress] = useState<string | null>(
@@ -158,12 +174,15 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       }
 
       // Update local state
-      setHistory((prev) =>
-        prev.map((record) =>
-          record.sessionId === sessionId
-            ? { ...record, isFlagged: true, flagStatus: "flagged" }
-            : record,
-        ),
+      setClasses((prev) =>
+        prev.map((c) => ({
+          ...c,
+          records: c.records.map((record) =>
+            record.sessionId === sessionId
+              ? { ...record, isFlagged: true, flagStatus: "flagged" }
+              : record,
+          ),
+        })),
       );
 
       toast({
@@ -222,8 +241,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       const sessions = payload.sessions ?? [];
 
       if (sessions.length === 0) {
-        setHistory([]);
-        setStats({ present: 0, absent: 0, excused: 0, total: 0 });
+        setClasses([]);
         toast({
           title: "No Records Found",
           description: `No attendance records found for ID: ${studentId}`,
@@ -255,7 +273,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         pending: "Pending",
       };
 
-      const historyList: AttendanceRecord[] = sessions.map((sn) => {
+      const toRecord = (sn: SessionRecord): AttendanceRecord => {
         const flagStatus = flaggedMap.get(sn.session_id) ?? null;
         const cancelled = sn.status === "cancelled";
         return {
@@ -269,26 +287,43 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
           isFlagged: flagStatus === "flagged",
           flagStatus,
         };
+      };
+
+      // Grouped by class, each with its own rate. tallyStates is the same
+      // function the TA dashboard and the exporter use, so a student sees the
+      // number their TA sees rather than a second opinion.
+      const byClass = new Map<string, SessionRecord[]>();
+      sessions.forEach((sn) => {
+        const list = byClass.get(sn.class_code);
+        if (list) list.push(sn);
+        else byClass.set(sn.class_code, [sn]);
       });
 
-      historyList.sort((a, b) => b.date.localeCompare(a.date));
+      const grouped: ClassHistory[] = [...byClass.entries()]
+        .map(([classCode, own]) => {
+          const records = own
+            .map(toRecord)
+            .sort((a, b) => b.date.localeCompare(a.date));
 
-      // Late still counts as attendance; a cancelled class counts as nothing at
-      // all, for or against.
-      const counted = sessions.filter((sn) => sn.status !== "cancelled");
-      const present = counted.filter(
-        (sn) => sn.state === "present" || sn.state === "late",
-      ).length;
-      const excused = counted.filter((sn) => sn.state === "excused").length;
-      const absent = counted.filter((sn) => sn.state === "unexcused").length;
+          return {
+            classCode,
+            className: own[0].class,
+            cohort: own[0].cohort,
+            threshold: own[0].min_attendance ?? 75,
+            records,
+            // Cancelled sessions are dropped: nobody attended a class that did
+            // not run, and it must not count against them.
+            tally: tallyStates(
+              own
+                .filter((sn) => sn.status !== "cancelled")
+                .map((sn) => (sn.state as AttendanceState | null) ?? null),
+            ),
+          };
+        })
+        .sort((a, b) => a.className.localeCompare(b.className));
 
-      setHistory(historyList);
-      setStats({
-        present,
-        absent,
-        excused,
-        total: present + absent + excused,
-      });
+      setClasses(grouped);
+      setSelectedClass(grouped.length === 1 ? grouped[0].classCode : "all");
     } catch (error) {
       console.error("Error fetching history:", error);
       toast({
@@ -302,6 +337,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   };
 
   // Helper function to get button state
+  // The rows for whichever class is selected, newest first. With several
+  // classes and no selection they interleave by date, which is why each row
+  // still names its class.
+  const shownRecords = classes
+    .filter((c) => selectedClass === "all" || c.classCode === selectedClass)
+    .flatMap((c) => c.records)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
   const getFlagButtonState = (record: AttendanceRecord) => {
     if (record.flagStatus === "accepted") {
       return {
@@ -379,56 +422,88 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
             {hasSearched && (
               <div className="space-y-6">
-                {/* Statistics Cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <Card className="bg-primary/5 border-primary/20">
-                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
-                      <CalendarDays className="h-8 w-8 text-primary mb-2" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        Total Classes
-                      </p>
-                      <p className="text-3xl font-bold text-primary">
-                        {stats.total}
-                      </p>
-                    </CardContent>
-                  </Card>
+                {/* One card per class. A student is at risk in a particular
+                    course, not on average across all of them. */}
+                {classes.length === 0 ? (
+                  <p className="py-8 text-center text-muted-foreground">
+                    No attendance recorded yet.
+                  </p>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {classes.map((c) => (
+                      <Card
+                        key={c.classCode}
+                        className={`cursor-pointer border-2 transition-colors ${
+                          selectedClass === c.classCode
+                            ? "border-primary"
+                            : "border-border hover:border-primary/40"
+                        }`}
+                        onClick={() =>
+                          setSelectedClass(
+                            selectedClass === c.classCode ? "all" : c.classCode,
+                          )
+                        }
+                      >
+                        <CardContent className="space-y-3 p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold">
+                                {c.className}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {c.classCode} · Cohort {c.cohort}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p
+                                className={`text-2xl font-bold ${
+                                  c.tally.graded === 0
+                                    ? "text-muted-foreground"
+                                    : c.tally.rate >= c.threshold
+                                      ? "text-green-600 dark:text-green-500"
+                                      : "text-destructive"
+                                }`}
+                              >
+                                {c.tally.graded === 0 ? "—" : `${c.tally.rate}%`}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                of {c.threshold}% needed
+                              </p>
+                            </div>
+                          </div>
 
-                  <Card className="bg-green-500/5 border-green-500/20">
-                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
-                      <UserCheck className="h-8 w-8 text-green-600 mb-2" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        Days Present
-                      </p>
-                      <p className="text-3xl font-bold text-green-600">
-                        {stats.present}
-                      </p>
-                    </CardContent>
-                  </Card>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                            <span className="text-green-600 dark:text-green-500">
+                              {c.tally.present + c.tally.late} present
+                              {c.tally.late > 0 && ` (${c.tally.late} late)`}
+                            </span>
+                            {c.tally.absent > 0 && (
+                              <span className="text-destructive">
+                                {c.tally.absent} absent
+                              </span>
+                            )}
+                            {c.tally.excused > 0 && (
+                              <span className="text-muted-foreground">
+                                {c.tally.excused} excused
+                              </span>
+                            )}
+                            {c.tally.pending > 0 && (
+                              <span className="text-muted-foreground">
+                                {c.tally.pending} not yet closed
+                              </span>
+                            )}
+                          </div>
 
-                  <Card className="bg-destructive/5 border-destructive/20">
-                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
-                      <UserX className="h-8 w-8 text-destructive mb-2" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        Days Absent
-                      </p>
-                      <p className="text-3xl font-bold text-destructive">
-                        {stats.absent}
-                      </p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-blue-500/5 border-blue-500/20">
-                    <CardContent className="p-6 flex flex-col items-center justify-center text-center">
-                      <CalendarCheck className="h-8 w-8 text-blue-600 mb-2" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        Excused
-                      </p>
-                      <p className="text-3xl font-bold text-blue-600">
-                        {stats.excused}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedClass === c.classCode
+                              ? "Showing this class below — click to show all."
+                              : "Click to see only this class."}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
 
                 {/* History Table */}
                 <div className="rounded-md border bg-card">
@@ -443,8 +518,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {history.length > 0 ? (
-                        history.map((record, index) => {
+                      {shownRecords.length > 0 ? (
+                        shownRecords.map((record, index) => {
                           const buttonState = getFlagButtonState(record);
 
                           return (
@@ -548,7 +623,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                 </div>
 
                 {/* Legend for flag statuses */}
-                {history.some((r) => r.flagStatus) && (
+                {shownRecords.some((r) => r.flagStatus) && (
                   <div className="text-sm text-muted-foreground border-t pt-4">
                     <p className="font-medium mb-2">Flag Status Legend:</p>
                     <div className="flex flex-wrap gap-4">
