@@ -51,10 +51,14 @@ BEGIN
          dropped_on  = CURRENT_DATE - 1
    WHERE class_id = v_keeper AND student_id = 'A012-DROPPED';
 
-  -- flagged has no foreign key to students, so nothing cascades into it.
-  INSERT INTO public.flagged (student_id, session_date, status) VALUES
-    ('A012-SOLO',   CURRENT_DATE, 'flagged'),
-    ('A012-SHARED', CURRENT_DATE, 'flagged');
+  -- flagged has no foreign key to students, so nothing cascades into it from
+  -- a student deletion. It does carry a class_id since 016, and the policy
+  -- there refuses a row that names no class — so these say which.
+  -- SOLO's flag is against the class being deleted; SHARED's is against the
+  -- one that survives. Only the first should go.
+  INSERT INTO public.flagged (student_id, session_date, status, class_id) VALUES
+    ('A012-SOLO',   CURRENT_DATE, 'flagged', v_doomed),
+    ('A012-SHARED', CURRENT_DATE, 'flagged', v_keeper);
 
   CREATE TEMP TABLE t012 ON COMMIT DROP AS
   SELECT v_doomed AS doomed, v_keeper AS keeper;
@@ -136,12 +140,16 @@ DO $legacy$
 BEGIN
   IF EXISTS (SELECT 1 FROM public.flagged WHERE student_id = 'A012-SOLO') THEN
     RAISE EXCEPTION
-      'flagged still holds rows for a deleted student — no FK cascades there';
+      'flagged still holds rows for a deleted student — no FK cascades from '
+      'students, so delete_class clears them by hand';
   END IF;
 
-  -- And the surviving student's rows were NOT collateral damage.
+  -- A flag against a DIFFERENT class is not collateral damage. Since 016 gave
+  -- flagged a class_id with ON DELETE CASCADE, deleting one class takes its own
+  -- disputes and nobody else's.
   IF NOT EXISTS (SELECT 1 FROM public.flagged WHERE student_id = 'A012-SHARED') THEN
-    RAISE EXCEPTION 'a surviving student lost their flags';
+    RAISE EXCEPTION
+      'deleting one class destroyed a flag belonging to another class';
   END IF;
 END
 $legacy$;

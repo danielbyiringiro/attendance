@@ -157,6 +157,9 @@ interface FlaggedRecord {
   session_date: string;
   status: string;
   created_at: string;
+  /** Added by migration 016. A flag belongs to one class. */
+  class_id: string | null;
+  session_id: string | null;
 }
 
 const TADashboard = ({
@@ -331,11 +334,23 @@ const TADashboard = ({
     roster.find((r) => r.student_id === studentId)?.cohort ?? "";
 
 
+  // Only this class's disputes.
+  //
+  // This selected every flagged row in the database. RLS on `flagged` did not
+  // exist until migration 016, so one class's disputes appeared in another's —
+  // and because the student's NAME is looked up in the roster of the class
+  // being viewed, it came back empty while their ID rendered anyway. A TA saw
+  // a bare student number belonging to a class that was not theirs.
   const loadFlaggedRecords = async () => {
+    if (!activeClassId) {
+      setFlaggedRecords([]);
+      return;
+    }
     setIsLoadingFlagged(true);
     const { data, error } = await supabase
       .from("flagged")
       .select("*")
+      .eq("class_id", activeClassId)
       .eq("status", "flagged")
       .order("created_at", { ascending: false });
 
@@ -1663,6 +1678,11 @@ const TADashboard = ({
                           {student?.name
                             ? `${student.name} (${record.student_id})`
                             : record.student_id}
+                          {!student && (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              — no longer on this roster
+                            </span>
+                          )}
                         </p>
                         <p className="text-sm text-muted-foreground">
                           Disputed Date:{" "}

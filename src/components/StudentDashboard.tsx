@@ -32,6 +32,8 @@ import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
 interface AttendanceRecord {
+  /** The session this row is about — what a flag is filed against. */
+  sessionId: string;
   date: string;
   status: string;
   /** A student can be in more than one class, so a date alone is ambiguous. */
@@ -88,17 +90,24 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   );
   const { toast } = useToast();
 
-  const handleFlag = async (date: string) => {
-    if (flaggingInProgress === date) return; // Prevent double submission
+  // Flag one session, named by its id.
+  //
+  // This passed a date, and the server resolved it with ORDER BY starts_at
+  // LIMIT 1 across every class the student was in — so a student taking two
+  // courses that both met that day had their dispute filed against whichever
+  // started earlier. Every row on this screen already carries its session_id.
+  const handleFlag = async (sessionId: string, date: string) => {
+    if (flaggingInProgress === sessionId) return; // Prevent double submission
 
-    setFlaggingInProgress(date);
+    setFlaggingInProgress(sessionId);
 
     try {
       // Flagging is handled server-side; the anon key cannot write to the table
-      // directly. The RPC enforces the "already pending / denied" rules.
+      // directly. The RPC enforces the "already pending / denied" rules, and
+      // refuses a session the student is not enrolled in.
       const { data, error } = await supabase.rpc("flag_attendance", {
         p_student_id: studentId,
-        p_session_date: date,
+        p_session_id: sessionId,
       });
 
       if (error) throw error;
@@ -133,7 +142,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       // Update local state
       setHistory((prev) =>
         prev.map((record) =>
-          record.date === date
+          record.sessionId === sessionId
             ? { ...record, isFlagged: true, flagStatus: "flagged" }
             : record,
         ),
@@ -186,7 +195,11 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
       const payload = (rpcData ?? {}) as {
         sessions?: SessionRecord[];
-        flagged?: Array<{ session_date: string; status: string }>;
+        flagged?: Array<{
+          session_date: string;
+          session_id: string | null;
+          status: string;
+        }>;
       };
       const sessions = payload.sessions ?? [];
 
@@ -201,10 +214,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
         return;
       }
 
+      // Keyed by session, not date. A student in two classes has two rows on
+      // the same date, and a dispute against one of them is not a dispute
+      // against the other.
       const flaggedMap = new Map<string, "flagged" | "accepted" | "denied">();
       (payload.flagged ?? []).forEach((row) => {
+        if (!row.session_id) return;
         flaggedMap.set(
-          row.session_date,
+          row.session_id,
           row.status as "flagged" | "accepted" | "denied",
         );
       });
@@ -221,9 +238,10 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       };
 
       const historyList: AttendanceRecord[] = sessions.map((sn) => {
-        const flagStatus = flaggedMap.get(sn.date) ?? null;
+        const flagStatus = flaggedMap.get(sn.session_id) ?? null;
         const cancelled = sn.status === "cancelled";
         return {
+          sessionId: sn.session_id,
           date: sn.date,
           className: sn.class,
           cohort: sn.cohort,
@@ -468,11 +486,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                   <Button
                                     variant={buttonState.variant}
                                     size="sm"
-                                    onClick={() => handleFlag(record.date)}
+                                    onClick={() =>
+                                      handleFlag(record.sessionId, record.date)
+                                    }
                                     title={buttonState.title}
                                     disabled={
                                       buttonState.disabled ||
-                                      flaggingInProgress === record.date
+                                      flaggingInProgress === record.sessionId
                                     }
                                   >
                                     {buttonState.icon}
