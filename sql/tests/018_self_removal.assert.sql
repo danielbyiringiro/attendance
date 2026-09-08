@@ -15,8 +15,8 @@ BEGIN
   INSERT INTO auth.users (id, email) VALUES
     ('77777777-7777-7777-7777-777777777777', 'aaa-sorts-first@example.edu')
   ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.staff (user_id, email, display_name) VALUES
-    ('77777777-7777-7777-7777-777777777777', 'aaa-sorts-first@example.edu', 'Early Alphabet')
+  INSERT INTO public.staff (user_id, email, display_name, status) VALUES
+    ('77777777-7777-7777-7777-777777777777', 'aaa-sorts-first@example.edu', 'Early Alphabet', 'approved')
   ON CONFLICT (user_id) DO NOTHING;
 END
 $seed$;

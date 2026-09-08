@@ -36,6 +36,11 @@ BEGIN
   INSERT INTO auth.users (id, email)
   VALUES ('44444444-4444-4444-4444-444444444444', 'latecomer@example.edu')
   ON CONFLICT (id) DO NOTHING;
+
+  -- Migration 020 restricts signup to allowed domains, seeded with the real
+  -- institution's. The whole fixture uses example.edu addresses.
+  INSERT INTO public.allowed_email_domains (domain) VALUES ('example.edu')
+  ON CONFLICT (domain) DO NOTHING;
 END
 $seed$;
 
@@ -65,14 +70,21 @@ BEGIN
 
   r := public.ensure_staff();
   IF r ->> 'staff_id' IS NULL THEN
-    RAISE EXCEPTION 'ensure_staff did not return a staff row';
+    RAISE EXCEPTION 'ensure_staff did not return a staff row: %', r;
   END IF;
   IF r ->> 'email' <> 'latecomer@example.edu' THEN
     RAISE EXCEPTION 'ensure_staff recorded the wrong email: %', r ->> 'email';
   END IF;
 
-  IF public.current_staff_id() IS NULL THEN
-    RAISE EXCEPTION 'the staff row was not visible to the account it belongs to';
+  -- 020: a new account starts pending, and current_staff_id() gates on
+  -- approval — so signing in is not the same as being able to do anything.
+  IF r ->> 'status' <> 'pending' THEN
+    RAISE EXCEPTION 'a brand new account was not pending: %', r;
+  END IF;
+
+  IF public.current_staff_id() IS NOT NULL THEN
+    RAISE EXCEPTION
+      'an unapproved account resolves to a staff id, so approval gates nothing';
   END IF;
 
   -- Called on every page load, so it must be idempotent.
@@ -83,6 +95,11 @@ $newcomer$;
 
 RESET ROLE;
 RESET request.jwt.claim.sub;
+
+-- Approve them, so the collaboration this file is actually about can proceed.
+-- The approval flow itself is covered by 021; here it is a precondition.
+UPDATE public.staff SET status = 'approved'
+ WHERE user_id = '44444444-4444-4444-4444-444444444444';
 
 DO $one_row$
 DECLARE
