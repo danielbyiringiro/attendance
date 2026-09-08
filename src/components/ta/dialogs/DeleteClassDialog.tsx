@@ -84,10 +84,13 @@ const DeleteClassDialog = ({
     if (!target) return;
     setIsWorking(true);
     try {
-      await deleteClass(target.id, confirmText.trim());
+      const result = await deleteClass(target.id, confirmText.trim());
       toast({
         title: "Class deleted",
-        description: `${target.code} and everything recorded against it is gone.`,
+        description:
+          result.students_deleted > 0
+            ? `${target.code} and everything recorded against it is gone, along with ${result.students_deleted} student${result.students_deleted === 1 ? "" : "s"} who took no other class.`
+            : `${target.code} and everything recorded against it is gone.`,
       });
       onDone();
       onOpenChange(false);
@@ -137,16 +140,33 @@ const DeleteClassDialog = ({
                 <span>{preview.sessions}</span>
                 <span className="text-muted-foreground">Attendance records</span>
                 <span className="font-medium">{preview.attendance_records}</span>
+                {preview.students_also_deleted > 0 && (
+                  <>
+                    <span className="text-muted-foreground">Students</span>
+                    <span className="font-medium">
+                      {preview.students_also_deleted}
+                    </span>
+                  </>
+                )}
               </div>
 
-              {preview.students_left_orphaned > 0 && (
-                <p className="text-xs text-muted-foreground border-t pt-2">
-                  {preview.students_left_orphaned} student
-                  {preview.students_left_orphaned === 1 ? "" : "s"} take no other
-                  class. They are <strong>not</strong> deleted — a person is not
-                  owned by a course — but they will be left on no roster.
+              {preview.students_also_deleted > 0 && (
+                <p className="border-t pt-2 text-xs text-muted-foreground">
+                  {preview.students_also_deleted} student
+                  {preview.students_also_deleted === 1 ? " takes" : "s take"} no
+                  other class, so {preview.students_also_deleted === 1 ? "it" : "they"}{" "}
+                  will be deleted too — keeping{" "}
+                  {preview.students_also_deleted === 1 ? "it" : "them"} would leave
+                  a record no screen here can reach. Anyone enrolled in another
+                  class is kept, along with their attendance in it.
                 </p>
               )}
+
+              <p className="border-t pt-2 text-xs text-muted-foreground">
+                Attendance history for this class goes with it, including the
+                record of every correction. There is no undo. To put a class out
+                of the way without destroying anything, archive it instead.
+              </p>
             </div>
           ) : null}
 

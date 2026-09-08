@@ -333,13 +333,26 @@ BEGIN
     RAISE EXCEPTION 'sessions survived their class';
   END IF;
 
-  -- The people do not belong to the course.
-  SELECT count(*) INTO n FROM public.students WHERE student_id IN ('S001', 'NEW-1', 'NEW-2');
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'deleting a class deleted students; only % of 3 remain', n;
+  -- Anyone another class still has is kept; the class does not own them.
+  -- (Migration 012 changed this: a student the deleted class was the ONLY
+  -- claim on now goes with it, rather than becoming a row no screen can reach.
+  -- 012's own suite covers that path; here the point is who SURVIVES.)
+  --
+  -- S001 is enrolled in the legacy class the 005 backfill created.
+  -- NEW-1 is in another of this suite's classes.
+  SELECT count(*) INTO n FROM public.students WHERE student_id IN ('S001', 'NEW-1');
+  IF n <> 2 THEN
+    RAISE EXCEPTION
+      'deleting a class deleted a student who is enrolled elsewhere; only % of 2 remain', n;
   END IF;
 
-  -- And their other enrolment is untouched.
+  -- NEW-2 had no other class, so it went with it.
+  IF EXISTS (SELECT 1 FROM public.students WHERE student_id = 'NEW-2') THEN
+    RAISE EXCEPTION
+      'a student whose only enrolment was the deleted class survived as an unreachable row';
+  END IF;
+
+  -- And the survivors' other enrolment is untouched.
   SELECT count(*) INTO n FROM public.enrolments WHERE student_id = 'NEW-1';
   IF n <> 1 THEN
     RAISE EXCEPTION 'deleting one class removed a student from another';

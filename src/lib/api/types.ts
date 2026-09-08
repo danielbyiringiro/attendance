@@ -153,8 +153,11 @@ export interface ClassDeletionPreview {
   enrolments: number;
   sessions: number;
   attendance_records: number;
-  /** Students whose only enrolment is this class. They are never deleted. */
-  students_left_orphaned: number;
+  /**
+   * Students whose only enrolment is this class. They are deleted with it —
+   * keeping them would leave rows no screen in the app can reach.
+   */
+  students_also_deleted: number;
 }
 
 export interface UpsertEnrolmentsResult {

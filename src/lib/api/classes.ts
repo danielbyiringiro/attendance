@@ -233,16 +233,30 @@ export const previewClassDeletion = async (
 /**
  * Irreversible. `confirmCode` must equal the class's own code — the server
  * checks, so a UI bug cannot delete a class by passing a stray `true`.
- * Students are never deleted.
+ *
+ * Students whose only enrolment was this class are deleted with it; anyone
+ * enrolled anywhere else is kept, including where that other enrolment has
+ * been dropped. Pass `deleteOrphanedStudents: false` to keep everyone, which
+ * leaves student rows no screen in the app can reach.
  */
 export const deleteClass = async (
   classId: string,
   confirmCode: string,
-): Promise<{ deleted: boolean; summary: ClassDeletionPreview }> => {
+  opts: { deleteOrphanedStudents?: boolean } = {},
+): Promise<{
+  deleted: boolean;
+  students_deleted: number;
+  summary: ClassDeletionPreview;
+}> => {
   const { data, error } = await supabase.rpc("delete_class", {
     p_class_id: classId,
     p_confirm_code: confirmCode,
+    p_delete_orphaned_students: opts.deleteOrphanedStudents ?? true,
   });
   if (error) fail("Could not delete the class", error);
-  return data as { deleted: boolean; summary: ClassDeletionPreview };
+  return data as {
+    deleted: boolean;
+    students_deleted: number;
+    summary: ClassDeletionPreview;
+  };
 };
