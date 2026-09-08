@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
+import Sessions from "@/components/ta/sections/Sessions";
 import StudentRoster from "@/components/ta/StudentRoster";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -92,7 +93,13 @@ interface RosterStudent {
 }
 
 interface TADashboardProps {
-  activeSection?: "attendance" | "analytics" | "students" | "sessions" | "classes";
+  activeSection?:
+    | "attendance"
+    | "analytics"
+    | "students"
+    | "sessions"
+    | "schedule"
+    | "classes";
   presentStudents: Student[];
   currentPin: string;
   timeLimit: number;
@@ -959,6 +966,7 @@ const TADashboard = ({
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
   const isSessionsSection = activeSection === "sessions";
+  const isScheduleSection = activeSection === "schedule";
   const isClassesSection = activeSection === "classes";
   // A lookup rather than a five-deep ternary: adding a section to the nested
   // version meant threading a branch into two of them and leaving a dead arm
@@ -970,7 +978,11 @@ const TADashboard = ({
     },
     sessions: {
       title: "Class Sessions",
-      description: "Set when each cohort meets, then create the term's sessions",
+      description: "Open, close, move or cancel a session",
+    },
+    schedule: {
+      title: "Schedule",
+      description: "Set when each cohort meets",
     },
     analytics: {
       title: "Attendance Analytics",
@@ -1015,7 +1027,7 @@ const TADashboard = ({
         {/* Every count below is of one class's roster, so say when there isn't
             one and when it is still arriving — an empty roster otherwise reads
             as a class where everybody is absent. */}
-        {!isClassesSection && !activeClass && (
+        {!isClassesSection && !isScheduleSection && !isSessionsSection && !activeClass && (
           <Card className="border-2 border-dashed">
             <CardContent className="pt-6 text-center">
               <p className="font-medium">No class selected</p>
@@ -1025,7 +1037,7 @@ const TADashboard = ({
             </CardContent>
           </Card>
         )}
-        {!isClassesSection && activeClass && isRosterLoading && (
+        {!isClassesSection && !isScheduleSection && !isSessionsSection && activeClass && isRosterLoading && (
           <p className="text-sm text-muted-foreground">Loading the roster…</p>
         )}
 
@@ -1033,9 +1045,10 @@ const TADashboard = ({
             beside it: everything below is scoped to one class, and these are
             the screens that choose and shape that class. */}
         {isClassesSection && <Classes />}
-        {isSessionsSection && <Schedule />}
+        {isSessionsSection && <Sessions />}
+        {isScheduleSection && <Schedule />}
 
-        {!isClassesSection && isAnalyticsSection && (
+        {isAnalyticsSection && (
           <>
             {/* Stats Overview */}
             <div

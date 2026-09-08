@@ -11,7 +11,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Ban, Loader2, Lock, PencilLine, PlayCircle, RefreshCw } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Ban,
+  Loader2,
+  Lock,
+  MoreVertical,
+  PencilLine,
+  PlayCircle,
+  RefreshCw,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   cancelSession,
@@ -21,16 +35,14 @@ import {
   updateSession,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
+import { addDays, toDateStr, todayStr } from "@/lib/dates";
 
 interface SessionListProps {
   classId: string;
   cohorts: CohortRow[];
   /** The class's own timezone, so times read as the room saw them. */
   timezone: string;
-  /** Defaults to the last fortnight and the next fortnight. */
-  from?: string;
-  to?: string;
-  /** Bump to force a reload — generating sessions elsewhere on the page. */
+  /** Bump to force a reload — a schedule change elsewhere. */
   refreshToken?: number;
 }
 
@@ -39,14 +51,6 @@ const STATUS_STYLE: Record<SessionStatus, string> = {
   open: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
   closed: "bg-muted text-muted-foreground",
   cancelled: "bg-destructive/10 text-destructive",
-};
-
-const shiftDays = (days: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate(),
-  ).padStart(2, "0")}`;
 };
 
 /** An instant as the class's own wall clock, not the viewer's. */
@@ -65,28 +69,32 @@ const dateOf = (d: string) =>
     month: "short",
   });
 
-/**
- * The sessions of a class, and the three things a TA does to one.
- *
- * Cancelling lives here rather than in a dialog keyed by date and cohort. That
- * was the old shape, and it is what let cancelling one cohort's Wednesday
- * silently cancel every other cohort's: sessions are not shared, so acting on
- * the row cannot reach past it.
- */
+// Sessions are grouped by when they are, not filtered by a date range you have
+// to type. "What is on today" and "what is coming" were both a two-field date
+// exercise before, which is a lot of work to answer a question the screen
+// already knows the answer to.
+type Bucket = "today" | "week" | "later" | "past";
+
+const BUCKETS: Array<{ id: Bucket; heading: string; empty: string }> = [
+  { id: "today", heading: "Today", empty: "Nothing scheduled today." },
+  { id: "week", heading: "Next 7 days", empty: "Nothing in the next week." },
+  { id: "later", heading: "Later", empty: "Nothing further ahead." },
+  { id: "past", heading: "Past", empty: "Nothing yet." },
+];
+
 const SessionList = ({
   classId,
   cohorts,
   timezone,
-  from,
-  to,
   refreshToken = 0,
 }: SessionListProps) => {
   const { toast } = useToast();
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [rangeFrom, setRangeFrom] = useState(from ?? shiftDays(-14));
-  const [rangeTo, setRangeTo] = useState(to ?? shiftDays(14));
+  const [bucket, setBucket] = useState<Bucket>("today");
+  const [cohortFilter, setCohortFilter] = useState<string>("all");
+
   const [cancelling, setCancelling] = useState<SessionRow | null>(null);
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState<SessionRow | null>(null);
@@ -102,9 +110,9 @@ const SessionList = ({
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      setSessions(
-        await listSessions({ classId, from: rangeFrom, to: rangeTo }),
-      );
+      // The whole term in one read: grouping happens here, so switching between
+      // Today and Later is instant rather than another round trip.
+      setSessions(await listSessions({ classId }));
     } catch (e) {
       toast({
         title: "Could not load sessions",
@@ -114,65 +122,99 @@ const SessionList = ({
     } finally {
       setIsLoading(false);
     }
-    // refreshToken is not read in the body; it is here so the parent can say
-    // "sessions changed under you" without owning this component's state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId, rangeFrom, rangeTo, toast, refreshToken]);
+  }, [classId, toast, refreshToken]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const handleOpen = async (s: SessionRow) => {
-    setBusyId(s.id);
+  const grouped = useMemo(() => {
+    const today = todayStr();
+    const weekEnd = toDateStr(addDays(new Date(), 7));
+    const out: Record<Bucket, SessionRow[]> = {
+      today: [],
+      week: [],
+      later: [],
+      past: [],
+    };
+
+    sessions
+      .filter((s) => cohortFilter === "all" || s.cohort_id === cohortFilter)
+      .forEach((s) => {
+        if (s.session_date === today) out.today.push(s);
+        else if (s.session_date < today) out.past.push(s);
+        else if (s.session_date <= weekEnd) out.week.push(s);
+        else out.later.push(s);
+      });
+
+    out.today.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    out.week.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    out.later.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    // Most recent first: the past is read backwards from now.
+    out.past.sort((a, b) => b.starts_at.localeCompare(a.starts_at));
+    return out;
+  }, [sessions, cohortFilter]);
+
+  const openCount = sessions.filter((s) => s.status === "open").length;
+
+  const run = async (
+    session: SessionRow,
+    work: () => Promise<void>,
+  ): Promise<void> => {
+    setBusyId(session.id);
     try {
-      const result = await openSession(s.id);
-      toast({
-        title: `Open — PIN ${result.pin}`,
-        description: "Read this out. It closes on its own when the window ends.",
-      });
+      await work();
       await load();
-    } catch (e) {
-      toast({
-        title: "Could not open the session",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
     } finally {
       setBusyId(null);
     }
   };
 
-  const handleClose = async (s: SessionRow) => {
-    setBusyId(s.id);
-    try {
-      const absences = await closeSession(s.id);
-      toast({
-        title: "Session closed",
-        description:
-          absences === 0
-            ? "Everyone enrolled was accounted for."
-            : `${absences} student${absences === 1 ? " was" : "s were"} recorded absent.`,
-      });
-      await load();
-    } catch (e) {
-      toast({
-        title: "Could not close the session",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const handleOpen = (s: SessionRow) =>
+    run(s, async () => {
+      try {
+        const result = await openSession(s.id);
+        toast({
+          title: `Open — PIN ${result.pin}`,
+          description: "Read this out. It closes on its own when the window ends.",
+        });
+      } catch (e) {
+        toast({
+          title: "Could not open the session",
+          description: e instanceof Error ? e.message : "Unexpected error.",
+          variant: "destructive",
+        });
+      }
+    });
+
+  const handleClose = (s: SessionRow) =>
+    run(s, async () => {
+      try {
+        const absences = await closeSession(s.id);
+        toast({
+          title: "Session closed",
+          description:
+            absences === 0
+              ? "Everyone enrolled was accounted for."
+              : `${absences} student${absences === 1 ? " was" : "s were"} recorded absent.`,
+        });
+      } catch (e) {
+        toast({
+          title: "Could not close the session",
+          description: e instanceof Error ? e.message : "Unexpected error.",
+          variant: "destructive",
+        });
+      }
+    });
 
   const startEditing = (s: SessionRow) => {
     setEditing(s);
     setEditDate(s.session_date);
     // Read back in the class's timezone, because that is the clock the server
-    // will resolve the value against when it is sent back. Formatting in the
-    // viewer's zone would show a TA abroad a time the room never met at, and
-    // saving it unchanged would then move the session.
+    // resolves the value against when it is sent. Formatting in the viewer's
+    // zone would show a TA abroad a time the room never met at, and saving it
+    // unchanged would then move the session.
     setEditTime(timeIn(s.starts_at, timezone, false));
     setEditDuration(String(s.duration_minutes));
   };
@@ -229,105 +271,139 @@ const SessionList = ({
     }
   };
 
+  const rows = grouped[bucket];
+  const current = BUCKETS.find((b) => b.id === bucket)!;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-end gap-2 flex-wrap">
-        <div className="space-y-1">
-          <Label htmlFor="sess-from" className="text-xs">
-            From
-          </Label>
-          <Input
-            id="sess-from"
-            type="date"
-            className="w-40"
-            value={rangeFrom}
-            onChange={(e) => setRangeFrom(e.target.value)}
-          />
+      {/* When, and whose. Two rows of chips instead of four date inputs. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1">
+          {BUCKETS.map((b) => (
+            <Button
+              key={b.id}
+              size="sm"
+              variant={bucket === b.id ? "secondary" : "ghost"}
+              onClick={() => setBucket(b.id)}
+            >
+              {b.heading}
+              {grouped[b.id].length > 0 && (
+                <span className="ml-1.5 text-xs opacity-60">
+                  {grouped[b.id].length}
+                </span>
+              )}
+            </Button>
+          ))}
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="sess-to" className="text-xs">
-            To
-          </Label>
-          <Input
-            id="sess-to"
-            type="date"
-            className="w-40"
-            value={rangeTo}
-            onChange={(e) => setRangeTo(e.target.value)}
-          />
+
+        <div className="ml-auto flex items-center gap-1">
+          {cohorts.length > 1 && (
+            <>
+              <Button
+                size="sm"
+                variant={cohortFilter === "all" ? "secondary" : "ghost"}
+                onClick={() => setCohortFilter("all")}
+              >
+                All
+              </Button>
+              {cohorts.map((c) => (
+                <Button
+                  key={c.id}
+                  size="sm"
+                  variant={cohortFilter === c.id ? "secondary" : "ghost"}
+                  onClick={() => setCohortFilter(c.id)}
+                >
+                  {c.label}
+                </Button>
+              ))}
+            </>
+          )}
+          <Button variant="ghost" size="sm" onClick={load} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+          </Button>
         </div>
-        <Button variant="ghost" size="sm" onClick={load} disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
       </div>
 
+      {openCount > 0 && bucket !== "today" && (
+        <button
+          type="button"
+          onClick={() => setBucket("today")}
+          className="w-full rounded-md bg-emerald-500/10 px-3 py-2 text-left text-sm text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
+        >
+          {openCount} session{openCount === 1 ? " is" : "s are"} open right now —
+          show today
+        </button>
+      )}
+
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading sessions…
         </div>
-      ) : sessions.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No sessions in that range. Set a pattern above and generate them.
+      ) : rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          {sessions.length === 0
+            ? "This class has no sessions yet. Set a weekly pattern under Schedule."
+            : current.empty}
         </p>
       ) : (
-        <div className="space-y-1 max-h-[28rem] overflow-y-auto">
-          {sessions.map((s) => (
+        <div className="max-h-[34rem] space-y-1 overflow-y-auto">
+          {rows.map((s) => (
             <div
               key={s.id}
               className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
             >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium">
-                    {dateOf(s.session_date)}
-                  </span>
-                  <Badge variant="outline" className="text-xs">
-                    {cohortLabel.get(s.cohort_id) ?? "?"}
-                  </Badge>
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLE[s.status]}`}
-                  >
-                    {s.status}
-                  </span>
-                  {s.moved_manually && (
-                    <Badge variant="secondary" className="text-xs">
-                      moved
-                    </Badge>
-                  )}
-                  {s.status === "open" && s.pin && (
-                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-xs tracking-widest text-emerald-700 dark:text-emerald-400">
-                      {s.pin}
-                    </span>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="w-20 shrink-0 tabular-nums">
+                  <p className="text-sm font-medium">
+                    {timeIn(s.starts_at, timezone)}
+                  </p>
+                  {bucket !== "today" && (
+                    <p className="text-xs text-muted-foreground">
+                      {dateOf(s.session_date)}
+                    </p>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {timeIn(s.starts_at, timezone)} · {s.duration_minutes} min
-                  {s.cancellation_reason && ` · ${s.cancellation_reason}`}
-                </p>
+
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="outline" className="text-xs">
+                      {cohortLabel.get(s.cohort_id) ?? "?"}
+                    </Badge>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLE[s.status]}`}
+                    >
+                      {s.status}
+                    </span>
+                    {s.status === "open" && s.pin && (
+                      <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-xs tracking-widest text-emerald-700 dark:text-emerald-400">
+                        {s.pin}
+                      </span>
+                    )}
+                    {s.moved_manually && (
+                      <Badge variant="secondary" className="text-xs">
+                        moved
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {s.duration_minutes} min
+                    {s.cancellation_reason && ` · ${s.cancellation_reason}`}
+                  </p>
+                </div>
               </div>
 
-              <div className="flex shrink-0 gap-1">
+              {/* One primary action, everything else behind the menu. Three
+                  buttons per row made the common case — open, then close —
+                  something you had to look for. */}
+              <div className="flex shrink-0 items-center gap-1">
                 {s.status === "scheduled" && (
                   <Button
                     size="sm"
-                    variant="ghost"
-                    title="Change the date or time"
-                    disabled={busyId === s.id}
-                    onClick={() => startEditing(s)}
-                  >
-                    <PencilLine className="h-4 w-4" />
-                  </Button>
-                )}
-                {s.status !== "cancelled" && s.status !== "open" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
                     disabled={busyId === s.id}
                     onClick={() => handleOpen(s)}
                   >
-                    <PlayCircle className="h-4 w-4 mr-1" />
+                    <PlayCircle className="mr-1 h-4 w-4" />
                     Open
                   </Button>
                 )}
@@ -338,23 +414,50 @@ const SessionList = ({
                     disabled={busyId === s.id}
                     onClick={() => handleClose(s)}
                   >
-                    <Lock className="h-4 w-4 mr-1" />
+                    <Lock className="mr-1 h-4 w-4" />
                     Close
                   </Button>
                 )}
-                {s.status !== "cancelled" && (
+                {s.status === "closed" && (
                   <Button
                     size="sm"
                     variant="ghost"
-                    title="Cancel this class"
                     disabled={busyId === s.id}
-                    onClick={() => {
-                      setCancelling(s);
-                      setReason("");
-                    }}
+                    onClick={() => handleOpen(s)}
                   >
-                    <Ban className="h-4 w-4" />
+                    Reopen
                   </Button>
+                )}
+
+                {s.status !== "cancelled" && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="ghost" disabled={busyId === s.id}>
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        disabled={s.status !== "scheduled"}
+                        onClick={() => startEditing(s)}
+                      >
+                        <PencilLine className="mr-2 h-4 w-4" />
+                        {s.status === "scheduled"
+                          ? "Move…"
+                          : "Move (already run)"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => {
+                          setCancelling(s);
+                          setReason("");
+                        }}
+                      >
+                        <Ban className="mr-2 h-4 w-4" />
+                        Cancel class…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             </div>
@@ -370,8 +473,8 @@ const SessionList = ({
               {editing && (
                 <>
                   {dateOf(editing.session_date)}, cohort{" "}
-                  {cohortLabel.get(editing.cohort_id)}. This changes one session
-                  only — the pattern it came from is left alone.
+                  {cohortLabel.get(editing.cohort_id)}. Changes this session only
+                  — the weekly pattern is left alone.
                 </>
               )}
             </DialogDescription>
@@ -409,9 +512,9 @@ const SessionList = ({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Only a session that has not run yet can be moved. A closed one has
-            attendance recorded against it, so moving it would put those marks
-            on a different day.
+            A session that has already run cannot be moved: attendance is
+            recorded against it, and moving it would put those marks on a
+            different day.
           </p>
 
           <DialogFooter>
@@ -467,7 +570,7 @@ const SessionList = ({
               onClick={handleCancel}
               disabled={busyId !== null}
             >
-              <Ban className="h-4 w-4 mr-2" />
+              <Ban className="mr-2 h-4 w-4" />
               Cancel the class
             </Button>
           </DialogFooter>

@@ -8,6 +8,7 @@ import ClassSwitcher from "@/components/ta/ClassSwitcher";
 import { ClassProvider } from "@/lib/classContext";
 import {
   BarChart3,
+  CalendarClock,
   CalendarDays,
   Clock,
   GraduationCap,
@@ -41,7 +42,13 @@ interface Student {
   sessionDate?: string; // YYYY-MM-DD
 }
 
-type TATab = "attendance" | "analytics" | "students" | "sessions" | "classes";
+type TATab =
+  | "attendance"
+  | "analytics"
+  | "students"
+  | "sessions"
+  | "schedule"
+  | "classes";
 
 // One row per sidebar entry. Previously these were four hand-duplicated
 // 14-line SidebarMenuItem blocks, so adding a section meant a fifth copy-paste
@@ -55,6 +62,7 @@ const TA_TABS: ReadonlyArray<{
   { id: "analytics", label: "Attendance Analytics", icon: BarChart3 },
   { id: "students", label: "Students", icon: Users },
   { id: "sessions", label: "Class Sessions", icon: Clock },
+  { id: "schedule", label: "Schedule", icon: CalendarClock },
   { id: "classes", label: "Classes", icon: GraduationCap },
 ];
 

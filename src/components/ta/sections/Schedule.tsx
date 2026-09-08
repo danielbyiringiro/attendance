@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CalendarPlus, CalendarSync, Loader2, Save } from "lucide-react";
+import { CalendarPlus, Loader2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -14,7 +14,6 @@ import {
   type ScheduleSlot,
 } from "@/lib/api/classes";
 import { applyScheduleToFuture, generateSessions } from "@/lib/api/sessions";
-import SessionList from "@/components/ta/SessionList";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
 const DAYS = [
@@ -53,8 +52,6 @@ const Schedule = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genFrom, setGenFrom] = useState("");
   const [genTo, setGenTo] = useState("");
-  const [sessionsToken, setSessionsToken] = useState(0);
-  const [isApplying, setIsApplying] = useState(false);
 
   const loadSchedules = useCallback(async () => {
     if (!activeClass) return;
@@ -134,6 +131,13 @@ const Schedule = () => {
     }),
   );
 
+  // Save the pattern AND put it into effect.
+  //
+  // These were two buttons — "Save pattern" and "Apply pattern to future
+  // sessions" — with a paragraph each explaining which to press. That split
+  // existed because the database has two operations, not because anyone wants
+  // a saved pattern that has not taken effect. Saving now does both and
+  // reports what moved.
   const handleSave = async () => {
     if (selectedCohorts.length === 0) {
       toast({
@@ -145,67 +149,33 @@ const Schedule = () => {
     }
     setIsSaving(true);
     try {
-      const written = await setCohortSchedules(selectedCohorts, slots);
+      await setCohortSchedules(selectedCohorts, slots);
+      const result = await applyScheduleToFuture(activeClass!.id, {
+        cohortIds: selectedCohorts,
+      });
+
+      const changes = [
+        result.moved > 0 && `${result.moved} moved`,
+        result.removed > 0 && `${result.removed} removed`,
+        result.created > 0 && `${result.created} added`,
+      ].filter(Boolean);
+
       toast({
-        title: slots.length === 0 ? "Schedule cleared" : "Schedule saved",
+        title: slots.length === 0 ? "Pattern cleared" : "Pattern saved",
         description:
-          slots.length === 0
-            ? `${selectedCohorts.length} cohort${
-                selectedCohorts.length === 1 ? "" : "s"
-              } now meet on no fixed days.`
-            : `${written} slot${written === 1 ? "" : "s"} across ${
-                selectedCohorts.length
-              } cohort${selectedCohorts.length === 1 ? "" : "s"}. Generate sessions to create the days.`,
+          changes.length === 0
+            ? "No session from today onward needed changing."
+            : `${changes.join(", ")}, from today onward. Nothing earlier was touched, and sessions you cancelled or moved by hand were left alone.`,
       });
       await loadSchedules();
     } catch (e) {
       toast({
-        title: "Could not save the schedule",
+        title: "Could not save the pattern",
         description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  // Push a pattern change onto the sessions it should have changed.
-  //
-  // Saving a pattern only rewrites cohort_schedules. Generating then adds the
-  // days that are missing but, being ON CONFLICT DO NOTHING, leaves every
-  // session already sitting at the old time — so moving Tuesday from 09:00 to
-  // 14:00 gave the cohort both.
-  const handleApplyToFuture = async () => {
-    if (!activeClass) return;
-    setIsApplying(true);
-    try {
-      const result = await applyScheduleToFuture(activeClass.id, {
-        cohortIds: selectedCohorts.length > 0 ? selectedCohorts : undefined,
-      });
-      const parts = [
-        result.moved > 0 && `${result.moved} moved`,
-        result.removed > 0 && `${result.removed} removed`,
-        result.created > 0 && `${result.created} added`,
-      ].filter(Boolean);
-      toast({
-        title:
-          parts.length === 0
-            ? "Already up to date"
-            : "Future sessions updated",
-        description:
-          parts.length === 0
-            ? "Every session from today onward already matches the pattern."
-            : `${parts.join(", ")}. Nothing before today was touched, and cancelled or hand-edited sessions were left alone.`,
-      });
-      setSessionsToken((n) => n + 1);
-    } catch (e) {
-      toast({
-        title: "Could not update the future sessions",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsApplying(false);
     }
   };
 
@@ -224,7 +194,6 @@ const Schedule = () => {
             ? "Every scheduled day in that range already has a session."
             : `${created} session${created === 1 ? "" : "s"} created. Days that already existed were left alone.`,
       });
-      setSessionsToken((n) => n + 1);
     } catch (e) {
       toast({
         title: "Could not generate sessions",
@@ -393,13 +362,20 @@ const Schedule = () => {
             )}
             Save pattern
           </Button>
+          <p className="text-xs text-muted-foreground">
+            Saving puts the pattern into effect from today: sessions move to
+            their new times, days the cohort no longer meets are removed, and
+            new ones are created through to the end of term. Nothing before
+            today changes, and a session you cancelled or moved by hand stays
+            as it is.
+          </p>
         </CardContent>
       </Card>
 
       {/* Generation */}
       <Card className="border-2">
         <CardHeader>
-          <CardTitle className="text-base">Create the sessions</CardTitle>
+          <CardTitle className="text-base">Backfill earlier sessions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3 max-w-md">
@@ -423,55 +399,24 @@ const Schedule = () => {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={handleGenerate} disabled={isGenerating}>
-              {isGenerating ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <CalendarPlus className="h-4 w-4 mr-2" />
-              )}
-              Generate sessions
-            </Button>
-
-            <Button onClick={handleApplyToFuture} disabled={isApplying}>
-              {isApplying ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <CalendarSync className="h-4 w-4 mr-2" />
-              )}
-              Apply pattern to future sessions
-            </Button>
-          </div>
+          <Button variant="outline" onClick={handleGenerate} disabled={isGenerating}>
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <CalendarPlus className="h-4 w-4 mr-2" />
+            )}
+            Create sessions in this range
+          </Button>
 
           <p className="text-xs text-muted-foreground">
-            <strong>Generate</strong> only adds days that have no session yet,
-            over the range above. Use it when you first set up a term.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            <strong>Apply to future sessions</strong> is what you want after
-            changing a time: from today onward it moves sessions to the new
-            time, removes days the cohort no longer meets, and adds the ones it
-            now does — for the cohorts ticked above, or all of them if none is.
-            Nothing before today changes, and a session you cancelled or moved
-            by hand is left where it is.
+            Only needed for days already in the past — a class set up mid-term,
+            say. Saving a pattern above already creates, moves and removes
+            everything from today onward. Days that already have a session are
+            left alone either way.
           </p>
         </CardContent>
       </Card>
 
-      {/* The sessions themselves — open, close, cancel */}
-      <Card className="border-2">
-        <CardHeader>
-          <CardTitle className="text-base">Sessions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SessionList
-            classId={activeClass.id}
-            cohorts={cohorts}
-            timezone={activeClass.timezone}
-            refreshToken={sessionsToken}
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 };
