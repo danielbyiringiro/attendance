@@ -8,7 +8,7 @@
 // attendance_records — the same read every screen uses.
 
 import { toCsv } from "@/lib/csv";
-import { attendanceLog, isPresentState } from "@/lib/api/attendance";
+import { attendanceLog, tallyStates } from "@/lib/api/attendance";
 import type { AttendanceState } from "@/lib/api/types";
 import { listEnrolments } from "@/lib/api/enrolment";
 import { getClass } from "@/lib/api/classes";
@@ -430,29 +430,23 @@ export const buildAttendanceExport = async (
       .slice()
       .sort((x, y) => x.session_date.localeCompare(y.session_date));
 
-    let attended = 0;
-    let excused = 0;
-    let absent = 0;
-    let exempt = 0;
+    const states = sessions.map(
+      (sn) => stateOf.get(`${student.student_id}-${sn.session_id}`) ?? null,
+    );
 
-    sessions.forEach((sn) => {
-      const state = stateOf.get(`${student.student_id}-${sn.session_id}`) ?? null;
+    // The one definition of a rate, shared with StudentRoster. This used to be
+    // its own arithmetic, and the two disagreed about a session with no record
+    // — which is every session that is still open.
+    const t = tallyStates(states, { mergeExcused });
 
-      // Read, not derived. A student with no row for a closed session has one
-      // by definition — close_session writes `unexcused` for everyone enrolled
-      // who did not mark — so "No record" means the session is still open.
-      let status: DayStatus = state ? (STATUS[state] ?? "No record") : "No record";
-
-      if (isPresentState(state)) attended += 1;
-      else if (state === "excused") {
-        excused += 1;
+    if (shape === "detail") {
+      sessions.forEach((sn, i) => {
+        const state = states[i];
+        let status: DayStatus = state ? (STATUS[state] ?? "No record") : "No record";
         // Merged, an excused day reports as attendance everywhere — including
         // the per-day status, so the detail sheet agrees with the totals.
-        if (mergeExcused) status = "Present";
-      } else if (state === "unexcused") absent += 1;
-      else if (state === "exempted") exempt += 1;
+        if (mergeExcused && state === "excused") status = "Present";
 
-      if (shape === "detail") {
         detail.push({
           student_id: student.student_id,
           name: student.name,
@@ -460,25 +454,19 @@ export const buildAttendanceExport = async (
           date: sn.session_date,
           status,
         });
-      }
-    });
-
-    // Exempted days leave both sides of the fraction, always. Excused days do
-    // too, unless the caller asked for them to be merged into present.
-    const countable = sessions.length - exempt;
-    const present = mergeExcused ? attended + excused : attended;
-    const gradedDays = mergeExcused ? countable : countable - excused;
+      });
+    }
 
     summary.push({
       student_id: student.student_id,
       name: student.name,
       cohort: student.cohort,
-      classDays: countable,
-      present,
-      absent,
-      excused,
-      attendanceRate:
-        gradedDays > 0 ? Math.round((present / gradedDays) * 1000) / 10 : 0,
+      // The days that counted for them: what the rate was taken over.
+      classDays: t.graded,
+      present: t.attended,
+      absent: t.absent,
+      excused: t.excused,
+      attendanceRate: t.rate,
     });
   });
 

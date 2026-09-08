@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import StudentLogin, { type MarkResult } from "@/components/StudentLogin";
+import ThemeToggle from "@/components/ThemeToggle";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
@@ -280,15 +281,13 @@ const Index = () => {
         History
       </Button>
 
-      {/* TA Access Button */}
-      <Button
-        onClick={() => setShowTALogin(true)}
-        variant="ghost"
-        size="sm"
-        className="fixed top-4 right-4 opacity-70 hover:opacity-100 transition-opacity"
-      >
-        <Settings className="h-4 w-4" />
-      </Button>
+      {/* Theme and TA access */}
+      <div className="fixed right-4 top-4 flex items-center gap-1 opacity-70 transition-opacity hover:opacity-100">
+        <ThemeToggle />
+        <Button onClick={() => setShowTALogin(true)} variant="ghost" size="sm">
+          <Settings className="h-4 w-4" />
+        </Button>
+      </div>
 
       {/* TA Login Modal */}
       {showTALogin && (

@@ -121,7 +121,12 @@ const SessionActions = ({
   }
 
   return (
-    <Button size={size} className={width} disabled={isBusy} onClick={handleOpen}>
+    <Button
+      size={size}
+      className={`${width} bg-gradient-primary text-primary-foreground shadow-soft transition-opacity hover:opacity-90`}
+      disabled={isBusy}
+      onClick={handleOpen}
+    >
       {isBusy ? (
         <Loader2 className="mr-1 h-4 w-4 animate-spin" />
       ) : (

@@ -114,10 +114,16 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
             that is all a logged-out visitor is told — no class names, no
             cohorts. Your own class may be open when this says one window is,
             or may not; only the PIN can settle it. */}
-        <Card className="border-2 shadow-soft">
+        <Card
+          className={`border-2 shadow-soft transition-colors ${
+            openCount > 0
+              ? "border-success/40 bg-success/5"
+              : "border-border bg-card"
+          }`}
+        >
           <CardContent className="flex items-center justify-center gap-3 py-4">
             <Clock
-              className={`h-5 w-5 ${openCount > 0 ? "text-primary" : "text-muted-foreground"}`}
+              className={`h-5 w-5 ${openCount > 0 ? "text-success" : "text-muted-foreground"}`}
             />
             <p className="text-sm text-muted-foreground">
               {openCount === 0
@@ -130,7 +136,7 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
         {/* Confirmation, naming the class the PIN turned out to belong to.
             A student in two courses needs to know which one they just marked. */}
         {marked && (
-          <Card className="border-2 border-success/40 bg-success/5">
+          <Card className="border-2 border-success/40 bg-success/5 shadow-medium">
             <CardContent className="space-y-1 py-4 text-center">
               <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
               <p className="font-medium">

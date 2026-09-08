@@ -2,11 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Search, UserCheck } from "lucide-react";
+import { Download, Loader2, Search, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { attendanceLog, type AttendanceLog } from "@/lib/api/attendance";
+import {
+  attendanceLog,
+  sessionStatesFor,
+  tallyStates,
+  type AttendanceLog,
+} from "@/lib/api/attendance";
 import type { CohortRow } from "@/lib/api/types";
 import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
+import { toCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/attendanceExport";
+import { todayStr } from "@/lib/dates";
 
 export interface RosterEntry {
   student_id: string;
@@ -39,8 +47,11 @@ interface StudentRosterProps {
 const rateColour = (rate: number, threshold: number) =>
   rate >= threshold
     ? "text-success"
+    // A band below the threshold rather than straight to red: somebody at 72
+    // against a 75 requirement is in a different position from somebody at 40,
+    // and the colour should say so.
     : rate >= threshold - 15
-      ? "text-amber-600 dark:text-amber-500"
+      ? "text-warning"
       : "text-destructive";
 
 /**
@@ -64,6 +75,10 @@ const StudentRoster = ({
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [cohortFilter, setCohortFilter] = useState<string>("all");
+  // Narrowing to the students who need attention. "Everyone, sorted worst
+  // first" answers a different question from "who is actually below the line".
+  const [risk, setRisk] = useState<"all" | "below" | "absences">("all");
+  const [minAbsences, setMinAbsences] = useState("3");
   const [openStudent, setOpenStudent] = useState<StudentStanding | null>(null);
 
   const load = useCallback(async () => {
@@ -86,31 +101,60 @@ const StudentRoster = ({
     void load();
   }, [load]);
 
+  const cohortIdOf = useMemo(
+    () => new Map(cohorts.map((c) => [c.label, c.id])),
+    [cohorts],
+  );
+
   const standings = useMemo<StudentStanding[]>(() => {
+    if (!log) {
+      return roster.map((student) => ({
+        ...student,
+        sessions: 0,
+        present: 0,
+        late: 0,
+        excused: 0,
+        absent: 0,
+        rate: 0,
+      }));
+    }
+
     return roster.map((student) => {
-      const marks = log?.byStudent.get(student.student_id) ?? [];
-      const present = marks.filter((m) => m.state === "present").length;
-      const late = marks.filter((m) => m.state === "late").length;
-      const excused = marks.filter((m) => m.state === "excused").length;
-      const absent = marks.filter((m) => m.state === "unexcused").length;
-      // Excused and exempted leave the denominator: they neither help nor hurt.
-      const graded = present + late + absent;
+      // Driven from the sessions their cohort held, not the records they have:
+      // a session still open shows as null and is excluded, rather than being
+      // invisible here and an absence in the exported CSV.
+      const cohortId = cohortIdOf.get(student.cohort);
+      const t = tallyStates(
+        cohortId ? sessionStatesFor(log, student.student_id, cohortId) : [],
+      );
+
       return {
         ...student,
-        sessions: marks.length,
-        present,
-        late,
-        excused,
-        absent,
-        rate: graded > 0 ? Math.round(((present + late) / graded) * 1000) / 10 : 0,
+        sessions: t.sessions,
+        present: t.present,
+        late: t.late,
+        excused: t.excused,
+        absent: t.absent,
+        rate: t.rate,
       };
     });
-  }, [roster, log]);
+  }, [roster, log, cohortIdOf]);
+
+  const absenceFloor = Math.max(1, Number(minAbsences) || 1);
 
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return standings
       .filter((s) => cohortFilter === "all" || s.cohort === cohortFilter)
+      .filter((s) => {
+        if (risk === "all") return true;
+        // Somebody with no graded sessions has no rate to be below; excluding
+        // them keeps a new class from listing everybody as at risk.
+        if (risk === "below") {
+          return s.sessions > 0 && s.rate < minAttendancePercentage;
+        }
+        return s.absent >= absenceFloor;
+      })
       .filter(
         (s) =>
           needle === "" ||
@@ -118,7 +162,46 @@ const StudentRoster = ({
           (s.name ?? "").toLowerCase().includes(needle),
       )
       .sort((a, b) => a.rate - b.rate || a.student_id.localeCompare(b.student_id));
-  }, [standings, query, cohortFilter]);
+  }, [
+    standings,
+    query,
+    cohortFilter,
+    risk,
+    absenceFloor,
+    minAttendancePercentage,
+  ]);
+
+  // Whatever is on screen, as a file. The point of narrowing to "below 75%" is
+  // usually to do something about those students, which happens outside this
+  // app.
+  const downloadShown = () => {
+    if (shown.length === 0) return;
+    const csv = toCsv(
+      ["Student ID", "Name", "Cohort", "Sessions", "Present", "Late", "Excused", "Absent", "Rate %"],
+      shown.map((s) => [
+        s.student_id,
+        s.name ?? "",
+        s.cohort,
+        String(s.sessions),
+        String(s.present),
+        String(s.late),
+        String(s.excused),
+        String(s.absent),
+        String(s.rate),
+      ]),
+    );
+    const scope =
+      risk === "below"
+        ? `below-${minAttendancePercentage}`
+        : risk === "absences"
+          ? `min-${absenceFloor}-absences`
+          : "all";
+    downloadCsv(csv, `students-${scope}-${todayStr()}.csv`);
+    toast({
+      title: "Downloaded",
+      description: `${shown.length} student${shown.length === 1 ? "" : "s"}.`,
+    });
+  };
 
   return (
     <div className="space-y-3">
@@ -156,6 +239,56 @@ const StudentRoster = ({
         {isLoading && <Loader2 className="h-4 w-4 animate-spin opacity-60" />}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant={risk === "all" ? "secondary" : "ghost"}
+          onClick={() => setRisk("all")}
+        >
+          Everyone
+        </Button>
+        <Button
+          size="sm"
+          variant={risk === "below" ? "secondary" : "ghost"}
+          onClick={() => setRisk("below")}
+        >
+          Below {minAttendancePercentage}%
+        </Button>
+        <Button
+          size="sm"
+          variant={risk === "absences" ? "secondary" : "ghost"}
+          onClick={() => setRisk("absences")}
+        >
+          Absences
+        </Button>
+
+        {risk === "absences" && (
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-muted-foreground">at least</span>
+            <Input
+              type="number"
+              min={1}
+              className="h-8 w-16"
+              value={minAbsences}
+              onChange={(e) => setMinAbsences(e.target.value)}
+            />
+          </div>
+        )}
+
+        {risk !== "all" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            disabled={shown.length === 0}
+            onClick={downloadShown}
+          >
+            <Download className="mr-1 h-4 w-4" />
+            Download {shown.length}
+          </Button>
+        )}
+      </div>
+
       <p className="text-xs text-muted-foreground">
         Sorted by attendance, lowest first. Click anyone for their full record.
         Excused and exempt sessions are left out of the rate rather than counted
@@ -184,7 +317,7 @@ const StudentRoster = ({
                     setOpenStudent(s);
                   }
                 }}
-                className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring"
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-left shadow-soft transition-colors hover:border-primary/40 hover:bg-accent/5 focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">

@@ -44,9 +44,17 @@ interface SessionListProps {
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
   scheduled: "bg-muted text-muted-foreground",
-  open: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  closed: "bg-muted text-muted-foreground",
+  open: "bg-success/15 text-success",
+  closed: "bg-primary/10 text-primary",
   cancelled: "bg-destructive/10 text-destructive",
+};
+
+/** An open session is the one being run right now, so its row says so. */
+const ROW_STYLE: Record<SessionStatus, string> = {
+  scheduled: "border bg-card",
+  open: "border-2 border-success/40 bg-success/5 shadow-soft",
+  closed: "border bg-card",
+  cancelled: "border border-destructive/20 bg-destructive/5",
 };
 
 /** An instant as the class's own wall clock, not the viewer's. */
@@ -311,7 +319,7 @@ const SessionList = ({
         <button
           type="button"
           onClick={() => setBucket("today")}
-          className="w-full rounded-md bg-emerald-500/10 px-3 py-2 text-left text-sm text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
+          className="w-full rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-left text-sm text-success transition-colors hover:bg-success/15"
         >
           {openCount} session{openCount === 1 ? " is" : "s are"} open right now —
           show today
@@ -334,7 +342,7 @@ const SessionList = ({
           {rows.map((s) => (
             <div
               key={s.id}
-              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+              className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 transition-colors ${ROW_STYLE[s.status]}`}
             >
               <div className="flex min-w-0 items-center gap-3">
                 <div className="w-20 shrink-0 tabular-nums">
@@ -359,7 +367,7 @@ const SessionList = ({
                       {s.status}
                     </span>
                     {s.status === "open" && s.pin && (
-                      <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-xs tracking-widest text-emerald-700 dark:text-emerald-400">
+                      <span className="rounded bg-gradient-primary px-2 py-0.5 font-mono text-xs tracking-widest text-primary-foreground">
                         {s.pin}
                       </span>
                     )}

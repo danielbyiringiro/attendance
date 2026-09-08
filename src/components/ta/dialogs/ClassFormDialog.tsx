@@ -21,6 +21,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { createClass, updateClass } from "@/lib/api/classes";
+import { listSessions } from "@/lib/api/sessions";
 import type { ClassWithCohorts } from "@/lib/api/types";
 import { addDays, toDateStr } from "@/lib/dates";
 
@@ -75,6 +76,11 @@ const ClassFormDialog = ({
   const [cohortCount, setCohortCount] = useState("1");
   const [cohortLabels, setCohortLabels] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  // Sessions that a shortened term would eventually prune. Changing the term
+  // does nothing on its own; the next "Save pattern" removes anything beyond
+  // the new end that has not run. Saying so up front beats discovering it a
+  // week later.
+  const [strandedCount, setStrandedCount] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -97,6 +103,29 @@ const ClassFormDialog = ({
       setCohortLabels("");
     }
   }, [open, editing]);
+
+  useEffect(() => {
+    if (!editing || termEnd >= editing.term_ends_on) {
+      setStrandedCount(0);
+      return;
+    }
+    let cancelled = false;
+    listSessions({ classId: editing.id, from: termEnd })
+      .then((rows) => {
+        if (cancelled) return;
+        // Only the ones that have not run: a closed session is never removed,
+        // whatever the term says.
+        setStrandedCount(
+          rows.filter(
+            (r) => r.status === "scheduled" && r.session_date > termEnd,
+          ).length,
+        );
+      })
+      .catch(() => !cancelled && setStrandedCount(0));
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, termEnd]);
 
   const parsedLabels = cohortLabels
     .split(",")
@@ -252,6 +281,17 @@ const ClassFormDialog = ({
               />
             </div>
           </div>
+
+          {strandedCount > 0 && (
+            <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+              <strong>{strandedCount}</strong> session
+              {strandedCount === 1 ? "" : "s"} fall after the new end date.
+              Shortening the term does not remove them now — the next time you
+              save a weekly pattern, any of them that have not run will be
+              removed. Sessions that have already been opened, closed or
+              cancelled are always kept, whatever the term says.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground -mt-2">
             Sessions are only generated between these dates.
           </p>

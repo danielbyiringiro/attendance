@@ -341,7 +341,7 @@ const Schedule = () => {
                       : `${rows.length} meeting${rows.length === 1 ? "" : "s"} a week`}
                   </span>
                   {isDirty && (
-                    <span className="text-xs text-amber-600 dark:text-amber-500">
+                    <span className="text-xs text-warning">
                       unsaved
                     </span>
                   )}

@@ -138,6 +138,15 @@ BEGIN
   IF NOT (r ? 'sessions') OR NOT (r ? 'flagged') THEN
     RAISE EXCEPTION 'get_student_attendance lost a key the screen reads: %', r;
   END IF;
+
+  -- 019: each session carries what its class requires, so the student history
+  -- does not have to assume a threshold and mislabel somebody as failing.
+  IF jsonb_array_length(r -> 'sessions') > 0
+     AND NOT ((r -> 'sessions' -> 0) ? 'min_attendance') THEN
+    RAISE EXCEPTION
+      'a session row carries no min_attendance, so the student screen must guess: %',
+      r -> 'sessions' -> 0;
+  END IF;
 END
 $rpc$;
 

@@ -13,6 +13,17 @@ export default {
       },
     },
     extend: {
+      // The design system defined these as CSS variables in index.css but never
+      // exposed them as utilities, so `shadow-soft` and `bg-gradient-primary`
+      // have been doing nothing wherever they appear.
+      boxShadow: {
+        soft: "var(--shadow-soft)",
+        medium: "var(--shadow-medium)",
+      },
+      backgroundImage: {
+        "gradient-primary": "var(--gradient-primary)",
+        "gradient-card": "var(--gradient-card)",
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

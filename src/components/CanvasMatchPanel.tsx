@@ -100,9 +100,9 @@ const CanvasMatchPanel = ({
     <div className="space-y-4 rounded-lg border p-3">
       <div className="flex items-center gap-2 text-sm">
         {unmatched.length === 0 ? (
-          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <CheckCircle2 className="h-4 w-4 text-success" />
         ) : (
-          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTriangle className="h-4 w-4 text-warning" />
         )}
         <span className="font-medium">
           {matched.length} of {people.length} Canvas students matched
