@@ -44,8 +44,11 @@ interface StudentRosterProps {
 const rateColour = (rate: number, threshold: number) =>
   rate >= threshold
     ? "text-success"
+    // A band below the threshold rather than straight to red: somebody at 72
+    // against a 75 requirement is in a different position from somebody at 40,
+    // and the colour should say so.
     : rate >= threshold - 15
-      ? "text-amber-600 dark:text-amber-500"
+      ? "text-warning"
       : "text-destructive";
 
 /**
@@ -207,7 +210,7 @@ const StudentRoster = ({
                     setOpenStudent(s);
                   }
                 }}
-                className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring"
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-left shadow-soft transition-colors hover:border-primary/40 hover:bg-accent/5 focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">

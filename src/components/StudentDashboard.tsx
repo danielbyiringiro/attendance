@@ -35,6 +35,7 @@ import {
 import type { AttendanceState } from "@/lib/api/types";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import ThemeToggle from "@/components/ThemeToggle";
 
 interface AttendanceRecord {
   /** The session this row is about — what a flag is filed against. */
@@ -350,7 +351,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       return {
         disabled: true,
         title: "Flag was accepted - attendance has been recorded",
-        icon: <CheckCircle2 className="h-4 w-4 text-green-600" />,
+        icon: <CheckCircle2 className="h-4 w-4 text-success" />,
         variant: "ghost" as const,
       };
     }
@@ -366,7 +367,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
       return {
         disabled: true,
         title: "Flag pending review",
-        icon: <Flag className="h-4 w-4 text-orange-500 fill-orange-500" />,
+        icon: <Flag className="h-4 w-4 text-warning fill-warning" />,
         variant: "ghost" as const,
       };
     }
@@ -383,10 +384,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-6">
-        <Button variant="ghost" onClick={onBack} className="mb-4">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Check-in
-        </Button>
+        <div className="mb-4 flex items-center justify-between">
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Check-in
+          </Button>
+          <ThemeToggle />
+        </div>
 
         <Card className="border-2 shadow-medium">
           <CardHeader>
@@ -433,9 +437,9 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                     {classes.map((c) => (
                       <Card
                         key={c.classCode}
-                        className={`cursor-pointer border-2 transition-colors ${
+                        className={`cursor-pointer border-2 bg-gradient-card shadow-soft transition-all ${
                           selectedClass === c.classCode
-                            ? "border-primary"
+                            ? "border-primary shadow-medium"
                             : "border-border hover:border-primary/40"
                         }`}
                         onClick={() =>
@@ -460,8 +464,10 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                   c.tally.graded === 0
                                     ? "text-muted-foreground"
                                     : c.tally.rate >= c.threshold
-                                      ? "text-green-600 dark:text-green-500"
-                                      : "text-destructive"
+                                      ? "text-success"
+                                      : c.tally.rate >= c.threshold - 15
+                                        ? "text-warning"
+                                        : "text-destructive"
                                 }`}
                               >
                                 {c.tally.graded === 0 ? "—" : `${c.tally.rate}%`}
@@ -473,7 +479,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                           </div>
 
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                            <span className="text-green-600 dark:text-green-500">
+                            <span className="text-success">
                               {c.tally.present + c.tally.late} present
                               {c.tally.late > 0 && ` (${c.tally.late} late)`}
                             </span>
@@ -544,24 +550,24 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                   className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                                     record.status === "Present" ||
                                     record.status === "Late"
-                                      ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                                      ? "bg-success/15 text-success"
                                       : record.status === "Excused" ||
                                           record.status === "Exempt"
-                                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                                        ? "bg-primary/10 text-primary"
                                         : record.status === "Absent"
-                                          ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                                          ? "bg-destructive/10 text-destructive"
                                           : "bg-muted text-muted-foreground"
                                   }`}
                                 >
                                   {record.status}
                                 </span>
                                 {record.flagStatus === "accepted" && (
-                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/15 text-success">
                                     Flag Accepted
                                   </span>
                                 )}
                                 {record.flagStatus === "denied" && (
-                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400">
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
                                     Flag Denied
                                   </span>
                                 )}
@@ -628,11 +634,11 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                     <p className="font-medium mb-2">Flag Status Legend:</p>
                     <div className="flex flex-wrap gap-4">
                       <div className="flex items-center gap-2">
-                        <Flag className="h-4 w-4 text-orange-500 fill-orange-500" />
+                        <Flag className="h-4 w-4 text-warning fill-warning" />
                         <span>Pending Review</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                         <span>Accepted - Attendance Recorded</span>
                       </div>
                       <div className="flex items-center gap-2">

@@ -45,7 +45,8 @@ const EDITABLE: AttendanceState[] = [
 
 const STATE_STYLE: Record<string, string> = {
   present: "bg-success/15 text-success",
-  late: "bg-success/15 text-success",
+  // Late is attendance, but not the same thing as on time.
+  late: "bg-warning/15 text-warning",
   excused: "bg-primary/10 text-primary",
   exempted: "bg-primary/10 text-primary",
   unexcused: "bg-destructive/10 text-destructive",

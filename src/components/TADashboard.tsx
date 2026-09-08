@@ -60,6 +60,7 @@ import Schedule from "@/components/ta/sections/Schedule";
 import Sessions from "@/components/ta/sections/Sessions";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
+import ThemeToggle from "@/components/ThemeToggle";
 import StudentRoster from "@/components/ta/StudentRoster";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -984,9 +985,12 @@ const TADashboard = ({
               </p>
             </div>
           </div>
-          <Button onClick={onLogout} variant="outline">
-            Logout
-          </Button>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <Button onClick={onLogout} variant="outline">
+              Logout
+            </Button>
+          </div>
         </div>
 
         {/* Every count below is of one class's roster, so say when there isn't
@@ -1019,7 +1023,7 @@ const TADashboard = ({
             <div
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
             >
-              <Card className="border-2 shadow-soft">
+              <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
                 <CardContent className="pt-6">
                   <div className="flex items-center space-x-2">
                     <UserCheck className="h-5 w-5 text-success" />
@@ -1033,7 +1037,7 @@ const TADashboard = ({
                 </CardContent>
               </Card>
 
-              <Card className="border-2 shadow-soft">
+              <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
                 <CardContent className="pt-6">
                   <div className="flex items-center space-x-2">
                     <UserX className="h-5 w-5 text-destructive" />
@@ -1048,7 +1052,7 @@ const TADashboard = ({
               </Card>
 
               {cohortTallies.map((c) => (
-                <Card key={c.id} className="border-2 shadow-soft">
+                <Card key={c.id} className="border-2 border-primary/25 bg-gradient-card shadow-soft">
                   <CardContent className="pt-6">
                     <div className="flex items-center space-x-2">
                       <Users className="h-5 w-5 text-primary" />
@@ -1242,7 +1246,14 @@ const TADashboard = ({
                       ).length;
 
                       return (
-                        <div key={sn.id} className="space-y-2 rounded-md border p-3">
+                        <div
+                          key={sn.id}
+                          className={`space-y-2 rounded-lg p-3 transition-colors ${
+                            sn.status === "open"
+                              ? "border-2 border-success/40 bg-success/5 shadow-soft"
+                              : "border bg-card"
+                          }`}
+                        >
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge variant="outline">Cohort {label}</Badge>
                             <Badge
@@ -1264,7 +1275,7 @@ const TADashboard = ({
 
                           {sn.status === "open" && sn.pin && (
                             <>
-                              <p className="text-center font-mono text-2xl tracking-widest">
+                              <p className="rounded-lg bg-gradient-primary py-2 text-center font-mono text-3xl font-bold tracking-[0.3em] text-primary-foreground shadow-soft">
                                 {sn.pin}
                               </p>
                               <p className="text-center text-xs text-muted-foreground">
