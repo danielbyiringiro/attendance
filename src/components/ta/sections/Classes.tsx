@@ -13,11 +13,25 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveClass } from "@/lib/classContext";
-import { archiveClass, listClasses } from "@/lib/api/classes";
+import { addCohort, archiveClass, listClasses } from "@/lib/api/classes";
+import { Input } from "@/components/ui/input";
 import ClassFormDialog from "@/components/ta/dialogs/ClassFormDialog";
 import DeleteClassDialog from "@/components/ta/dialogs/DeleteClassDialog";
 import ClassMembers from "@/components/ta/ClassMembers";
 import type { ClassWithCohorts } from "@/lib/api/types";
+
+/**
+ * The next label in the A, B, C… run this class is already using, as a
+ * placeholder. Only a suggestion — a cohort can be called anything.
+ */
+const nextLabelFor = (c: ClassWithCohorts): string => {
+  const used = new Set(c.cohorts.map((co) => co.label.toUpperCase()));
+  for (let i = 0; i < 26; i += 1) {
+    const letter = String.fromCharCode(65 + i);
+    if (!used.has(letter)) return letter;
+  }
+  return "New";
+};
 
 const formatRange = (from: string, to: string) => {
   const fmt = (d: string) =>
@@ -42,6 +56,10 @@ const Classes = () => {
   const [editing, setEditing] = useState<ClassWithCohorts | null>(null);
   const [deleting, setDeleting] = useState<ClassWithCohorts | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Which class is having a cohort added, and the label being typed.
+  const [addingCohortTo, setAddingCohortTo] = useState<string | null>(null);
+  const [newCohortLabel, setNewCohortLabel] = useState("");
+  const [isAddingCohort, setIsAddingCohort] = useState(false);
 
   useEffect(() => {
     if (!showArchived) return;
@@ -55,6 +73,50 @@ const Classes = () => {
         }),
       );
   }, [showArchived, toast]);
+
+  // A class's cohort count was fixed at creation: create_class took it and
+  // nothing since could change it. add_cohort has existed since 007 with no
+  // caller.
+  const handleAddCohort = async (c: ClassWithCohorts) => {
+    const label = newCohortLabel.trim();
+    if (label === "") {
+      toast({
+        title: "A label is needed",
+        description: "A letter or a short name — it is what people see.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (c.cohorts.some((co) => co.label.toLowerCase() === label.toLowerCase())) {
+      toast({
+        title: "That cohort already exists",
+        description: `${c.code} already has a cohort ${label}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsAddingCohort(true);
+    try {
+      await addCohort(c.id, label);
+      toast({
+        title: `Cohort ${label} added`,
+        description:
+          "It has no meeting days yet — set them under Schedule, then save to create its sessions.",
+      });
+      setAddingCohortTo(null);
+      setNewCohortLabel("");
+      await refresh();
+    } catch (e) {
+      toast({
+        title: "Could not add the cohort",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAddingCohort(false);
+    }
+  };
 
   const handleUnarchive = async (c: ClassWithCohorts) => {
     try {
@@ -101,7 +163,59 @@ const Classes = () => {
                   {c.cohorts.map((co) => co.label).join(", ")}
                 </span>
               )}
+              {!isArchived && addingCohortTo !== c.id && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ml-1 h-6 px-2 text-xs"
+                  onClick={() => {
+                    setAddingCohortTo(c.id);
+                    setNewCohortLabel("");
+                  }}
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  Add cohort
+                </Button>
+              )}
             </p>
+
+            {addingCohortTo === c.id && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Input
+                  autoFocus
+                  className="h-8 w-32"
+                  value={newCohortLabel}
+                  placeholder={nextLabelFor(c)}
+                  disabled={isAddingCohort}
+                  onChange={(e) => setNewCohortLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleAddCohort(c);
+                    if (e.key === "Escape") setAddingCohortTo(null);
+                  }}
+                />
+                <Button
+                  size="sm"
+                  disabled={isAddingCohort}
+                  onClick={() => handleAddCohort(c)}
+                >
+                  {isAddingCohort ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Add"
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAddingCohortTo(null)}
+                >
+                  Cancel
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Existing cohorts and their sessions are untouched.
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-1 shrink-0">

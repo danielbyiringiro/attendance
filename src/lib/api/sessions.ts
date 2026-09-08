@@ -225,3 +225,24 @@ export const applyScheduleToFuture = async (
   if (error) fail("Could not update the future sessions", error);
   return data as ApplyScheduleResult;
 };
+
+export interface OpenSessionSummary {
+  open_count: number;
+  /** When the first of them stops accepting check-ins. */
+  closes_at: string | null;
+}
+
+/**
+ * How many sessions are accepting check-ins, and when the first closes.
+ *
+ * Safe for a logged-out visitor: a count and a time, no PIN, no class name, no
+ * cohort. The pre-login countdown used to read the `session_state` singleton
+ * directly as anon, which meant granting anon SELECT on the table that held
+ * the PIN — and which could only ever describe one session for the whole
+ * installation.
+ */
+export const getOpenSessionSummary = async (): Promise<OpenSessionSummary> => {
+  const { data, error } = await supabase.rpc("get_open_session_summary");
+  if (error) fail("Could not check for open sessions", error);
+  return (data ?? { open_count: 0, closes_at: null }) as OpenSessionSummary;
+};

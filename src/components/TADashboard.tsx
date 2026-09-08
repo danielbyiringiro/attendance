@@ -67,9 +67,12 @@ import {
 import {
   attendanceLog,
   isAbsentState,
+  isPresentState,
   setAttendanceState,
   type AttendanceLog,
 } from "@/lib/api/attendance";
+import { listTodaySessions } from "@/lib/api/sessions";
+import type { SessionRow } from "@/lib/api/types";
 import {
   addDays,
   fromDateStr,
@@ -100,18 +103,7 @@ interface TADashboardProps {
     | "sessions"
     | "schedule"
     | "classes";
-  presentStudents: Student[];
-  currentPin: string;
-  timeLimit: number;
-  isTimeUp: boolean;
-  onSetPin: (pin: string) => void;
-  onSetTimeLimit: (seconds: number) => void;
-  onResetAttendance: () => void;
   onLogout: () => void;
-  onMarkAttendance: (
-    studentId: string,
-    cohort: string,
-  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface AbsenceHistory {
@@ -168,18 +160,8 @@ interface FlaggedRecord {
 
 const TADashboard = ({
   activeSection = "attendance",
-  presentStudents,
-  currentPin,
-  timeLimit,
-  isTimeUp,
-  onSetPin,
-  onSetTimeLimit,
-  onResetAttendance,
   onLogout,
-  onMarkAttendance,
 }: TADashboardProps) => {
-  const [newPin, setNewPin] = useState("");
-  const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
 
@@ -190,6 +172,47 @@ const TADashboard = ({
   const { activeClass, activeClassId, cohorts } = useActiveClass();
   const [roster, setRoster] = useState<RosterStudent[]>([]);
   const [isRosterLoading, setIsRosterLoading] = useState(false);
+
+  // Today's sessions and who is marked present at them.
+  //
+  // This arrived as a prop from Index.tsx, read out of present_students for
+  // "today" across every class at once. It is now the attendance recorded
+  // against this class's sessions today — which is the same thing the roster,
+  // the analytics and the exporter count.
+  const [todaySessions, setTodaySessions] = useState<SessionRow[]>([]);
+  const [presentStudents, setPresentStudents] = useState<Student[]>([]);
+
+  const loadToday = useCallback(async () => {
+    if (!activeClassId) {
+      setTodaySessions([]);
+      setPresentStudents([]);
+      return;
+    }
+    try {
+      const sessions = await listTodaySessions(activeClassId);
+      setTodaySessions(sessions);
+
+      const today = todayStr();
+      const log = await attendanceLog(activeClassId, { from: today, to: today });
+      setPresentStudents(
+        log.marks
+          .filter((m) => isPresentState(m.state))
+          .map((m) => ({
+            id: m.student_id,
+            cohort: m.cohort_label,
+            timestamp: m.marked_at ? new Date(m.marked_at) : new Date(),
+          })),
+      );
+    } catch (e) {
+      console.error("Could not load today's sessions:", e);
+      setTodaySessions([]);
+      setPresentStudents([]);
+    }
+  }, [activeClassId]);
+
+  useEffect(() => {
+    void loadToday();
+  }, [loadToday]);
 
   const loadRoster = useCallback(async () => {
     if (!activeClassId) {
@@ -380,41 +403,6 @@ const TADashboard = ({
     }
   };
 
-  const handleSetPin = () => {
-    if (newPin.length < 3) {
-      toast({
-        title: "Invalid PIN",
-        description: "PIN must be at least 3 characters long.",
-        variant: "destructive",
-      });
-      return;
-    }
-    onSetPin(newPin);
-    setNewPin("");
-    toast({
-      title: "PIN Updated",
-      description: "The attendance PIN has been updated successfully.",
-    });
-  };
-
-  const handleSetTimeLimit = () => {
-    const minutes = parseInt(newTimeLimit);
-    if (isNaN(minutes) || minutes < 1) {
-      toast({
-        title: "Invalid Time",
-        description: "Please enter a valid number of minutes (minimum 1).",
-        variant: "destructive",
-      });
-      return;
-    }
-    onSetTimeLimit(minutes * 60);
-    setNewTimeLimit("");
-    toast({
-      title: "Time Limit Updated",
-      description: `Attendance window set to ${minutes} minutes.`,
-    });
-  };
-
   // Only count students who are actually on the roster, and never count the same
   // student twice. This guarantees "present" can never exceed total enrolled even
   // if the attendance table contains duplicates or records for removed students.
@@ -453,33 +441,42 @@ const TADashboard = ({
     total: roster.filter((r) => r.cohort === co.label).length,
   }));
 
-  // Per-cohort report settings (lecturer + FI). The rest of what this effect
-  // used to fetch — cancelled_sessions, excused_absences, class_schedule and a
-  // "class dates" map built from a column the query never selected, so every
-  // key was the literal "undefined" — fed derivations that no longer exist.
+  // Per-cohort report settings (lecturer + FI), for the active class.
+  //
+  // report_settings had `cohort` as its PRIMARY KEY, so two classes could
+  // never both have a Cohort A — they shared one row and overwrote each
+  // other's instructor names. cohort_report_settings, which migration 005
+  // built and nothing has read until now, is keyed by cohort_id.
   useEffect(() => {
+    if (!activeClassId) return;
     (async () => {
       const { data, error } = await supabase
-        .from("report_settings")
-        .select("cohort, instructor_name, fi_name");
-      if (error && error.code !== "PGRST116") {
+        .from("cohort_report_settings")
+        .select("cohort_id, instructor_name, fi_name, cohorts(label)")
+        .eq("class_id", activeClassId);
+      if (error) {
         console.error("Failed to load report settings:", error);
         return;
       }
-      if (!data) return;
-      setReportPairs((prev) => {
-        const next = { ...prev };
-        (data as Array<{ cohort: string; instructor_name: string; fi_name: string }>)
-          .forEach((row) => {
-            next[String(row.cohort).toUpperCase()] = {
-              instructor: row.instructor_name || "",
-              fi: row.fi_name || "",
-            };
-          });
-        return next;
-      });
+      setReportPairs(
+        Object.fromEntries(
+          ((data ?? []) as unknown as Array<{
+            instructor_name: string;
+            fi_name: string;
+            cohorts: { label: string } | null;
+          }>)
+            .filter((row) => row.cohorts !== null)
+            .map((row) => [
+              row.cohorts!.label,
+              {
+                instructor: row.instructor_name || "",
+                fi: row.fi_name || "",
+              },
+            ]),
+        ),
+      );
     })();
-  }, []);
+  }, [activeClassId]);
 
   // Enrol a student in the active class.
   //
@@ -881,17 +878,22 @@ const TADashboard = ({
   };
 
   const handleSaveReportSettings = async () => {
+    if (!activeClassId) return;
     setIsSavingReportSettings(true);
-    const nowIso = new Date().toISOString();
-    const rows = ["A", "B", "C"].map((c) => ({
-      cohort: c,
-      instructor_name: reportPairs[c]?.instructor || "",
-      fi_name: reportPairs[c]?.fi || "",
-      updated_at: nowIso,
+
+    // One row per cohort this class actually has, not the fixed A/B/C the old
+    // table's primary key forced.
+    const rows = cohorts.map((co) => ({
+      cohort_id: co.id,
+      class_id: activeClassId,
+      instructor_name: reportPairs[co.label]?.instructor || "",
+      fi_name: reportPairs[co.label]?.fi || "",
+      updated_at: new Date().toISOString(),
     }));
+
     const { error } = await supabase
-      .from("report_settings")
-      .upsert(rows, { onConflict: "cohort" });
+      .from("cohort_report_settings")
+      .upsert(rows, { onConflict: "cohort_id" });
     setIsSavingReportSettings(false);
     if (error) {
       console.error("Failed to save report settings:", error);
@@ -919,20 +921,44 @@ const TADashboard = ({
       )
     : roster;
 
+  /**
+   * Mark a student present, by hand, at today's session for their cohort.
+   *
+   * This used to insert straight into present_students — the legacy table —
+   * so pressing Mark produced a success toast and changed nothing anyone could
+   * see: the roster, the analytics and the exporter all count
+   * attendance_records. It writes a real record now, and the correction
+   * trigger logs it when it replaces an existing state.
+   */
   const handleMarkAttendanceManually = async (
     studentId: string,
     cohort: string,
   ) => {
-    const result = await onMarkAttendance(studentId, cohort);
-    if (result.success) {
+    const cohortId = cohortIdByLabel.get(cohort);
+    const session = todaySessions.find(
+      (sn) => sn.cohort_id === cohortId && sn.status !== "cancelled",
+    );
+
+    if (!session) {
       toast({
-        title: "Attendance Marked",
-        description: `Marked ${studentId} as present (Cohort ${cohort})`,
+        title: "No session today",
+        description: `Cohort ${cohort} has no session today to mark them at. Create one under Schedule, or open the right day under Class Sessions.`,
+        variant: "destructive",
       });
-    } else {
+      return;
+    }
+
+    try {
+      await setAttendanceState(session.id, studentId, "present");
       toast({
-        title: "Error",
-        description: result.error || "Failed to mark attendance",
+        title: "Marked present",
+        description: `${studentId} is present at today's cohort ${cohort} session.`,
+      });
+      await loadToday();
+    } catch (e) {
+      toast({
+        title: "Could not mark them present",
+        description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
     }
@@ -1243,68 +1269,74 @@ const TADashboard = ({
         {/* Controls and today's lists */}
         {isAttendanceSection && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Controls */}
+            {/* Today's sessions, with the PIN each one actually issued.
+                This was a single PIN box backed by the session_state
+                singleton: one PIN, one timer, for the whole installation. It
+                had no relationship to the per-session PIN open_session hands
+                out and mark_attendance resolves, so the dashboard could
+                confidently show a PIN that opened nothing. */}
             {isAttendanceSection && (
               <Card className="border-2 shadow-medium">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Settings className="h-5 w-5" />
-                    Attendance Controls
+                    <Timer className="h-5 w-5" />
+                    Today
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Current PIN</label>
-                    <div className="flex items-center space-x-2">
-                      <Input
-                        value={currentPin}
-                        readOnly
-                        className="font-mono text-lg text-center"
-                      />
-                      <Badge variant={isTimeUp ? "destructive" : "default"}>
-                        {isTimeUp ? "Closed" : "Active"}
-                      </Badge>
-                    </div>
-                  </div>
+                <CardContent className="space-y-3">
+                  {todaySessions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No session today for this class. Class Sessions has the
+                      full list, and Schedule sets which days it meets.
+                    </p>
+                  ) : (
+                    todaySessions.map((sn) => (
+                      <div key={sn.id} className="rounded-md border p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">
+                            Cohort{" "}
+                            {cohorts.find((c) => c.id === sn.cohort_id)?.label ??
+                              "?"}
+                          </Badge>
+                          <Badge
+                            variant={
+                              sn.status === "open" ? "default" : "secondary"
+                            }
+                          >
+                            {sn.status}
+                          </Badge>
+                        </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Set New PIN</label>
-                    <div className="flex space-x-2">
-                      <Input
-                        placeholder="Enter new PIN"
-                        value={newPin}
-                        onChange={(e) => setNewPin(e.target.value)}
-                      />
-                      <Button onClick={handleSetPin} size="sm">
-                        Set
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Time Limit (minutes)
-                    </label>
-                    <div className="flex space-x-2">
-                      <Input
-                        type="number"
-                        placeholder="Minutes"
-                        value={newTimeLimit}
-                        onChange={(e) => setNewTimeLimit(e.target.value)}
-                      />
-                      <Button onClick={handleSetTimeLimit} size="sm">
-                        <Timer className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
+                        {sn.status === "open" && sn.pin ? (
+                          <>
+                            <p className="mt-2 text-center font-mono text-2xl tracking-widest">
+                              {sn.pin}
+                            </p>
+                            <p className="mt-1 text-center text-xs text-muted-foreground">
+                              Read this out. Check-in closes{" "}
+                              {sn.auto_close_minutes} minutes after it opened.
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {sn.status === "scheduled"
+                              ? "Not open yet — open it under Class Sessions to get a PIN."
+                              : sn.status === "closed"
+                                ? "Closed. Absences have been recorded."
+                                : "Cancelled."}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
 
                   <Button
-                    onClick={onResetAttendance}
-                    variant="destructive"
+                    variant="outline"
                     className="w-full"
+                    onClick={loadToday}
                   >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Reset Attendance
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh
                   </Button>
                 </CardContent>
               </Card>
@@ -2079,9 +2111,12 @@ const TADashboard = ({
                       <div>Instructor / Lecturer</div>
                       <div>FI</div>
                     </div>
-                    {["A", "B", "C"].map((c) => (
+                    {/* The class's own cohorts. Fixed at A/B/C before, because
+                        report_settings had one row per letter for the whole
+                        installation. */}
+                    {cohorts.map(({ id, label: c }) => (
                       <div
-                        key={c}
+                        key={id}
                         className="grid grid-cols-1 sm:grid-cols-[60px_1fr_1fr] gap-3 items-center"
                       >
                         <Badge variant="outline" className="w-fit">

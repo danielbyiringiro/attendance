@@ -105,6 +105,13 @@ export const upsertEnrolments = async (
   return data as UpsertEnrolmentsResult;
 };
 
+/** A student the Canvas match believes is filed under the wrong cohort. */
+export interface CohortChange {
+  studentId: string;
+  from: string;
+  to: string;
+}
+
 /**
  * Move one student to another cohort of the same class.
  *

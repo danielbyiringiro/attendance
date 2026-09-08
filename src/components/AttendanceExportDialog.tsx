@@ -43,10 +43,7 @@ import {
   type ExportResult,
   type ExportShape,
 } from "@/lib/attendanceExport";
-import {
-  applyCohortChanges,
-  type CohortChange,
-} from "@/lib/rosterUpdates";
+import { moveToCohort, type CohortChange } from "@/lib/api/enrolment";
 import { useActiveClass } from "@/lib/classContext";
 import { fromDateStr } from "@/lib/dates";
 import {
@@ -214,23 +211,44 @@ const AttendanceExportDialog = ({
     );
   };
 
+  // Move students the Canvas match found in the wrong cohort.
+  //
+  // This went through rosterUpdates.applyCohortChanges, which existed only
+  // because `cohort` was a denormalised copy: it wrote students.cohort AND
+  // retagged every historical present_students row, non-atomically, by its own
+  // comment. Attendance hangs off session_id now and a session knows its own
+  // cohort, so moving somebody is one update and nothing historical needs
+  // touching.
   const handleApplyCohorts = async (changes: CohortChange[]) => {
-    if (changes.length === 0) return;
+    if (changes.length === 0 || !activeClassId) return;
     setIsApplyingCohorts(true);
     try {
-      const results = await applyCohortChanges(changes);
+      const results: Array<CohortChange & { error?: string }> = [];
+      for (const change of changes) {
+        const target = cohorts.find((c) => c.label === change.to);
+        if (!target) {
+          results.push({ ...change, error: `No cohort ${change.to} in this class.` });
+          continue;
+        }
+        try {
+          await moveToCohort(activeClassId, change.studentId, target.id);
+          results.push(change);
+        } catch (e) {
+          results.push({
+            ...change,
+            error: e instanceof Error ? e.message : "Unexpected error.",
+          });
+        }
+      }
+
       const failed = results.filter((r) => r.error);
       const moved = results.filter((r) => !r.error);
-      const retagged = moved.reduce((n, r) => n + r.checkInsRetagged, 0);
 
       if (moved.length > 0) {
-        // The roster prop refreshes itself: Index.tsx subscribes to students
-        // via realtime and replaces the row on UPDATE.
         toast({
           title: `Moved ${moved.length} student${moved.length === 1 ? "" : "s"}`,
-          description: `${retagged} past check-in${
-            retagged === 1 ? "" : "s"
-          } retagged. Re-match to get corrected attendance figures.`,
+          description:
+            "Their past attendance is unchanged — it belongs to the sessions they attended, not to a cohort label. Re-match to get corrected figures.",
         });
         // The tally these matches were built from is now stale.
         setMatches(null);
