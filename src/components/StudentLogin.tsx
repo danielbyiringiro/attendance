@@ -1,53 +1,56 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, Users, CheckCircle2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, Clock, Loader2, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface StudentLoginProps {
-  timeLimit: number;
-  isTimeUp: boolean;
-  onMarkAttendance: (
-    studentId: string,
-    pin: string,
-  ) => Promise<{ success: boolean; error?: string; name?: string }>;
+export interface MarkResult {
+  success: boolean;
+  error?: string;
+  name?: string;
+  /** Which class the PIN turned out to belong to. */
+  class?: string;
+  cohort?: string;
+  state?: string;
 }
 
-const StudentLogin = ({
-  timeLimit,
-  isTimeUp,
-  onMarkAttendance,
-}: StudentLoginProps) => {
+interface StudentLoginProps {
+  /**
+   * How many check-in windows are open anywhere, for the status line only.
+   * It is never a gate: with several classes running, "a window is open" is
+   * not a fact about any particular student.
+   */
+  openCount: number;
+  onMarkAttendance: (studentId: string, pin: string) => Promise<MarkResult>;
+}
+
+/**
+ * The student check-in page.
+ *
+ * The form is never disabled. It used to be locked whenever the one shared
+ * timer had run out, which was built when the installation had a single class
+ * and one PIN. With several classes that lock is wrong in both directions: a
+ * student whose own class is open cannot type while every other class is
+ * closed, and a student whose class is NOT open gets a form that looks ready
+ * and a countdown belonging to somebody else's room.
+ *
+ * mark_attendance already resolves which session a PIN belongs to, whether its
+ * window is open, and whether the student is enrolled in that cohort — and
+ * refuses with one message that distinguishes none of them, so the endpoint
+ * cannot be used to find out who is enrolled in what. That makes the server
+ * the only thing that can answer the question, so the browser stops guessing.
+ */
+const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
   const [pin, setPin] = useState("");
-  const [timeLeft, setTimeLeft] = useState(timeLimit);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [marked, setMarked] = useState<MarkResult | null>(null);
   const { toast } = useToast();
-
-  useEffect(() => {
-    setTimeLeft(timeLimit);
-  }, [timeLimit]);
-
-  useEffect(() => {
-    if (timeLeft > 0 && !isTimeUp) {
-      const timer = setInterval(() => {
-        setTimeLeft((prev) => Math.max(0, prev - 1));
-      }, 1000);
-      return () => clearInterval(timer);
-    }
-  }, [timeLeft, isTimeUp]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (isTimeUp || timeLeft === 0) {
-      toast({
-        title: "Time's Up!",
-        description: "The attendance window has closed.",
-        variant: "destructive",
-      });
-      return;
-    }
 
     if (!studentId.trim()) {
       toast({
@@ -67,38 +70,27 @@ const StudentLogin = ({
       return;
     }
 
-    // The PIN is verified server-side; we never compare it in the browser.
-    const result = await onMarkAttendance(studentId, pin);
+    setIsSubmitting(true);
+    try {
+      // The PIN is verified server-side; we never compare it in the browser.
+      const result = await onMarkAttendance(studentId, pin);
 
-    if (!result.success) {
-      toast({
-        title: "Attendance Failed",
-        description: result.error || "Something went wrong. Please try again.",
-        variant: "destructive",
-      });
-      return;
+      if (!result.success) {
+        toast({
+          title: "Attendance not recorded",
+          description: result.error || "Something went wrong. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setMarked(result);
+      setStudentId("");
+      setPin("");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    toast({
-      title: "Attendance Marked!",
-      description: result.name
-        ? `Welcome, ${result.name}! Your attendance has been recorded.`
-        : "Your attendance has been recorded.",
-      variant: "default",
-    });
-
-    // Clear form
-    setStudentId("");
-    setPin("");
   };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const isExpired = isTimeUp || timeLeft === 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 flex items-center justify-center p-4">
@@ -118,32 +110,45 @@ const StudentLogin = ({
           </p>
         </div>
 
-        {/* Time Display */}
+        {/* A hint, not a gate. It says whether ANY window is open, because
+            that is all a logged-out visitor is told — no class names, no
+            cohorts. Your own class may be open when this says one window is,
+            or may not; only the PIN can settle it. */}
         <Card className="border-2 shadow-soft">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-center space-x-3">
-              <Clock
-                className={`h-5 w-5 ${isExpired ? "text-destructive" : "text-primary"}`}
-              />
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground">Time Remaining</p>
-                <p
-                  className={`text-2xl font-bold ${isExpired ? "text-destructive" : "text-primary"}`}
-                >
-                  {isExpired ? "CLOSED" : formatTime(timeLeft)}
-                </p>
-              </div>
-            </div>
-            {!isExpired && (
-              <div className="mt-4 bg-secondary rounded-full h-2 overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-1000"
-                  style={{ width: `${(timeLeft / timeLimit) * 100}%` }}
-                />
-              </div>
-            )}
+          <CardContent className="flex items-center justify-center gap-3 py-4">
+            <Clock
+              className={`h-5 w-5 ${openCount > 0 ? "text-primary" : "text-muted-foreground"}`}
+            />
+            <p className="text-sm text-muted-foreground">
+              {openCount === 0
+                ? "No check-in is open right now. If your TA has just read out a code, enter it anyway."
+                : `${openCount} check-in ${openCount === 1 ? "window is" : "windows are"} open. Enter the code your TA read out.`}
+            </p>
           </CardContent>
         </Card>
+
+        {/* Confirmation, naming the class the PIN turned out to belong to.
+            A student in two courses needs to know which one they just marked. */}
+        {marked && (
+          <Card className="border-2 border-success/40 bg-success/5">
+            <CardContent className="space-y-1 py-4 text-center">
+              <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
+              <p className="font-medium">
+                {marked.state === "late" ? "Marked late" : "You are marked present"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {marked.name ? `${marked.name} · ` : ""}
+                {marked.class}
+                {marked.cohort ? ` · Cohort ${marked.cohort}` : ""}
+              </p>
+              {marked.state === "late" && (
+                <Badge variant="secondary" className="mt-1">
+                  after the late cut-off
+                </Badge>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Login Form */}
         <Card className="border-2 shadow-medium">
@@ -162,7 +167,7 @@ const StudentLogin = ({
                   placeholder="Enter your student ID"
                   value={studentId}
                   onChange={(e) => setStudentId(e.target.value)}
-                  disabled={isExpired}
+                  disabled={isSubmitting}
                   className="h-12"
                 />
               </div>
@@ -174,27 +179,31 @@ const StudentLogin = ({
                   placeholder="Enter the PIN provided by your TA"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
-                  disabled={isExpired}
+                  disabled={isSubmitting}
                   className="h-12"
                 />
               </div>
 
               <Button
                 type="submit"
-                className="w-full h-12 bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all duration-300"
-                disabled={isExpired}
+                className="h-12 w-full bg-gradient-to-r from-primary to-accent transition-all duration-300 hover:opacity-90"
+                disabled={isSubmitting}
               >
-                {isExpired ? "Attendance Closed" : "Mark Attendance"}
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Checking…
+                  </>
+                ) : (
+                  "Mark Attendance"
+                )}
               </Button>
             </form>
 
-            {isExpired && (
-              <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-                <p className="text-sm text-destructive text-center">
-                  The attendance window has closed. Please contact your TA.
-                </p>
-              </div>
-            )}
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              The code decides which class you are marking, so you can use this
+              page for any of your classes.
+            </p>
           </CardContent>
         </Card>
       </div>

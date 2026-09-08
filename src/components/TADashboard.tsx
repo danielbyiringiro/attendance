@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,14 +54,36 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
-// Semester start date — attendance is only tracked from this date forward.
-// Owned by the export module so the dashboard and the CSV agree on the term.
-import { SEMESTER_START } from "@/lib/attendanceExport";
-
-export const isValidClassDay = (date: Date): boolean => {
-  const day = date.getDay();
-  return day === 2 || day === 3 || day === 4;
-};
+import AbsenceHistoryDialog from "@/components/ta/AbsenceHistoryDialog";
+import Classes from "@/components/ta/sections/Classes";
+import Schedule from "@/components/ta/sections/Schedule";
+import Sessions from "@/components/ta/sections/Sessions";
+import SessionActions from "@/components/ta/SessionActions";
+import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
+import StudentRoster from "@/components/ta/StudentRoster";
+import { useActiveClass } from "@/lib/classContext";
+import {
+  dropEnrolment,
+  listEnrolments,
+  upsertEnrolments,
+} from "@/lib/api/enrolment";
+import {
+  attendanceLog,
+  isAbsentState,
+  isPresentState,
+  setAttendanceState,
+  type AttendanceLog,
+} from "@/lib/api/attendance";
+import { listTodaySessions } from "@/lib/api/sessions";
+import type { SessionRow } from "@/lib/api/types";
+import {
+  addDays,
+  fromDateStr,
+  mondayOf,
+  toDateStr,
+  todayStr,
+  weekKeyOf,
+} from "@/lib/dates";
 
 interface Student {
   id: string;
@@ -77,43 +99,19 @@ interface RosterStudent {
 }
 
 interface TADashboardProps {
-  activeSection?: "attendance" | "analytics" | "students" | "sessions";
-  presentStudents: Student[];
-  roster: RosterStudent[];
-  currentPin: string;
-  timeLimit: number;
-  isTimeUp: boolean;
-  onSetPin: (pin: string) => void;
-  onSetTimeLimit: (seconds: number) => void;
-  onResetAttendance: () => void;
+  activeSection?:
+    | "attendance"
+    | "analytics"
+    | "students"
+    | "sessions"
+    | "schedule"
+    | "classes";
   onLogout: () => void;
-  onMarkAttendance: (
-    studentId: string,
-    cohort: string,
-  ) => Promise<{ success: boolean; error?: string }>;
-}
-
-interface AbsenceHistory {
-  date: string;
-  student_id: string;
-  cohort: string;
-  was_class_cancelled: boolean;
-}
-
-interface ClassSession {
-  date: string;
-  cohort: "A" | "B" | "C";
-  is_cancelled: boolean;
-}
-
-interface ClassSchedule {
-  cohort: "A" | "B" | "C";
-  day_of_week: number; // 0 = Sunday, 1 = Monday, etc.
 }
 
 interface WeeklyAbsence {
   student_id: string;
-  cohort: "A" | "B" | "C";
+  cohort: string;
   name?: string;
   absentDays: string[]; // YYYY-MM-DD dates they were absent
   frequency: number;
@@ -132,56 +130,106 @@ interface FlaggedRecord {
   session_date: string;
   status: string;
   created_at: string;
+  /** Added by migration 016. A flag belongs to one class. */
+  class_id: string | null;
+  session_id: string | null;
 }
 
 const TADashboard = ({
   activeSection = "attendance",
-  presentStudents,
-  roster,
-  currentPin,
-  timeLimit,
-  isTimeUp,
-  onSetPin,
-  onSetTimeLimit,
-  onResetAttendance,
   onLogout,
-  onMarkAttendance,
 }: TADashboardProps) => {
-  const [newPin, setNewPin] = useState("");
-  const [newTimeLimit, setNewTimeLimit] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("all");
   const { toast } = useToast();
-  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [absenceHistory, setAbsenceHistory] = useState<AbsenceHistory[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
-  const [cancelledSessions, setCancelledSessions] = useState<ClassSession[]>(
-    [],
-  );
-  const [showCancelDialog, setShowCancelDialog] = useState(false);
-  const [cancelDate, setCancelDate] = useState<Date | undefined>(undefined);
-  const [cancelCohort, setCancelCohort] = useState<"A" | "B" | "C" | "">("");
-  const [showSearchDialog, setShowSearchDialog] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [studentAbsenceHistory, setStudentAbsenceHistory] = useState<
-    AbsenceHistory[]
-  >([]);
-  const [isLoadingStudentHistory, setIsLoadingStudentHistory] = useState(false);
 
-  // Student search (mark attendance) state
-  const [showAttendanceSearchDialog, setShowAttendanceSearchDialog] =
-    useState(false);
-  const [attendanceSearchQuery, setAttendanceSearchQuery] = useState("");
-  const [attendanceSearchResults, setAttendanceSearchResults] = useState<
-    RosterStudent[]
-  >([]);
-  const [classDates, setClassDates] = useState<Map<string, boolean>>(new Map()); // key: "YYYY-MM-DD-cohort"
-  const [classSchedule, setClassSchedule] = useState<ClassSchedule[]>([]);
-  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [scheduleCohort, setScheduleCohort] = useState<"A" | "B" | "C" | "">(
-    "",
-  );
-  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  // The roster is the active class's enrolments, not every student in the
+  // database. It used to arrive as a prop from Index.tsx, which selected the
+  // whole `students` table — so every screen below showed the same people
+  // regardless of which class was picked in the sidebar.
+  const { activeClass, activeClassId, cohorts } = useActiveClass();
+  const [roster, setRoster] = useState<RosterStudent[]>([]);
+  const [isRosterLoading, setIsRosterLoading] = useState(false);
+
+  // Today's sessions and who is marked present at them.
+  //
+  // This arrived as a prop from Index.tsx, read out of present_students for
+  // "today" across every class at once. It is now the attendance recorded
+  // against this class's sessions today — which is the same thing the roster,
+  // the analytics and the exporter count.
+  const [todaySessions, setTodaySessions] = useState<SessionRow[]>([]);
+  // Which session's roster is open — "who is missing" is the question a TA has
+  // mid-class, and the count alone does not answer it.
+  const [rosterFor, setRosterFor] = useState<SessionRow | null>(null);
+  const [presentStudents, setPresentStudents] = useState<Student[]>([]);
+
+  const loadToday = useCallback(async () => {
+    if (!activeClassId) {
+      setTodaySessions([]);
+      setPresentStudents([]);
+      return;
+    }
+    try {
+      const sessions = await listTodaySessions(activeClassId);
+      setTodaySessions(sessions);
+
+      const today = todayStr();
+      const log = await attendanceLog(activeClassId, { from: today, to: today });
+      setPresentStudents(
+        log.marks
+          .filter((m) => isPresentState(m.state))
+          .map((m) => ({
+            id: m.student_id,
+            cohort: m.cohort_label,
+            timestamp: m.marked_at ? new Date(m.marked_at) : new Date(),
+          })),
+      );
+    } catch (e) {
+      console.error("Could not load today's sessions:", e);
+      setTodaySessions([]);
+      setPresentStudents([]);
+    }
+  }, [activeClassId]);
+
+  useEffect(() => {
+    void loadToday();
+  }, [loadToday]);
+
+  const loadRoster = useCallback(async () => {
+    if (!activeClassId) {
+      setRoster([]);
+      return;
+    }
+    setIsRosterLoading(true);
+    try {
+      const rows = await listEnrolments(activeClassId);
+      setRoster(
+        rows.map((r) => ({
+          student_id: r.student_id,
+          cohort: r.cohort_label,
+          name: r.name ?? undefined,
+        })),
+      );
+    } catch (e) {
+      console.error("Failed to load the roster:", e);
+      toast({
+        title: "Could not load the roster",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+      setRoster([]);
+    } finally {
+      setIsRosterLoading(false);
+    }
+  }, [activeClassId, toast]);
+
+  useEffect(() => {
+    void loadRoster();
+  }, [loadRoster]);
+
+  const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
+  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+  // "day" answers "who missed this session"; "student" answers "who is missing
+  // too many", which is a different question and needs the whole term.
 
   // Weekly absence search state
   const [showWeeklyAbsenceDialog, setShowWeeklyAbsenceDialog] = useState(false);
@@ -204,17 +252,14 @@ const TADashboard = ({
     B: { instructor: "", fi: "" },
     C: { instructor: "", fi: "" },
   });
-  const [isSavingReportSettings, setIsSavingReportSettings] = useState(false);
-  const [showReportConfig, setShowReportConfig] = useState(false);
   const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
 
   // Add/Remove student state
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
   const [addStudentId, setAddStudentId] = useState("");
   const [addStudentName, setAddStudentName] = useState("");
-  const [addStudentCohort, setAddStudentCohort] = useState<
-    "A" | "B" | "C" | ""
-  >("");
+  // A cohort label of the active class, not one of three fixed letters.
+  const [addStudentCohort, setAddStudentCohort] = useState("");
   const [showRemoveStudentDialog, setShowRemoveStudentDialog] = useState(false);
   const [removeSearchQuery, setRemoveSearchQuery] = useState("");
   const [studentToRemove, setStudentToRemove] = useState<{
@@ -246,30 +291,39 @@ const TADashboard = ({
   );
   const [excusedReason, setExcusedReason] = useState("");
   const [isSavingExcused, setIsSavingExcused] = useState(false);
-  // Set of "studentId-YYYY-MM-DD" for excused days, used to exclude them from
-  // absence calculations.
-  const [excusedAbsences, setExcusedAbsences] = useState<Set<string>>(
-    new Set(),
-  );
 
-  const isValidClassDay = (date: Date): boolean => {
-    const day = date.getDay();
-    return day === 2 || day === 3 || day === 4; // Tue, Wed, Thu
-  };
   const allStudents = roster.map((r) => r.student_id);
   const rosterIds = new Set(allStudents);
-  const inferCohort = (id: string): "A" | "B" | "C" =>
-    id.toUpperCase().includes("A")
-      ? "A"
-      : id.toUpperCase().includes("B")
-        ? "B"
-        : "C";
+  /**
+   * Which cohort a student is in, from their enrolment.
+   *
+   * This replaces inferCohort, which guessed by looking for the letters A, B
+   * or C anywhere in the student ID — so it put every ID containing an "A"
+   * into cohort A and everyone else into C. It was only ever reachable when
+   * the roster lookup failed, and the roster is now the class's enrolments,
+   * where the cohort is a fact rather than a guess.
+   */
+  const cohortOf = (studentId: string): string =>
+    roster.find((r) => r.student_id === studentId)?.cohort ?? "";
 
+
+  // Only this class's disputes.
+  //
+  // This selected every flagged row in the database. RLS on `flagged` did not
+  // exist until migration 016, so one class's disputes appeared in another's —
+  // and because the student's NAME is looked up in the roster of the class
+  // being viewed, it came back empty while their ID rendered anyway. A TA saw
+  // a bare student number belonging to a class that was not theirs.
   const loadFlaggedRecords = async () => {
+    if (!activeClassId) {
+      setFlaggedRecords([]);
+      return;
+    }
     setIsLoadingFlagged(true);
     const { data, error } = await supabase
       .from("flagged")
       .select("*")
+      .eq("class_id", activeClassId)
       .eq("status", "flagged")
       .order("created_at", { ascending: false });
 
@@ -291,28 +345,29 @@ const TADashboard = ({
     resolution: "accepted" | "denied",
   ) => {
     try {
+      // Accepting a flag marks the student present at the session they say they
+      // attended. This used to insert a present_students row timestamped noon
+      // UTC "to ensure UTC mapping matches date" — a fudge that existed because
+      // the day a check-in belonged to was inferred from its timestamp. The
+      // session owns its date now, so the mark attaches to the session.
       if (resolution === "accepted") {
-        const studentEntry = roster.find(
-          (r) => r.student_id === record.student_id,
+        if (!activeClassId) throw new Error("No class selected.");
+        const log = await attendanceLog(activeClassId, {
+          from: record.session_date,
+          to: record.session_date,
+          cohortId: cohortIdByLabel.get(cohortOf(record.student_id)),
+        });
+        const session = log.sessions.find((sn) => sn.status !== "cancelled");
+        if (!session) {
+          throw new Error(
+            `No session on ${record.session_date} for that student's cohort.`,
+          );
+        }
+        await setAttendanceState(
+          session.session_id,
+          record.student_id,
+          "present",
         );
-        const cohort = studentEntry
-          ? studentEntry.cohort
-          : inferCohort(record.student_id);
-        // Assume the session was at noon on the local date to ensure UTC mapping matches date
-        const sessionTimestamp = new Date(
-          `${record.session_date}T12:00:00Z`,
-        ).toISOString();
-
-        const { error: insertError } = await supabase
-          .from("present_students")
-          .insert([
-            {
-              student_id: record.student_id,
-              cohort,
-              timestamp: sessionTimestamp,
-            },
-          ]);
-        if (insertError) throw insertError;
       }
 
       const { error: updateError } = await supabase
@@ -337,41 +392,6 @@ const TADashboard = ({
     }
   };
 
-  const handleSetPin = () => {
-    if (newPin.length < 3) {
-      toast({
-        title: "Invalid PIN",
-        description: "PIN must be at least 3 characters long.",
-        variant: "destructive",
-      });
-      return;
-    }
-    onSetPin(newPin);
-    setNewPin("");
-    toast({
-      title: "PIN Updated",
-      description: "The attendance PIN has been updated successfully.",
-    });
-  };
-
-  const handleSetTimeLimit = () => {
-    const minutes = parseInt(newTimeLimit);
-    if (isNaN(minutes) || minutes < 1) {
-      toast({
-        title: "Invalid Time",
-        description: "Please enter a valid number of minutes (minimum 1).",
-        variant: "destructive",
-      });
-      return;
-    }
-    onSetTimeLimit(minutes * 60);
-    setNewTimeLimit("");
-    toast({
-      title: "Time Limit Updated",
-      description: `Attendance window set to ${minutes} minutes.`,
-    });
-  };
-
   // Only count students who are actually on the roster, and never count the same
   // student twice. This guarantees "present" can never exceed total enrolled even
   // if the attendance table contains duplicates or records for removed students.
@@ -385,7 +405,7 @@ const TADashboard = ({
     selectedCohort === "all"
       ? validPresentStudents
       : validPresentStudents.filter(
-          (student) => student.cohort === selectedCohort.toUpperCase(),
+          (student) => student.cohort === selectedCohort,
         );
 
   const presentStudentIds = validPresentStudents.map((s) => s.id);
@@ -397,145 +417,72 @@ const TADashboard = ({
       ? absentStudents
       : absentStudents.filter((id) => {
           const rosterEntry = roster.find((r) => r.student_id === id);
-          const cohort = rosterEntry ? rosterEntry.cohort : inferCohort(id);
-          return cohort === selectedCohort.toUpperCase();
+          const cohort = rosterEntry ? rosterEntry.cohort : cohortOf(id);
+          return cohort === selectedCohort;
         });
 
-  const cohortAPresent = validPresentStudents.filter(
-    (s) => s.cohort === "A",
-  ).length;
-  const cohortBPresent = validPresentStudents.filter(
-    (s) => s.cohort === "B",
-  ).length;
-  const cohortCPresent = validPresentStudents.filter(
-    (s) => s.cohort === "C",
-  ).length;
-  const cohortATotal = roster.filter((r) => r.cohort === "A").length;
-  const cohortBTotal = roster.filter((r) => r.cohort === "B").length;
-  const cohortCTotal = roster.filter((r) => r.cohort === "C").length;
+  // One tally per cohort the class actually has. These were three hardcoded
+  // A/B/C pairs, which is why a class with four cohorts could not be counted.
+  const cohortTallies = cohorts.map((co) => ({
+    id: co.id,
+    label: co.label,
+    present: validPresentStudents.filter((s) => s.cohort === co.label).length,
+    total: roster.filter((r) => r.cohort === co.label).length,
+  }));
 
-  // Load cancelled sessions and class dates
+  // Per-cohort report settings (lecturer + FI), for the active class.
+  //
+  // report_settings had `cohort` as its PRIMARY KEY, so two classes could
+  // never both have a Cohort A — they shared one row and overwrote each
+  // other's instructor names. cohort_report_settings, which migration 005
+  // built and nothing has read until now, is keyed by cohort_id.
   useEffect(() => {
+    if (!activeClassId) return;
     (async () => {
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .eq("is_cancelled", true);
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      } else if (cancelledData) {
-        setCancelledSessions(
-          cancelledData.map((row: any) => ({
-            date: row.date,
-            cohort: row.cohort,
-            is_cancelled: row.is_cancelled,
-          })),
-        );
+      const { data, error } = await supabase
+        .from("cohort_report_settings")
+        .select("cohort_id, instructor_name, fi_name, cohorts(label)")
+        .eq("class_id", activeClassId);
+      if (error) {
+        console.error("Failed to load report settings:", error);
+        return;
       }
-
-      // Load excused absences (student_id + date) to exclude from absence views.
-      const { data: excusedData, error: excusedError } = await supabase
-        .from("excused_absences")
-        .select("student_id, date");
-      if (excusedError && excusedError.code !== "PGRST116") {
-        console.error("Failed to load excused absences:", excusedError);
-      } else if (excusedData) {
-        setExcusedAbsences(
-          new Set(
-            excusedData.map((row: any) => `${row.student_id}-${row.date}`),
-          ),
-        );
-      }
-
-      // Load per-cohort report settings (lecturer + FI for each cohort).
-      const { data: settingsData, error: settingsError } = await supabase
-        .from("report_settings")
-        .select("cohort, instructor_name, fi_name");
-      if (settingsError && settingsError.code !== "PGRST116") {
-        console.error("Failed to load report settings:", settingsError);
-      } else if (settingsData) {
-        setReportPairs((prev) => {
-          const next = { ...prev };
-          settingsData.forEach((row: any) => {
-            const c = String(row.cohort).toUpperCase();
-            next[c] = {
-              instructor: row.instructor_name || "",
-              fi: row.fi_name || "",
-            };
-          });
-          return next;
-        });
-      }
-
-      // Load class schedule
-      const { data: scheduleData, error: scheduleError } = await supabase
-        .from("class_schedule")
-        .select("cohort, day_of_week")
-        .order("cohort, day_of_week");
-      if (scheduleError && scheduleError.code !== "PGRST116") {
-        console.error("Failed to load class schedule:", scheduleError);
-      } else if (scheduleData) {
-        setClassSchedule(
-          scheduleData.map((row: any) => ({
-            cohort: row.cohort,
-            day_of_week: row.day_of_week,
-          })),
-        );
-      }
-
-      // Load actual class dates
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_schedule")
-        .select("day_of_week, cohort");
-      if (classDatesError && classDatesError.code !== "PGRST116") {
-        console.error("Failed to load class dates:", classDatesError);
-      } else if (classDatesData) {
-        const datesMap = new Map<string, boolean>();
-        classDatesData.forEach((row: any) => {
-          const key = `${row.date}-${row.cohort}`;
-          datesMap.set(key, true);
-        });
-        setClassDates(datesMap);
-      }
-    })();
-  }, []);
-
-  // Helper function to check if a date is a class day
-  const isClassDay = (date: Date, cohort: "A" | "B" | "C"): boolean => {
-    // Only Mon/Wed/Fri count as class days
-    if (!isValidClassDay(date)) {
-      return false;
-    }
-
-    const dateStr = date.toISOString().split("T")[0];
-    const key = `${dateStr}-${cohort}`;
-
-    // First check explicit class_dates table
-    if (classDates.has(key)) {
-      return true;
-    }
-
-    // Then check if it matches the schedule
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    const scheduleMatches = classSchedule.some(
-      (s) => s.cohort === cohort && s.day_of_week === dayOfWeek,
-    );
-
-    // Also check if there was attendance on this date (implies it was a class day)
-    if (scheduleMatches) {
-      // If it matches the schedule, we can assume it's a class day
-      // unless explicitly cancelled
-      const isCancelled = cancelledSessions.some(
-        (s) => s.date === dateStr && s.cohort === cohort && s.is_cancelled,
+      setReportPairs(
+        Object.fromEntries(
+          ((data ?? []) as unknown as Array<{
+            instructor_name: string;
+            fi_name: string;
+            cohorts: { label: string } | null;
+          }>)
+            .filter((row) => row.cohorts !== null)
+            .map((row) => [
+              row.cohorts!.label,
+              {
+                instructor: row.instructor_name || "",
+                fi: row.fi_name || "",
+              },
+            ]),
+        ),
       );
-      return !isCancelled;
-    }
+    })();
+  }, [activeClassId]);
 
-    return false;
-  };
-
-  // Add student to roster
+  // Enrol a student in the active class.
+  //
+  // This used to INSERT into `students`, which is the global person registry:
+  // adding someone to one class made them appear in every class, and a student
+  // taking two courses collided on the primary key. It now goes through
+  // upsert_enrolments, which reuses an existing student row and only creates
+  // the enrolment.
   const handleAddStudent = async () => {
+    if (!activeClassId) {
+      toast({
+        title: "No class selected",
+        description: "Choose a class in the sidebar first.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!addStudentId.trim()) {
       toast({
         title: "Student ID Required",
@@ -544,7 +491,8 @@ const TADashboard = ({
       });
       return;
     }
-    if (!addStudentCohort) {
+    const cohortId = cohortIdByLabel.get(addStudentCohort);
+    if (!cohortId) {
       toast({
         title: "Cohort Required",
         description: "Please select a cohort for the student.",
@@ -553,54 +501,66 @@ const TADashboard = ({
       return;
     }
 
-    // Check if student already exists
     const existing = roster.find(
       (r) => r.student_id.toLowerCase() === addStudentId.trim().toLowerCase(),
     );
     if (existing) {
       toast({
         title: "Student Already Exists",
-        description: `Student ${addStudentId.trim()} is already in the roster (Cohort ${existing.cohort}).`,
+        description: `Student ${addStudentId.trim()} is already in this class (Cohort ${existing.cohort}).`,
         variant: "destructive",
       });
       return;
     }
 
-    const newStudent = {
-      student_id: addStudentId.trim(),
-      cohort: addStudentCohort as "A" | "B" | "C",
-      name: addStudentName.trim() || null,
-    };
+    try {
+      const result = await upsertEnrolments(cohortId, [
+        {
+          student_id: addStudentId.trim(),
+          name: addStudentName.trim() || null,
+        },
+      ]);
 
-    const { error } = await supabase.from("students").insert(newStudent);
+      if (result.invalid.length > 0) {
+        toast({
+          title: "Not added",
+          description: result.invalid[0].reason,
+          variant: "destructive",
+        });
+        return;
+      }
 
-    if (error) {
-      console.error("Failed to add student:", error);
+      await loadRoster();
+      toast({
+        title: "Student Added",
+        description:
+          result.reused_students > 0
+            ? `${addStudentId.trim()} was already known to the system and is now enrolled in Cohort ${addStudentCohort}.`
+            : `${addStudentId.trim()}${addStudentName.trim() ? ` (${addStudentName.trim()})` : ""} added to Cohort ${addStudentCohort}.`,
+      });
+    } catch (e) {
+      console.error("Failed to add student:", e);
       toast({
         title: "Error",
-        description: "Failed to add student to roster.",
+        description: e instanceof Error ? e.message : "Failed to add student.",
         variant: "destructive",
       });
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
-
-    toast({
-      title: "Student Added",
-      description: `${newStudent.student_id}${newStudent.name ? ` (${newStudent.name})` : ""} added to Cohort ${newStudent.cohort}.`,
-    });
-
-    // Reset form
     setAddStudentId("");
     setAddStudentName("");
     setAddStudentCohort("");
     setShowAddStudentDialog(false);
   };
 
-  // Remove student from roster
+  // Take a student off this class's roster.
+  //
+  // A drop, not a delete: the student row is global and their past attendance
+  // has to survive. Deleting the `students` row, as this did before, removed
+  // them from every other class too.
   const handleRemoveStudent = async () => {
-    if (!studentToRemove) {
+    if (!activeClassId || !studentToRemove) {
       toast({
         title: "No Student Selected",
         description: "Please select a student to remove.",
@@ -609,26 +569,23 @@ const TADashboard = ({
       return;
     }
 
-    const { error } = await supabase
-      .from("students")
-      .delete()
-      .eq("student_id", studentToRemove.student_id);
-
-    if (error) {
-      console.error("Failed to remove student:", error);
+    try {
+      await dropEnrolment(activeClassId, studentToRemove.student_id);
+    } catch (e) {
+      console.error("Failed to remove student:", e);
       toast({
         title: "Error",
-        description: "Failed to remove student from roster.",
+        description:
+          e instanceof Error ? e.message : "Failed to remove student.",
         variant: "destructive",
       });
       return;
     }
 
-    // Roster will be updated automatically via realtime subscription in Index.tsx
-
+    await loadRoster();
     toast({
       title: "Student Removed",
-      description: `${studentToRemove.student_id}${studentToRemove.name ? ` (${studentToRemove.name})` : ""} has been removed from the roster.`,
+      description: `${studentToRemove.student_id}${studentToRemove.name ? ` (${studentToRemove.name})` : ""} is no longer on this class's roster. Their record of past sessions is kept.`,
     });
 
     setStudentToRemove(null);
@@ -636,8 +593,15 @@ const TADashboard = ({
     setShowRemoveStudentDialog(false);
   };
 
-  // Mark a student "absent with permission" for every class day in a date range.
+  // Excuse a student from the sessions their cohort actually has in a range.
+  //
+  // This used to expand the range with the Tue/Wed/Thu rule and write a row per
+  // date into excused_absences, which meant excusing someone for days their
+  // cohort never met, and missing any session the rule did not predict. It now
+  // sets state on the sessions that exist. The database trigger logs each
+  // change to attendance_corrections.
   const handleAddExcused = async () => {
+    if (!activeClassId) return;
     if (!excusedStudent) {
       toast({
         title: "No Student Selected",
@@ -663,216 +627,98 @@ const TADashboard = ({
       return;
     }
 
-    // Expand the range into individual class days (Tue/Wed/Thu).
-    const rows: { student_id: string; date: string; reason: string | null }[] =
-      [];
-    const cursor = new Date(
-      excusedStartDate.getFullYear(),
-      excusedStartDate.getMonth(),
-      excusedStartDate.getDate(),
-    );
-    const end = new Date(
-      excusedEndDate.getFullYear(),
-      excusedEndDate.getMonth(),
-      excusedEndDate.getDate(),
-    );
-    while (cursor <= end) {
-      if (isValidClassDay(cursor)) {
-        const y = cursor.getFullYear();
-        const m = String(cursor.getMonth() + 1).padStart(2, "0");
-        const d = String(cursor.getDate()).padStart(2, "0");
-        rows.push({
-          student_id: excusedStudent.student_id,
-          date: `${y}-${m}-${d}`,
-          reason: excusedReason.trim() || null,
-        });
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    if (rows.length === 0) {
-      toast({
-        title: "No Class Days",
-        description: "That range contains no class days (Tue/Wed/Thu).",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsSavingExcused(true);
-    const { error } = await supabase
-      .from("excused_absences")
-      .upsert(rows, { onConflict: "student_id,date" });
-    setIsSavingExcused(false);
+    try {
+      const cohortId = cohortIdByLabel.get(
+        roster.find((r) => r.student_id === excusedStudent.student_id)?.cohort ??
+          "",
+      );
+      const log = await attendanceLog(activeClassId, {
+        from: toDateStr(excusedStartDate),
+        to: toDateStr(excusedEndDate),
+        cohortId,
+      });
 
-    if (error) {
-      console.error("Failed to save excused absence:", error);
+      const sessions = log.sessions.filter((sn) => sn.status !== "cancelled");
+      if (sessions.length === 0) {
+        toast({
+          title: "No Sessions",
+          description:
+            "That range contains no sessions for this student's cohort.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      for (const sn of sessions) {
+        await setAttendanceState(
+          sn.session_id,
+          excusedStudent.student_id,
+          "excused",
+        );
+      }
+
+      toast({
+        title: "Excused Absence Saved",
+        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${sessions.length} session${sessions.length > 1 ? "s" : ""}.`,
+      });
+
+      setShowExcusedDialog(false);
+      setExcusedStudent(null);
+      setExcusedSearchQuery("");
+      setExcusedStartDate(undefined);
+      setExcusedEndDate(undefined);
+      setExcusedReason("");
+    } catch (e) {
+      console.error("Failed to save excused absence:", e);
       toast({
         title: "Error",
-        description: "Failed to save the excused absence.",
+        description:
+          e instanceof Error ? e.message : "Failed to save the excused absence.",
         variant: "destructive",
       });
-      return;
+    } finally {
+      setIsSavingExcused(false);
     }
-
-    // Refresh the local excused set so analytics update immediately.
-    setExcusedAbsences((prev) => {
-      const next = new Set(prev);
-      rows.forEach((r) => next.add(`${r.student_id}-${r.date}`));
-      return next;
-    });
-
-    toast({
-      title: "Excused Absence Saved",
-      description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${rows.length} class day${rows.length > 1 ? "s" : ""}.`,
-    });
-
-    setShowExcusedDialog(false);
-    setExcusedStudent(null);
-    setExcusedSearchQuery("");
-    setExcusedStartDate(undefined);
-    setExcusedEndDate(undefined);
-    setExcusedReason("");
   };
 
-  // Filtered roster for the remove dialog search
-  // Compute Monday of the week containing a given date (local time)
-  const getMonday = (date: Date): Date => {
-    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const day = d.getDay(); // 0=Sun … 6=Sat
-    const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-    d.setDate(d.getDate() + diff);
-    return d;
-  };
-
-  // Load weekly absences for the week containing the selected date
+  // Absences in the week containing `date`, read rather than reconstructed.
+  //
+  // This used to walk Monday to Friday, ask a hardcoded Tue/Wed/Thu rule
+  // whether each day was a class day, then treat any student without a
+  // check-in as absent. Which days ran is now a fact about the cohort's
+  // sessions, and so is who missed them.
   const loadWeeklyAbsences = async (date: Date) => {
+    if (!activeClassId) return;
     setIsLoadingWeeklyAbsences(true);
     setWeeklyAbsences([]);
-
     try {
-      const monday = getMonday(date);
-      const saturday = new Date(monday);
-      saturday.setDate(saturday.getDate() + 5); // Saturday (exclusive upper bound for the query)
-      const todayStr = new Date().toISOString().split("T")[0];
-      // Valid class days in this week (Mon=1, Wed=3, Fri=5)
-      const classDaysInWeek: Date[] = [];
+      const monday = mondayOf(date);
+      const log = await attendanceLog(activeClassId, {
+        from: toDateStr(monday),
+        to: toDateStr(addDays(monday, 4)),
+      });
 
-      for (let d = new Date(monday); d < saturday; d.setDate(d.getDate() + 1)) {
-        if (!isValidClassDay(d)) continue;
-
-        const dateStr = d.toISOString().split("T")[0];
-
-        // Only include days up to today
-        if (dateStr <= todayStr && d >= SEMESTER_START) {
-          classDaysInWeek.push(new Date(d));
+      const byStudent = new Map<string, WeeklyAbsence>();
+      log.marks.filter((m) => isAbsentState(m.state)).forEach((m) => {
+        const entry = byStudent.get(m.student_id);
+        if (entry) {
+          entry.absentDays.push(m.session_date);
+          entry.frequency += 1;
+          return;
         }
-      }
-
-      if (classDaysInWeek.length === 0) {
-        setIsLoadingWeeklyAbsences(false);
-        return;
-      }
-
-      // Format dates as YYYY-MM-DD in local time (avoids UTC shift)
-      const toDateStr = (d: Date): string => {
-        return d.toISOString().split("T")[0];
-      };
-
-      const classDayStrings = classDaysInWeek.map(toDateStr);
-
-      const mondayStr = toDateStr(monday);
-      const saturdayStr = toDateStr(saturday);
-
-      // Get attendance records for the week
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .gte("timestamp", mondayStr + "T00:00:00")
-        .lt("timestamp", saturdayStr + "T00:00:00");
-
-      if (attendanceError) {
-        console.error("Failed to load weekly attendance:", attendanceError);
-        setIsLoadingWeeklyAbsences(false);
-        return;
-      }
-
-      // Get cancelled sessions for the week
-      const { data: cancelledData } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .gte("date", classDayStrings[0])
-        .lte("date", classDayStrings[classDayStrings.length - 1])
-        .eq("is_cancelled", true);
-
-      const cancelledSet = new Set<string>();
-      if (cancelledData) {
-        cancelledData.forEach((row: any) => {
-          cancelledSet.add(row.date);
-        });
-      }
-
-      // Build a set of present student+date combos
-      const presentSet = new Set<string>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          const recordDate = toDateStr(d);
-          presentSet.add(`${record.student_id}-${recordDate}`);
-        });
-      }
-
-      // For each student in the roster, check each class day
-      const absenceMap = new Map<
-        string,
-        {
-          student_id: string;
-          cohort: "A" | "B" | "C";
-          name?: string;
-          absentDays: string[];
-        }
-      >();
-
-      roster.forEach((student) => {
-        const normalizedCohort = String(student.cohort).toUpperCase();
-        let cohort: "A" | "B" | "C" = inferCohort(student.student_id);
-        if (
-          normalizedCohort === "A" ||
-          normalizedCohort === "B" ||
-          normalizedCohort === "C"
-        ) {
-          cohort = normalizedCohort;
-        }
-
-        classDayStrings.forEach((dateStr) => {
-          if (cancelledSet.has(dateStr)) return; // ignore any cancelled session
-          const presentKey = `${student.student_id}-${dateStr}`;
-          // Excused ("absent with permission") days don't count as absences.
-          if (excusedAbsences.has(presentKey)) return;
-          if (!presentSet.has(presentKey)) {
-            if (!absenceMap.has(student.student_id)) {
-              absenceMap.set(student.student_id, {
-                student_id: student.student_id,
-                cohort: student.cohort as "A" | "B" | "C",
-                name: student.name,
-                absentDays: [],
-              });
-            }
-            absenceMap.get(student.student_id)!.absentDays.push(dateStr);
-          }
+        byStudent.set(m.student_id, {
+          student_id: m.student_id,
+          cohort: m.cohort_label,
+          name: roster.find((r) => r.student_id === m.student_id)?.name,
+          absentDays: [m.session_date],
+          frequency: 1,
         });
       });
 
-      // Convert to array and compute frequency, sort by frequency descending
-      const result: WeeklyAbsence[] = Array.from(absenceMap.values()).map(
-        (entry) => ({
-          ...entry,
-          frequency: entry.absentDays.length,
-        }),
+      setWeeklyAbsences(
+        [...byStudent.values()].sort((a, b) => b.frequency - a.frequency),
       );
-      result.sort((a, b) => b.frequency - a.frequency);
-
-      setWeeklyAbsences(result);
     } catch (error) {
       console.error("Error loading weekly absences:", error);
     } finally {
@@ -884,130 +730,78 @@ const TADashboard = ({
     weeklyAbsenceCohortFilter === "all"
       ? weeklyAbsences
       : weeklyAbsences.filter(
-          (a) => a.cohort === weeklyAbsenceCohortFilter.toUpperCase(),
+          (a) => a.cohort === weeklyAbsenceCohortFilter,
         );
 
   // Build the full week-by-week report from the semester start through today.
   // One fetch, computed client-side per week (excludes cancelled + excused days).
+  // The week-by-week report, grouped off the sessions that actually ran.
+  //
+  // The previous version stepped through the term a day at a time applying a
+  // fixed Tue/Wed/Thu rule, and treated a cancellation as cancelling that day
+  // for every cohort — cancelled_sessions has a cohort column it ignored. A
+  // session belongs to one cohort, so grouping its marks cannot make that
+  // mistake.
   const buildWeeklyReport = async () => {
+    if (!activeClassId) return;
     setIsBuildingReport(true);
     setWeeklyReport([]);
     try {
-      const toDateStr = (d: Date) => d.toISOString().split("T")[0];
-      const now = new Date();
-      const todayStr = toDateStr(now);
+      const log = await attendanceLog(activeClassId, { to: todayStr() });
 
-      // Fetch ALL attendance from semester start to today. Paginate, because
-      // PostgREST caps a single response (default 1000 rows) — without this,
-      // present check-ins get silently dropped and students are mis-flagged.
-      const presentSet = new Set<string>();
-      const pageSize = 1000;
-      let from = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data: page, error: pageError } = await supabase
-          .from("present_students")
-          .select("student_id, timestamp")
-          .gte("timestamp", toDateStr(SEMESTER_START) + "T00:00:00")
-          .order("timestamp", { ascending: true })
-          .range(from, from + pageSize - 1);
-        if (pageError) {
-          console.error("Failed to load attendance:", pageError);
-          break;
-        }
-        (page || []).forEach((r: any) => {
-          const recordDate = toDateStr(new Date(r.timestamp));
-          presentSet.add(`${r.student_id}-${recordDate}`);
+      // Which weeks ran at all, so a week with sessions but no absences still
+      // appears — an empty week is a result, not a gap.
+      const weeks = new Map<string, Set<string>>();
+      log.sessions
+        .filter((sn) => sn.status !== "cancelled")
+        .forEach((sn) => {
+          const key = weekKeyOf(sn.session_date);
+          const days = weeks.get(key);
+          if (days) days.add(sn.session_date);
+          else weeks.set(key, new Set([sn.session_date]));
         });
-        if (!page || page.length < pageSize) break;
-        from += pageSize;
-      }
 
-      // Cancelled sessions (any cohort) → treat that date as no-class.
-      const { data: cancelledData } = await supabase
-        .from("cancelled_sessions")
-        .select("date")
-        .eq("is_cancelled", true);
-      const cancelledSet = new Set<string>(
-        (cancelledData || []).map((r: any) => r.date),
-      );
-
-      // Excused absences → never count as an absence.
-      const { data: excusedData } = await supabase
-        .from("excused_absences")
-        .select("student_id, date");
-      const excusedSet = new Set<string>(
-        (excusedData || []).map((r: any) => `${r.student_id}-${r.date}`),
-      );
-
-      const report: WeekReport[] = [];
-      // Start from the Monday of the semester-start week, then step weekly so
-      // week boundaries are stable regardless of which weekday the term starts.
-      const weekStart = new Date(SEMESTER_START);
-      const startDow = weekStart.getUTCDay(); // 0=Sun … 6=Sat
-      weekStart.setUTCDate(
-        weekStart.getUTCDate() + (startDow === 0 ? -6 : 1 - startDow),
-      );
-      let weekNumber = 0;
-
-      while (toDateStr(weekStart) <= todayStr) {
-        weekNumber += 1;
-
-        // Class days (Tue/Wed/Thu) in this week, on/after semester start, up to today.
-        const classDays: string[] = [];
-        for (let i = 0; i < 7; i++) {
-          const day = new Date(weekStart);
-          day.setUTCDate(day.getUTCDate() + i);
-          const dow = day.getUTCDay(); // 0=Sun … 6=Sat
-          if (dow !== 2 && dow !== 3 && dow !== 4) continue;
-          const ds = toDateStr(day);
-          if (ds < toDateStr(SEMESTER_START)) continue;
-          if (ds > todayStr) continue;
-          if (cancelledSet.has(ds)) continue;
-          classDays.push(ds);
+      const absencesByWeek = new Map<string, Map<string, WeeklyAbsence>>();
+      log.marks.filter((m) => isAbsentState(m.state)).forEach((m) => {
+        const key = weekKeyOf(m.session_date);
+        let forWeek = absencesByWeek.get(key);
+        if (!forWeek) {
+          forWeek = new Map();
+          absencesByWeek.set(key, forWeek);
         }
-
-        // Week 1 had no attendance taken — skip it so it doesn't show everyone
-        // as absent.
-        if (classDays.length > 0 && weekNumber > 1) {
-          const absences: WeeklyAbsence[] = [];
-          roster.forEach((student) => {
-            const missed: string[] = [];
-            classDays.forEach((ds) => {
-              if (excusedSet.has(`${student.student_id}-${ds}`)) return;
-              if (!presentSet.has(`${student.student_id}-${ds}`)) {
-                missed.push(ds);
-              }
-            });
-            if (missed.length > 0) {
-              absences.push({
-                student_id: student.student_id,
-                cohort: student.cohort as "A" | "B" | "C",
-                name: student.name,
-                absentDays: missed,
-                frequency: missed.length,
-              });
-            }
-          });
-          absences.sort((a, b) => b.frequency - a.frequency);
-
-          const first = new Date(classDays[0] + "T00:00:00");
-          const last = new Date(classDays[classDays.length - 1] + "T00:00:00");
-          const rangeLabel =
-            classDays.length === 1
-              ? format(first, "MMM dd")
-              : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`;
-
-          report.push({
-            weekNumber,
-            startStr: toDateStr(weekStart),
-            rangeLabel,
-            absences,
-          });
+        const entry = forWeek.get(m.student_id);
+        if (entry) {
+          entry.absentDays.push(m.session_date);
+          entry.frequency += 1;
+          return;
         }
+        forWeek.set(m.student_id, {
+          student_id: m.student_id,
+          cohort: m.cohort_label,
+          name: roster.find((r) => r.student_id === m.student_id)?.name,
+          absentDays: [m.session_date],
+          frequency: 1,
+        });
+      });
 
-        weekStart.setUTCDate(weekStart.getUTCDate() + 7);
-      }
+      const report: WeekReport[] = [...weeks.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([weekStart, dayStrings], index) => {
+          const days = [...dayStrings].sort();
+          const first = fromDateStr(days[0]);
+          const last = fromDateStr(days[days.length - 1]);
+          return {
+            weekNumber: index + 1,
+            startStr: weekStart,
+            rangeLabel:
+              days.length === 1
+                ? format(first, "MMM dd")
+                : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`,
+            absences: [...(absencesByWeek.get(weekStart)?.values() ?? [])].sort(
+              (a, b) => b.frequency - a.frequency,
+            ),
+          };
+        });
 
       setWeeklyReport(report);
     } catch (error) {
@@ -1028,7 +822,7 @@ const TADashboard = ({
         // Only students absent twice or thrice are reported.
         a.frequency >= 2 &&
         (weeklyAbsenceCohortFilter === "all" ||
-          a.cohort === weeklyAbsenceCohortFilter.toUpperCase()),
+          a.cohort === weeklyAbsenceCohortFilter),
     );
     return rows
       .map((a) => {
@@ -1072,34 +866,6 @@ const TADashboard = ({
     }
   };
 
-  const handleSaveReportSettings = async () => {
-    setIsSavingReportSettings(true);
-    const nowIso = new Date().toISOString();
-    const rows = ["A", "B", "C"].map((c) => ({
-      cohort: c,
-      instructor_name: reportPairs[c]?.instructor || "",
-      fi_name: reportPairs[c]?.fi || "",
-      updated_at: nowIso,
-    }));
-    const { error } = await supabase
-      .from("report_settings")
-      .upsert(rows, { onConflict: "cohort" });
-    setIsSavingReportSettings(false);
-    if (error) {
-      console.error("Failed to save report settings:", error);
-      toast({
-        title: "Error",
-        description: "Failed to save instructor / FI.",
-        variant: "destructive",
-      });
-      return;
-    }
-    toast({
-      title: "Saved",
-      description: "Instructor and FI updated.",
-    });
-  };
-
   const filteredRosterForRemoval = removeSearchQuery.trim()
     ? roster.filter(
         (r) =>
@@ -1111,637 +877,93 @@ const TADashboard = ({
       )
     : roster;
 
+  /**
+   * Mark a student present, by hand, at today's session for their cohort.
+   *
+   * This used to insert straight into present_students — the legacy table —
+   * so pressing Mark produced a success toast and changed nothing anyone could
+   * see: the roster, the analytics and the exporter all count
+   * attendance_records. It writes a real record now, and the correction
+   * trigger logs it when it replaces an existing state.
+   */
   const handleMarkAttendanceManually = async (
     studentId: string,
     cohort: string,
   ) => {
-    const result = await onMarkAttendance(studentId, cohort);
-    if (result.success) {
-      toast({
-        title: "Attendance Marked",
-        description: `Marked ${studentId} as present (Cohort ${cohort})`,
-      });
-    } else {
-      toast({
-        title: "Error",
-        description: result.error || "Failed to mark attendance",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const loadAbsenceHistory = async (date?: Date) => {
-    setIsLoadingHistory(true);
-    try {
-      let startDate: Date;
-      let endDate: Date;
-
-      if (date) {
-        // Load for specific date
-        startDate = new Date(
-          Date.UTC(
-            date.getUTCFullYear(),
-            date.getUTCMonth(),
-            date.getUTCDate(),
-            0,
-            0,
-            0,
-          ),
-        );
-        endDate = new Date(
-          Date.UTC(
-            date.getUTCFullYear(),
-            date.getUTCMonth(),
-            date.getUTCDate() + 1,
-            0,
-            0,
-            0,
-          ),
-        );
-      } else {
-        // Load from semester start
-        endDate = new Date();
-        startDate = new Date(SEMESTER_START);
-      }
-
-      // Get all attendance records for the date range
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .gte("timestamp", startDate.toISOString())
-        .lt("timestamp", endDate.toISOString());
-
-      if (attendanceError) {
-        console.error("Failed to load attendance:", attendanceError);
-        return;
-      }
-
-      // Get cancelled sessions for the date range
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0])
-        .eq("is_cancelled", true);
-
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      }
-
-      const cancelledSessionsMap = new Map<string, boolean>();
-      if (cancelledData) {
-        cancelledData.forEach((session: any) => {
-          const key = session.date;
-          cancelledSessionsMap.set(key, true);
-        });
-      }
-
-      // Get all students
-      const allStudentIds = roster.map((r) => r.student_id);
-
-      // Group attendance by date
-      const attendanceByDate = new Map<string, Set<string>>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const recordDate = new Date(record.timestamp)
-            .toISOString()
-            .split("T")[0];
-          if (!attendanceByDate.has(recordDate)) {
-            attendanceByDate.set(recordDate, new Set());
-          }
-          attendanceByDate.get(recordDate)!.add(record.student_id);
-        });
-      }
-
-      // Get class dates for the range
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_dates")
-        .select("date, cohort")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0]);
-
-      const classDatesMap = new Map<string, boolean>();
-      if (classDatesData) {
-        classDatesData.forEach((row: any) => {
-          // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00");
-          if (!isValidClassDay(d)) return;
-          const key = `${row.date}-${row.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check attendance records to infer class days (if someone was present, it was a class day)
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          if (!isValidClassDay(d)) return;
-          const recordDate = d.toISOString().split("T")[0];
-          const key = `${recordDate}-${record.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check if dates match the schedule
-      const currentDateCheck = new Date(startDate);
-      while (currentDateCheck < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDateCheck)) {
-          currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDateCheck.toISOString().split("T")[0];
-        const dayOfWeek = currentDateCheck.getDay();
-
-        classSchedule.forEach((schedule) => {
-          if (schedule.day_of_week === dayOfWeek) {
-            const key = `${dateStr}-${schedule.cohort}`;
-            // Only add if not already in map and not cancelled
-            if (!classDatesMap.has(key)) {
-              const wasCancelled = cancelledSessionsMap.get(key) || false;
-              if (!wasCancelled) {
-                classDatesMap.set(key, true);
-              }
-            }
-          }
-        });
-
-        currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-      }
-
-      // Find absences - only on Mon/Wed/Fri when classes actually occurred
-      const absences: AbsenceHistory[] = [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDate.toISOString().split("T")[0];
-        const presentOnDate = attendanceByDate.get(dateStr) || new Set();
-
-        // Check each student
-        allStudentIds.forEach((studentId) => {
-          const studentRoster = roster.find((r) => r.student_id === studentId);
-          const cohort = studentRoster?.cohort || inferCohort(studentId);
-          const classDateKey = `${dateStr}-${cohort}`;
-
-          // Only check absences on days when classes actually occurred
-          const isClassDate = classDatesMap.has(classDateKey);
-
-          // Check if class was cancelled for this cohort on this date
-          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
-
-          // Excused ("absent with permission") days don't count as absences.
-          const isExcused = excusedAbsences.has(`${studentId}-${dateStr}`);
-
-          if (
-            isClassDate &&
-            !presentOnDate.has(studentId) &&
-            !wasCancelled &&
-            !isExcused
-          ) {
-            absences.push({
-              date: dateStr,
-              student_id: studentId,
-              cohort: cohort,
-              was_class_cancelled: false,
-            });
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      setAbsenceHistory(absences);
-    } catch (error) {
-      console.error("Error loading absence history:", error);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  const generateClassDates = async (
-    startDate: Date,
-    endDate: Date,
-    cohorts: ("A" | "B" | "C")[],
-  ) => {
-    try {
-      const datesToInsert: Array<{ date: string; cohort: "A" | "B" | "C" }> =
-        [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate <= endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-        const dateStr = currentDate.toISOString().split("T")[0];
-
-        cohorts.forEach((cohort) => {
-          // Check if this day matches the schedule
-          const scheduleMatches = classSchedule.some(
-            (s) => s.cohort === cohort && s.day_of_week === dayOfWeek,
-          );
-
-          if (scheduleMatches) {
-            // Check if already cancelled - if so, don't add
-            const isCancelled = cancelledSessions.some(
-              (s) =>
-                s.date === dateStr && s.cohort === cohort && s.is_cancelled,
-            );
-
-            if (!isCancelled) {
-              datesToInsert.push({ date: dateStr, cohort });
-            }
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      if (datesToInsert.length > 0) {
-        const { error } = await supabase
-          .from("class_dates")
-          .upsert(datesToInsert, {
-            onConflict: "date,cohort",
-            ignoreDuplicates: true,
-          });
-
-        if (error) {
-          console.error("Failed to generate class dates:", error);
-          toast({
-            title: "Error",
-            description: "Failed to generate class dates",
-            variant: "destructive",
-          });
-        } else {
-          toast({
-            title: "Class Dates Generated",
-            description: `Generated ${datesToInsert.length} class dates based on schedule.`,
-          });
-
-          // Update local state
-          const newDatesMap = new Map(classDates);
-          datesToInsert.forEach(({ date, cohort }) => {
-            const key = `${date}-${cohort}`;
-            newDatesMap.set(key, true);
-          });
-          setClassDates(newDatesMap);
-        }
-      }
-    } catch (error) {
-      console.error("Error generating class dates:", error);
-    }
-  };
-
-  const handleSaveSchedule = async (
-    cohort: "A" | "B" | "C",
-    daysOfWeek: number[],
-  ) => {
-    try {
-      // Delete existing schedule for this cohort
-      const { error: deleteError } = await supabase
-        .from("class_schedule")
-        .delete()
-        .eq("cohort", cohort);
-
-      if (deleteError) {
-        console.error("Failed to delete old schedule:", deleteError);
-      }
-
-      // Insert new schedule
-      const scheduleEntries = daysOfWeek.map((day) => ({
-        cohort,
-        day_of_week: day,
-      }));
-
-      const { error: insertError } = await supabase
-        .from("class_schedule")
-        .insert(scheduleEntries);
-
-      if (insertError) {
-        console.error("Failed to save schedule:", insertError);
-        toast({
-          title: "Error",
-          description: "Failed to save class schedule",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Schedule Saved",
-          description: `Class schedule for Cohort ${cohort} has been updated.`,
-        });
-
-        // Update local state
-        const newSchedule = classSchedule.filter((s) => s.cohort !== cohort);
-        scheduleEntries.forEach((entry) => {
-          newSchedule.push({
-            cohort: entry.cohort,
-            day_of_week: entry.day_of_week,
-          });
-        });
-        setClassSchedule(newSchedule);
-      }
-    } catch (error) {
-      console.error("Error saving schedule:", error);
-    }
-  };
-
-  const handleCancelClass = async () => {
-    if (!cancelDate || !cancelCohort) {
-      toast({
-        title: "Error",
-        description: "Please select both date and cohort",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const dateStr = cancelDate.toISOString().split("T")[0];
-
-    // Upsert cancelled session
-    const { error } = await supabase.from("cancelled_sessions").upsert(
-      {
-        date: dateStr,
-        cohort: cancelCohort,
-        is_cancelled: true,
-      },
-      { onConflict: "date,cohort" },
+    const cohortId = cohortIdByLabel.get(cohort);
+    const session = todaySessions.find(
+      (sn) => sn.cohort_id === cohortId && sn.status !== "cancelled",
     );
 
-    if (error) {
-      console.error("Failed to cancel class:", error);
+    if (!session) {
       toast({
-        title: "Error",
-        description: "Failed to mark class as cancelled",
+        title: "No session today",
+        description: `Cohort ${cohort} has no session today to mark them at. Create one under Schedule, or open the right day under Class Sessions.`,
         variant: "destructive",
       });
-    } else {
-      toast({
-        title: "Class Cancelled",
-        description: `Cohort ${cancelCohort} class cancelled for ${dateStr}`,
-      });
-      setCancelledSessions((prev) => [
-        ...prev,
-        { date: dateStr, cohort: cancelCohort, is_cancelled: true },
-      ]);
-      setShowCancelDialog(false);
-      setCancelDate(undefined);
-      setCancelCohort("");
-    }
-  };
-
-  const searchStudent = async (query: string) => {
-    if (!query.trim()) {
-      setStudentAbsenceHistory([]);
       return;
     }
 
-    setIsLoadingStudentHistory(true);
     try {
-      // Search for student by ID or name (case-insensitive partial match)
-      const searchLower = query.toLowerCase().trim();
-      const matchingStudents = roster.filter(
-        (r) =>
-          r.student_id.toLowerCase().includes(searchLower) ||
-          (r.name && r.name.toLowerCase().includes(searchLower)),
-      );
-
-      if (matchingStudents.length === 0) {
-        setStudentAbsenceHistory([]);
-        toast({
-          title: "No Results",
-          description: "No student found matching your search.",
-          variant: "default",
-        });
-        setIsLoadingStudentHistory(false);
-        return;
-      }
-
-      // If multiple matches, take the first one (or show all)
-      // For now, let's show all matches
-      const studentIds = matchingStudents.map((s) => s.student_id);
-
-      // Get all attendance records for these students
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from("present_students")
-        .select("student_id, cohort, timestamp")
-        .in("student_id", studentIds)
-        .order("timestamp", { ascending: false });
-
-      if (attendanceError) {
-        console.error("Failed to load attendance:", attendanceError);
-        setIsLoadingStudentHistory(false);
-        return;
-      }
-
-      // Get cancelled sessions for all dates
-      const { data: cancelledData, error: cancelledError } = await supabase
-        .from("cancelled_sessions")
-        .select("date, cohort, is_cancelled")
-        .eq("is_cancelled", true);
-
-      if (cancelledError && cancelledError.code !== "PGRST116") {
-        console.error("Failed to load cancelled sessions:", cancelledError);
-      }
-
-      const cancelledSessionsMap = new Map<string, boolean>();
-      if (cancelledData) {
-        cancelledData.forEach((session: any) => {
-          const key = session.date;
-          cancelledSessionsMap.set(key, true);
-        });
-      }
-
-      // Group attendance by student and date
-      const attendanceByStudentAndDate = new Map<string, Set<string>>();
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const recordDate = new Date(record.timestamp)
-            .toISOString()
-            .split("T")[0];
-          const key = `${record.student_id}-${recordDate}`;
-          if (!attendanceByStudentAndDate.has(record.student_id)) {
-            attendanceByStudentAndDate.set(record.student_id, new Set());
-          }
-          attendanceByStudentAndDate.get(record.student_id)!.add(recordDate);
-        });
-      }
-
-      // Get class dates for the range (from semester start)
-      const endDate = new Date();
-      const startDate = new Date(SEMESTER_START);
-
-      const { data: classDatesData, error: classDatesError } = await supabase
-        .from("class_dates")
-        .select("date, cohort")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0]);
-
-      const classDatesMap = new Map<string, boolean>();
-      if (classDatesData) {
-        classDatesData.forEach((row: any) => {
-          // Only count Mon/Wed/Fri
-          const d = new Date(row.date + "T00:00:00");
-          if (!isValidClassDay(d)) return;
-          const key = `${row.date}-${row.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check attendance records to infer class days (if someone was present, it was a class day)
-      if (attendanceData) {
-        attendanceData.forEach((record: any) => {
-          const d = new Date(record.timestamp);
-          if (!isValidClassDay(d)) return;
-          const recordDate = d.toISOString().split("T")[0];
-          const key = `${recordDate}-${record.cohort}`;
-          classDatesMap.set(key, true);
-        });
-      }
-
-      // Also check if dates match the schedule
-      const currentDateCheck = new Date(startDate);
-      while (currentDateCheck < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDateCheck)) {
-          currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDateCheck.toISOString().split("T")[0];
-        const dayOfWeek = currentDateCheck.getDay();
-
-        classSchedule.forEach((schedule) => {
-          if (schedule.day_of_week === dayOfWeek) {
-            const key = `${dateStr}-${schedule.cohort}`;
-            // Only add if not already in map and not cancelled
-            if (!classDatesMap.has(key)) {
-              const wasCancelled = cancelledSessionsMap.get(key) || false;
-              if (!wasCancelled) {
-                classDatesMap.set(key, true);
-              }
-            }
-          }
-        });
-
-        currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-      }
-
-      // Find absences - only on Mon/Wed/Fri when classes actually occurred
-      const absences: AbsenceHistory[] = [];
-      const currentDate = new Date(startDate);
-
-      while (currentDate < endDate) {
-        // Skip non Mon/Wed/Fri
-        if (!isValidClassDay(currentDate)) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
-        }
-        const dateStr = currentDate.toISOString().split("T")[0];
-
-        // Check each matching student
-        matchingStudents.forEach((student) => {
-          const presentOnDate =
-            attendanceByStudentAndDate.get(student.student_id)?.has(dateStr) ||
-            false;
-          const classDateKey = `${dateStr}-${student.cohort}`;
-          const isClassDate = classDatesMap.has(classDateKey);
-          const wasCancelled = cancelledSessionsMap.get(dateStr) || false;
-          const isExcused = excusedAbsences.has(
-            `${student.student_id}-${dateStr}`,
-          );
-
-          if (isClassDate && !presentOnDate && !wasCancelled && !isExcused) {
-            absences.push({
-              date: dateStr,
-              student_id: student.student_id,
-              cohort: student.cohort,
-              was_class_cancelled: false,
-            });
-          }
-        });
-
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      // Sort by date descending
-      absences.sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-      );
-      setStudentAbsenceHistory(absences);
-    } catch (error) {
-      console.error("Error searching student:", error);
+      await setAttendanceState(session.id, studentId, "present");
       toast({
-        title: "Error",
-        description: "Failed to search student",
+        title: "Marked present",
+        description: `${studentId} is present at today's cohort ${cohort} session.`,
+      });
+      await loadToday();
+    } catch (e) {
+      toast({
+        title: "Could not mark them present",
+        description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoadingStudentHistory(false);
     }
   };
 
-  const searchStudentForAttendance = (query: string) => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      setAttendanceSearchResults([]);
-      return;
-    }
-
-    const results = roster.filter(
-      (r) =>
-        r.student_id.toLowerCase().includes(normalizedQuery) ||
-        (r.name && r.name.toLowerCase().includes(normalizedQuery)),
-    );
-
-    setAttendanceSearchResults(results);
-  };
-
-  useEffect(() => {
-    if (showHistoryDialog) {
-      loadAbsenceHistory();
-    }
-  }, [showHistoryDialog, roster]);
-
-  // Debounce search query
-  useEffect(() => {
-    if (!showSearchDialog || !searchQuery.trim()) {
-      setStudentAbsenceHistory([]);
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      searchStudent(searchQuery);
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, showSearchDialog, roster]);
-
+  // Absences across the class, or on one day.
+  //
+  // Was ~190 lines that rebuilt the term day by day from four tables, guessing
+  // which days were class days from a fixed weekday rule plus "somebody checked
+  // in, so it must have happened". An absence is a stored row now, so this
+  // filters rather than infers. searchStudent below was a copy of that same
+  // loop, 140 of 180 lines identical, and had already drifted from it.
   const isAttendanceSection = activeSection === "attendance";
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
   const isSessionsSection = activeSection === "sessions";
-  const sectionTitle =
-    activeSection === "analytics"
-      ? "Attendance Analytics"
-      : activeSection === "students"
-        ? "Student Management"
-        : activeSection === "sessions"
-          ? "Class Session Management"
-          : "TA Dashboard";
-  const sectionDescription =
-    activeSection === "analytics"
-      ? "Review attendance trends, absences, and flagged records"
-      : activeSection === "students"
-        ? "Search the roster and manage student records"
-        : activeSection === "sessions"
-          ? "Manage attendance windows, cancelled classes, and schedules"
-          : "Manage live attendance and monitor student participation";
+  const isScheduleSection = activeSection === "schedule";
+  const isClassesSection = activeSection === "classes";
+  // A lookup rather than a five-deep ternary: adding a section to the nested
+  // version meant threading a branch into two of them and leaving a dead arm
+  // behind, which is exactly what happened.
+  const SECTION_COPY: Record<string, { title: string; description: string }> = {
+    classes: {
+      title: "Classes",
+      description: "Create a class, set its cohorts, and choose who can manage it",
+    },
+    sessions: {
+      title: "Class Sessions",
+      description: "Open, close, move or cancel a session",
+    },
+    schedule: {
+      title: "Schedule",
+      description: "Set when each cohort meets",
+    },
+    analytics: {
+      title: "Attendance Analytics",
+      description: "Review attendance trends, absences, and flagged records",
+    },
+    students: {
+      title: "Student Management",
+      description: "Search the roster and manage student records",
+    },
+    attendance: {
+      title: "TA Dashboard",
+      description: "Manage live attendance and monitor student participation",
+    },
+  };
+  const { title: sectionTitle, description: sectionDescription } =
+    SECTION_COPY[activeSection] ?? SECTION_COPY.attendance;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
@@ -1754,7 +976,12 @@ const TADashboard = ({
             </div>
             <div>
               <h1 className="text-2xl font-bold">{sectionTitle}</h1>
-              <p className="text-muted-foreground">{sectionDescription}</p>
+              <p className="text-muted-foreground">
+                {sectionDescription}
+                {activeClass && (
+                  <span className="ml-2 opacity-70">· {activeClass.name}</span>
+                )}
+              </p>
             </div>
           </div>
           <Button onClick={onLogout} variant="outline">
@@ -1762,10 +989,36 @@ const TADashboard = ({
           </Button>
         </div>
 
+        {/* Every count below is of one class's roster, so say when there isn't
+            one and when it is still arriving — an empty roster otherwise reads
+            as a class where everybody is absent. */}
+        {!isClassesSection && !isScheduleSection && !isSessionsSection && !activeClass && (
+          <Card className="border-2 border-dashed">
+            <CardContent className="pt-6 text-center">
+              <p className="font-medium">No class selected</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Choose one in the sidebar, or create one under Classes.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        {!isClassesSection && !isScheduleSection && !isSessionsSection && activeClass && isRosterLoading && (
+          <p className="text-sm text-muted-foreground">Loading the roster…</p>
+        )}
+
+        {/* Classes and Class Sessions replace the body rather than sitting
+            beside it: everything below is scoped to one class, and these are
+            the screens that choose and shape that class. */}
+        {isClassesSection && <Classes />}
+        {isSessionsSection && <Sessions />}
+        {isScheduleSection && <Schedule />}
+
         {isAnalyticsSection && (
           <>
             {/* Stats Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+            >
               <Card className="border-2 shadow-soft">
                 <CardContent className="pt-6">
                   <div className="flex items-center space-x-2">
@@ -1794,53 +1047,51 @@ const TADashboard = ({
                 </CardContent>
               </Card>
 
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortAPresent}/{cohortATotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort A</p>
+              {cohortTallies.map((c) => (
+                <Card key={c.id} className="border-2 shadow-soft">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center space-x-2">
+                      <Users className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="text-2xl font-bold">
+                          {c.present}/{c.total}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Cohort {c.label}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortBPresent}/{cohortBTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort B</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-2 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <Users className="h-5 w-5 text-accent" />
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {cohortCPresent}/{cohortCTotal}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Cohort C</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
+
+            {/* Per-student standing. Was reachable only by opening a dialog,
+                typing a name and pressing a button, which could not show you
+                the class. */}
+            <Card className="border-2">
+              <CardHeader>
+                <CardTitle className="text-base">Students</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {activeClass && (
+                  <StudentRoster
+                    classId={activeClass.id}
+                    cohorts={cohorts}
+                    roster={roster}
+                    presentIds={new Set(validPresentStudents.map((p) => p.id))}
+                    minAttendancePercentage={
+                      activeClass.min_attendance_percentage
+                    }
+                  />
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
 
         {/* Action Buttons */}
-        {(isAnalyticsSection || isStudentsSection || isSessionsSection) && (
+        {(isAnalyticsSection || isStudentsSection) && (
           <div className="flex gap-4 flex-wrap">
             {isAnalyticsSection && (
               <>
@@ -1889,30 +1140,6 @@ const TADashboard = ({
               <>
                 <Button
                   onClick={() => {
-                    setShowSearchDialog(true);
-                    setSearchQuery("");
-                    setStudentAbsenceHistory([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Search className="h-4 w-4" />
-                  Search Absences
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowAttendanceSearchDialog(true);
-                    setAttendanceSearchQuery("");
-                    setAttendanceSearchResults([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Search className="h-4 w-4" />
-                  Mark Attendance (Search)
-                </Button>
-                <Button
-                  onClick={() => {
                     setShowAddStudentDialog(true);
                     setAddStudentId("");
                     setAddStudentName("");
@@ -1953,110 +1180,132 @@ const TADashboard = ({
                 </Button>
               </>
             )}
-            {isSessionsSection && (
-              <>
-                <Button
-                  onClick={() => setShowCancelDialog(true)}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <XCircle className="h-4 w-4" />
-                  Cancel Class
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowScheduleDialog(true);
-                    setScheduleCohort("");
-                    setSelectedDays([]);
-                  }}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Settings className="h-4 w-4" />
-                  Class Schedule
-                </Button>
-              </>
-            )}
           </div>
         )}
 
-        {/* Controls and Student Lists */}
-        {(isAttendanceSection || isSessionsSection || isStudentsSection) && (
+        {/* Students: the whole class, filtered as you type. */}
+        {isStudentsSection && activeClass && (
+          <Card className="border-2 shadow-medium">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                {roster.length} student{roster.length === 1 ? "" : "s"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <StudentRoster
+                classId={activeClass.id}
+                cohorts={cohorts}
+                roster={roster}
+                presentIds={new Set(validPresentStudents.map((p) => p.id))}
+                onMarkPresent={handleMarkAttendanceManually}
+                minAttendancePercentage={activeClass.min_attendance_percentage}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Controls and today's lists */}
+        {isAttendanceSection && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Controls */}
-            {(isAttendanceSection || isSessionsSection) && (
+            {/* Today's sessions: the PIN each one actually issued, and the
+                one button that applies. This was a single PIN box backed by
+                the session_state singleton — one PIN, one timer, for the whole
+                installation — with no relationship to the per-session PIN
+                open_session hands out and mark_attendance resolves. */}
+            {isAttendanceSection && (
               <Card className="border-2 shadow-medium">
-                <CardHeader>
+                <CardHeader className="flex-row items-center justify-between space-y-0">
                   <CardTitle className="flex items-center gap-2">
-                    <Settings className="h-5 w-5" />
-                    Attendance Controls
+                    <Timer className="h-5 w-5" />
+                    Today
                   </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Current PIN</label>
-                    <div className="flex items-center space-x-2">
-                      <Input
-                        value={currentPin}
-                        readOnly
-                        className="font-mono text-lg text-center"
-                      />
-                      <Badge variant={isTimeUp ? "destructive" : "default"}>
-                        {isTimeUp ? "Closed" : "Active"}
-                      </Badge>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Set New PIN</label>
-                    <div className="flex space-x-2">
-                      <Input
-                        placeholder="Enter new PIN"
-                        value={newPin}
-                        onChange={(e) => setNewPin(e.target.value)}
-                      />
-                      <Button onClick={handleSetPin} size="sm">
-                        Set
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Time Limit (minutes)
-                    </label>
-                    <div className="flex space-x-2">
-                      <Input
-                        type="number"
-                        placeholder="Minutes"
-                        value={newTimeLimit}
-                        onChange={(e) => setNewTimeLimit(e.target.value)}
-                      />
-                      <Button onClick={handleSetTimeLimit} size="sm">
-                        <Timer className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={onResetAttendance}
-                    variant="destructive"
-                    className="w-full"
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Reset Attendance
+                  <Button variant="ghost" size="sm" onClick={loadToday}>
+                    <RefreshCw className="h-4 w-4" />
                   </Button>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {todaySessions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No session today for this class. Schedule sets which days
+                      it meets; Class Sessions has every other day.
+                    </p>
+                  ) : (
+                    todaySessions.map((sn) => {
+                      const label =
+                        cohorts.find((c) => c.id === sn.cohort_id)?.label ?? "?";
+                      const here = validPresentStudents.filter(
+                        (p) => p.cohort === label,
+                      ).length;
+                      const enrolled = roster.filter(
+                        (r) => r.cohort === label,
+                      ).length;
+
+                      return (
+                        <div key={sn.id} className="space-y-2 rounded-md border p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">Cohort {label}</Badge>
+                            <Badge
+                              variant={
+                                sn.status === "open" ? "default" : "secondary"
+                              }
+                            >
+                              {sn.status}
+                            </Badge>
+                            <button
+                              type="button"
+                              className="ml-auto rounded px-1.5 py-0.5 text-sm tabular-nums text-muted-foreground underline-offset-2 hover:bg-muted hover:underline"
+                              title="Who is here, and who is not"
+                              onClick={() => setRosterFor(sn)}
+                            >
+                              {here}/{enrolled} here
+                            </button>
+                          </div>
+
+                          {sn.status === "open" && sn.pin && (
+                            <>
+                              <p className="text-center font-mono text-2xl tracking-widest">
+                                {sn.pin}
+                              </p>
+                              <p className="text-center text-xs text-muted-foreground">
+                                Check-in closes {sn.auto_close_minutes} minutes
+                                after it opened.
+                              </p>
+                            </>
+                          )}
+
+                          {sn.status === "closed" && (
+                            <p className="text-xs text-muted-foreground">
+                              Closed — anyone who did not mark is recorded
+                              absent. Reopening does not undo that; their state
+                              changes when they check in.
+                            </p>
+                          )}
+
+                          {sn.status === "cancelled" && (
+                            <p className="text-xs text-muted-foreground">
+                              Cancelled
+                              {sn.cancellation_reason
+                                ? ` — ${sn.cancellation_reason}`
+                                : "."}
+                            </p>
+                          )}
+
+                          <SessionActions
+                            session={sn}
+                            onChanged={loadToday}
+                            full
+                          />
+                        </div>
+                      );
+                    })
+                  )}
                 </CardContent>
               </Card>
             )}
 
-            {/* Student Lists */}
-            {(isAttendanceSection || isStudentsSection) && (
-              <div
-                className={cn(
-                  isStudentsSection ? "lg:col-span-3" : "lg:col-span-2",
-                )}
-              >
+            {/* Today's present and absent */}
+            <div className="lg:col-span-2">
                 <Card className="border-2 shadow-medium">
                   <CardHeader>
                     <div className="flex items-center justify-between">
@@ -2073,9 +1322,11 @@ const TADashboard = ({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Cohorts</SelectItem>
-                          <SelectItem value="a">Cohort A</SelectItem>
-                          <SelectItem value="b">Cohort B</SelectItem>
-                          <SelectItem value="c">Cohort C</SelectItem>
+                          {cohorts.map((co) => (
+                            <SelectItem key={co.id} value={co.label}>
+                              Cohort {co.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2153,7 +1404,7 @@ const TADashboard = ({
                               );
                               const cohort = rosterEntry
                                 ? rosterEntry.cohort
-                                : inferCohort(studentId);
+                                : cohortOf(studentId);
                               const studentName = rosterEntry?.name;
                               return (
                                 <div
@@ -2199,127 +1450,27 @@ const TADashboard = ({
                     </Tabs>
                   </CardContent>
                 </Card>
-              </div>
-            )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* History Dialog */}
-      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Absence History</DialogTitle>
-            <DialogDescription>
-              View students who missed class on specific days. Select a date to
-              filter, or view all absences since January 26.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-[240px] justify-start text-left font-normal",
-                      !historyDate && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {historyDate
-                      ? format(historyDate, "PPP")
-                      : "Filter by date (optional)"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={historyDate}
-                    onSelect={(date) => {
-                      setHistoryDate(date);
-                      if (date) {
-                        loadAbsenceHistory(date);
-                      } else {
-                        loadAbsenceHistory();
-                      }
-                    }}
-                    initialFocus
-                  />
-                  {historyDate && (
-                    <div className="p-3 border-t">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          setHistoryDate(undefined);
-                          loadAbsenceHistory();
-                        }}
-                      >
-                        Clear Filter
-                      </Button>
-                    </div>
-                  )}
-                </PopoverContent>
-              </Popover>
-            </div>
+      <SessionRosterDialog
+        session={rosterFor}
+        cohortLabel={
+          cohorts.find((c) => c.id === rosterFor?.cohort_id)?.label ?? ""
+        }
+        onOpenChange={(o) => !o && setRosterFor(null)}
+        onChanged={loadToday}
+      />
 
-            {isLoadingHistory ? (
-              <p className="text-center text-muted-foreground py-8">
-                Loading history...
-              </p>
-            ) : absenceHistory.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No absences found for the selected period.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-4 gap-2 font-semibold text-sm border-b pb-2">
-                  <div>Date</div>
-                  <div>Student ID</div>
-                  <div>Cohort</div>
-                  <div>Status</div>
-                </div>
-                {absenceHistory.map((absence, index) => {
-                  const student = roster.find(
-                    (r) => r.student_id === absence.student_id,
-                  );
-                  return (
-                    <div
-                      key={`${absence.date}-${absence.student_id}-${index}`}
-                      className="grid grid-cols-4 gap-2 p-2 bg-muted/50 rounded-lg text-sm"
-                    >
-                      <div>
-                        {format(new Date(absence.date), "MMM dd, yyyy")}
-                      </div>
-                      <div className="font-medium">{absence.student_id}</div>
-                      <div>
-                        <Badge variant="outline">Cohort {absence.cohort}</Badge>
-                      </div>
-                      <div>
-                        {absence.was_class_cancelled ? (
-                          <Badge variant="secondary">Class Cancelled</Badge>
-                        ) : (
-                          <Badge variant="destructive">Absent</Badge>
-                        )}
-                      </div>
-                      {student?.name && (
-                        <div className="col-span-4 text-xs text-muted-foreground mt-1">
-                          {student.name}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setShowHistoryDialog(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AbsenceHistoryDialog
+        open={showHistoryDialog}
+        onOpenChange={setShowHistoryDialog}
+        classId={activeClassId}
+        classCode={activeClass?.code}
+        roster={roster}
+      />
 
       {/* Flagged Records Dialog */}
       <Dialog open={showFlaggedDialog} onOpenChange={setShowFlaggedDialog}>
@@ -2356,6 +1507,11 @@ const TADashboard = ({
                           {student?.name
                             ? `${student.name} (${record.student_id})`
                             : record.student_id}
+                          {!student && (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              — no longer on this roster
+                            </span>
+                          )}
                         </p>
                         <p className="text-sm text-muted-foreground">
                           Disputed Date:{" "}
@@ -2397,481 +1553,6 @@ const TADashboard = ({
 
           <DialogFooter>
             <Button onClick={() => setShowFlaggedDialog(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Cancel Class Dialog */}
-      <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cancel Class</DialogTitle>
-            <DialogDescription>
-              Mark a class as cancelled for a specific cohort on a specific
-              date. Students from that cohort won't be marked as absent on
-              cancelled days.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Date</label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal",
-                      !cancelDate && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {cancelDate ? format(cancelDate, "PPP") : "Select date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={cancelDate}
-                    onSelect={setCancelDate}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Cohort</label>
-              <Select
-                value={cancelCohort}
-                onValueChange={(value) =>
-                  setCancelCohort(value as "A" | "B" | "C")
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select cohort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowCancelDialog(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleCancelClass}>Mark as Cancelled</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Search Student Dialog */}
-      <Dialog open={showSearchDialog} onOpenChange={setShowSearchDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
-          <DialogHeader>
-            <DialogTitle>Search Student Absence History</DialogTitle>
-            <DialogDescription>
-              Search for a student by name or ID to view all classes they
-              missed. Enter part of their name or ID.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Input
-                placeholder="Enter student name or ID..."
-                value={searchQuery}
-                onChange={(e) => {
-                  const query = e.target.value;
-                  setSearchQuery(query);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    searchStudent(searchQuery);
-                  }
-                }}
-                className="flex-1"
-              />
-              <Button
-                onClick={() => searchStudent(searchQuery)}
-                variant="default"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </Button>
-            </div>
-
-            {isLoadingStudentHistory ? (
-              <p className="text-center text-muted-foreground py-8">
-                Searching...
-              </p>
-            ) : studentAbsenceHistory.length === 0 && searchQuery ? (
-              <p className="text-center text-muted-foreground py-8">
-                No absences found for this student.
-              </p>
-            ) : studentAbsenceHistory.length > 0 ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm font-medium">
-                    {studentAbsenceHistory.length}{" "}
-                    {studentAbsenceHistory.length === 1
-                      ? "absence"
-                      : "absences"}{" "}
-                    found
-                  </p>
-                </div>
-                <div className="grid grid-cols-4 gap-2 font-semibold text-sm border-b pb-2">
-                  <div>Date</div>
-                  <div>Student ID</div>
-                  <div>Cohort</div>
-                  <div>Status</div>
-                </div>
-                {studentAbsenceHistory.map((absence, index) => {
-                  const student = roster.find(
-                    (r) => r.student_id === absence.student_id,
-                  );
-                  return (
-                    <div
-                      key={`${absence.date}-${absence.student_id}-${index}`}
-                      className="grid grid-cols-4 gap-2 p-2 bg-muted/50 rounded-lg text-sm"
-                    >
-                      <div>
-                        {format(new Date(absence.date), "MMM dd, yyyy")}
-                      </div>
-                      <div className="font-medium">{absence.student_id}</div>
-                      <div>
-                        <Badge variant="outline">Cohort {absence.cohort}</Badge>
-                      </div>
-                      <div>
-                        {absence.was_class_cancelled ? (
-                          <Badge variant="secondary">Class Cancelled</Badge>
-                        ) : (
-                          <Badge variant="destructive">Absent</Badge>
-                        )}
-                      </div>
-                      {student?.name && (
-                        <div className="col-span-4 text-xs text-muted-foreground mt-1">
-                          {student.name}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                Enter a name or ID to search.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setShowSearchDialog(false);
-                setSearchQuery("");
-                setStudentAbsenceHistory([]);
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Search Student (Mark Attendance) Dialog */}
-      <Dialog
-        open={showAttendanceSearchDialog}
-        onOpenChange={setShowAttendanceSearchDialog}
-      >
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto no-scrollbar">
-          <DialogHeader>
-            <DialogTitle>Search Student to Mark Attendance</DialogTitle>
-            <DialogDescription>
-              Search for a student by name or ID, then mark attendance for them.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <Input
-                placeholder="Enter student name or ID..."
-                value={attendanceSearchQuery}
-                onChange={(e) => setAttendanceSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    searchStudentForAttendance(attendanceSearchQuery);
-                  }
-                }}
-                className="flex-1"
-              />
-              <Button
-                onClick={() =>
-                  searchStudentForAttendance(attendanceSearchQuery)
-                }
-                variant="default"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </Button>
-            </div>
-
-            {attendanceSearchResults.length === 0 && attendanceSearchQuery ? (
-              <p className="text-center text-muted-foreground py-8">
-                No students found.
-              </p>
-            ) : attendanceSearchResults.length > 0 ? (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">
-                  {attendanceSearchResults.length} student
-                  {attendanceSearchResults.length === 1 ? "" : "s"} found
-                </p>
-
-                <div className="space-y-2">
-                  {attendanceSearchResults.map((student) => {
-                    const cohort = student.cohort
-                      ? String(student.cohort).toUpperCase()
-                      : inferCohort(student.student_id);
-                    const isAlreadyPresent = presentStudents.some(
-                      (p) => p.id === student.student_id,
-                    );
-
-                    return (
-                      <div
-                        key={student.student_id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-muted/50 rounded-lg border gap-3"
-                      >
-                        <div className="space-y-1">
-                          <div className="font-medium">
-                            {student.name
-                              ? `${student.name} (${student.student_id})`
-                              : student.student_id}
-                          </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Badge variant="outline">Cohort {cohort}</Badge>
-                            {isAlreadyPresent && (
-                              <Badge variant="secondary">Already Present</Badge>
-                            )}
-                          </div>
-                        </div>
-
-                        <Button
-                          onClick={() =>
-                            handleMarkAttendanceManually(
-                              student.student_id,
-                              cohort,
-                            )
-                          }
-                          disabled={isAlreadyPresent}
-                        >
-                          Mark Present
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                Enter a name or ID to search.
-              </p>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setShowAttendanceSearchDialog(false);
-                setAttendanceSearchQuery("");
-                setAttendanceSearchResults([]);
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Class Schedule Dialog */}
-      <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Configure Class Schedule</DialogTitle>
-            <DialogDescription>
-              Set which days of the week classes occur for each cohort.
-              Attendance will only be tracked on these days.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Select Cohort</label>
-              <Select
-                value={scheduleCohort}
-                onValueChange={(value) => {
-                  setScheduleCohort(value as "A" | "B" | "C");
-                  // Load existing schedule for this cohort
-                  const existingSchedule = classSchedule.filter(
-                    (s) => s.cohort === value,
-                  );
-                  setSelectedDays(existingSchedule.map((s) => s.day_of_week));
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select cohort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {scheduleCohort && (
-              <div className="space-y-3">
-                <label className="text-sm font-medium">
-                  Select Days of Week (3 days)
-                </label>
-                <div className="space-y-2">
-                  {[
-                    { value: 1, label: "Monday" },
-                    { value: 2, label: "Tuesday" },
-                    { value: 3, label: "Wednesday" },
-                    { value: 4, label: "Thursday" },
-                    { value: 5, label: "Friday" },
-                    { value: 6, label: "Saturday" },
-                    { value: 0, label: "Sunday" },
-                  ].map((day) => (
-                    <div
-                      key={day.value}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`day-${day.value}`}
-                        checked={selectedDays.includes(day.value)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            if (selectedDays.length < 3) {
-                              setSelectedDays([...selectedDays, day.value]);
-                            } else {
-                              toast({
-                                title: "Maximum Days",
-                                description:
-                                  "Classes only occur 3 times per week. Please unselect a day first.",
-                                variant: "default",
-                              });
-                            }
-                          } else {
-                            setSelectedDays(
-                              selectedDays.filter((d) => d !== day.value),
-                            );
-                          }
-                        }}
-                      />
-                      <label
-                        htmlFor={`day-${day.value}`}
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                      >
-                        {day.label}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    onClick={() => {
-                      if (!scheduleCohort || selectedDays.length === 0) {
-                        toast({
-                          title: "Error",
-                          description:
-                            "Please select a cohort and at least one day",
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-                      handleSaveSchedule(scheduleCohort, selectedDays);
-                    }}
-                    className="flex-1"
-                  >
-                    Save Schedule
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      if (!scheduleCohort) {
-                        toast({
-                          title: "Error",
-                          description: "Please select a cohort first",
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-
-                      // Generate class dates for next 3 months
-                      const startDate = new Date();
-                      const endDate = new Date();
-                      endDate.setMonth(endDate.getMonth() + 3);
-
-                      await generateClassDates(startDate, endDate, [
-                        scheduleCohort as "A" | "B" | "C",
-                      ]);
-                    }}
-                    className="flex-1"
-                  >
-                    Generate Class Dates (Next 3 Months)
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {classSchedule.length > 0 && (
-              <div className="pt-4 border-t">
-                <p className="text-sm font-medium mb-2">Current Schedule:</p>
-                <div className="space-y-1">
-                  {["A", "B"].map((cohort) => {
-                    const cohortSchedule = classSchedule.filter(
-                      (s) => s.cohort === cohort,
-                    );
-                    if (cohortSchedule.length === 0) return null;
-
-                    const dayNames = [
-                      "Sunday",
-                      "Monday",
-                      "Tuesday",
-                      "Wednesday",
-                      "Thursday",
-                      "Friday",
-                      "Saturday",
-                    ];
-                    const days = cohortSchedule
-                      .map((s) => dayNames[s.day_of_week])
-                      .join(", ");
-
-                    return (
-                      <div key={cohort} className="text-sm">
-                        <span className="font-medium">Cohort {cohort}:</span>{" "}
-                        {days}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowScheduleDialog(false);
-                setScheduleCohort("");
-                setSelectedDays([]);
-              }}
-            >
-              Close
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2918,9 +1599,11 @@ const TADashboard = ({
                   <SelectValue placeholder="Select cohort" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="A">Cohort A</SelectItem>
-                  <SelectItem value="B">Cohort B</SelectItem>
-                  <SelectItem value="C">Cohort C</SelectItem>
+                  {cohorts.map((co) => (
+                    <SelectItem key={co.id} value={co.label}>
+                      Cohort {co.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -3274,86 +1957,31 @@ const TADashboard = ({
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Per-cohort lecturer / FI — collapsed by default */}
-            <div className="rounded-lg border bg-muted/30">
-              <button
-                type="button"
-                onClick={() => setShowReportConfig((v) => !v)}
-                className="w-full flex items-center justify-between gap-2 p-3 text-sm font-medium"
+            {/* The lecturer and FI names this report pastes are set under
+                Classes, next to who can manage the class. They change about
+                once a term, and a settings form in the middle of a report is
+                a hard place to find them when they are wrong. */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Select
+                value={weeklyAbsenceCohortFilter}
+                onValueChange={setWeeklyAbsenceCohortFilter}
               >
-                <span>Lecturer &amp; FI per cohort</span>
-                {showReportConfig ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                )}
-              </button>
-              {showReportConfig && (
-                <div className="p-3 pt-0 space-y-3">
-                  <div className="space-y-2">
-                    <div className="hidden sm:grid grid-cols-[60px_1fr_1fr] gap-3 text-xs font-medium text-muted-foreground">
-                      <div>Cohort</div>
-                      <div>Instructor / Lecturer</div>
-                      <div>FI</div>
-                    </div>
-                    {["A", "B", "C"].map((c) => (
-                      <div
-                        key={c}
-                        className="grid grid-cols-1 sm:grid-cols-[60px_1fr_1fr] gap-3 items-center"
-                      >
-                        <Badge variant="outline" className="w-fit">
-                          Cohort {c}
-                        </Badge>
-                        <Input
-                          value={reportPairs[c]?.instructor || ""}
-                          onChange={(e) =>
-                            setReportPairs((prev) => ({
-                              ...prev,
-                              [c]: { ...prev[c], instructor: e.target.value },
-                            }))
-                          }
-                          placeholder={`Cohort ${c} instructor`}
-                        />
-                        <Input
-                          value={reportPairs[c]?.fi || ""}
-                          onChange={(e) =>
-                            setReportPairs((prev) => ({
-                              ...prev,
-                              [c]: { ...prev[c], fi: e.target.value },
-                            }))
-                          }
-                          placeholder={`Cohort ${c} FI`}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <Select
-                      value={weeklyAbsenceCohortFilter}
-                      onValueChange={setWeeklyAbsenceCohortFilter}
-                    >
-                      <SelectTrigger className="w-[140px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Cohorts</SelectItem>
-                        <SelectItem value="a">Cohort A</SelectItem>
-                        <SelectItem value="b">Cohort B</SelectItem>
-                        <SelectItem value="c">Cohort C</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      size="sm"
-                      onClick={handleSaveReportSettings}
-                      disabled={isSavingReportSettings}
-                    >
-                      {isSavingReportSettings
-                        ? "Saving..."
-                        : "Save Instructor / FI"}
-                    </Button>
-                  </div>
-                </div>
-              )}
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Cohorts</SelectItem>
+                  {cohorts.map((co) => (
+                    <SelectItem key={co.id} value={co.label}>
+                      Cohort {co.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <p className="text-xs text-muted-foreground">
+                Lecturer and FI come from Classes → the people icon.
+              </p>
             </div>
 
             {isBuildingReport ? (

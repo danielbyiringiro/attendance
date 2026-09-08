@@ -24,3 +24,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI local state. .temp/start-secrets holds a service-role key and a
+# database URL for the local stack — never commit it. config.toml and any
+# CLI-managed migrations can be added deliberately if the CLI is adopted; the
+# schema currently lives in sql/migrations.
+supabase/.branches
+supabase/.temp
+
+# Working documents, not source: the migration brief, the pre-overhaul
+# baseline, and printed worklists. Worklists carry student names.
+Document/
+cohort-checkin-dossier.html

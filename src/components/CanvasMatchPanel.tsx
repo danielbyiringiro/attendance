@@ -11,7 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { CanvasMatch } from "@/lib/canvasGradebook";
-import type { CohortChange } from "@/lib/rosterUpdates";
+import type { CohortChange } from "@/lib/api/enrolment";
 import type { SummaryRow } from "@/lib/attendanceExport";
 
 interface CanvasMatchPanelProps {

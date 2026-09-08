@@ -60,24 +60,55 @@ columns, their order, and how CAMU matches students, then add an entry to
 is run in the Supabase SQL Editor, the export still works but forgets manual
 pairings and ignores between exports, and the match panel says so.
 
+## Deferred by the class data model branch
+
+### Bulk roster upload
+
+`upsert_enrolments` exists, is tested, and does the hard part: one server call
+whatever the size, reusing an existing `student_id` so somebody taking two
+courses is not duplicated, filling in a missing name but never overwriting one,
+and reporting anyone already in a different cohort rather than moving them
+silently. What is missing is the screen.
+
+The only way to enrol somebody today is Add Student, one at a time, which for a
+cohort of sixty is sixty round trips through a dialog. This is the next feature
+branch.
+
+`parseCsv` in [src/lib/csv.ts](src/lib/csv.ts) already handles BOM, quotes and
+CRLF and needs no changes. The shape worth building is a preview before any
+write, in five buckets: new student / existing student, new enrolment / already
+enrolled / in another cohort of this class (offer to move) / invalid.
+
+### Retiring the legacy schema for real
+
+Migration 015 moved the pre-class tables into a `legacy` schema rather than
+dropping them, so the rows survive if the reconciliation ever turns out to have
+been wrong. `v_bridge_reconciliation` has read 0 unexplained since. Once a term
+has passed without anyone wanting them, `DROP SCHEMA legacy CASCADE` finishes
+the job.
+
+### Two functions removed, worth reviving
+
+Both were written and left uncalled, and are in git history rather than the
+tree:
+
+- `createAdHocSession` — a one-off session outside the weekly pattern, for a
+  make-up class. There is no UI for one; a session can only come from the
+  pattern or be moved by hand.
+- `classSummary` — per-student totals from its own queries. Removed because
+  `StudentRoster` computes the same numbers from `attendanceLog`, and two
+  implementations of one rate is how they drift.
+
+### Percentages are still computed in two places
+
+`StudentRoster` and `attendanceExport` each work out an attendance rate from
+the same stored states. They agree today. A `v_student_class_attendance` view
+both read would make that structural rather than a coincidence.
+
 ## Smaller items
 
-- `SEMESTER_START` disagrees across the app: the export module and TA dashboard
-  use 2026-05-18, while [src/components/StudentDashboard.tsx](src/components/StudentDashboard.tsx)
-  uses 2026-05-26. One of them is wrong and students see the other number.
-- The roster load in [src/pages/Index.tsx](src/pages/Index.tsx) is not paginated,
-  so it silently truncates past 1000 students. Affects the dashboard and the
-  export dialog's student picker; the export itself paginates its own read.
-- `buildWeeklyReport` in [src/components/TADashboard.tsx](src/components/TADashboard.tsx)
-  now disagrees with the exporter in two ways. Decide which is right and make
-  them match:
-  1. It treats a cancelled session as cancelled for **every** cohort, ignoring
-     the `cohort` column on `cancelled_sessions`. The exporter respects it.
-  2. It counts **every** Tue/Wed/Thu as a class day, so any day the cohort did
-     not actually meet — a holiday, a reading week, a day nobody recorded as
-     cancelled — is charged to every student as an absence. The exporter counts
-     a day only when there is evidence the session ran (a check-in, or a
-     `class_dates` row), which is the same inference `loadAbsenceHistory`
-     already makes. The weekly report's `weekNumber > 1` skip is a symptom of
-     this: week 1 had to be special-cased precisely because no attendance was
-     taken then.
+All of the items that were here — the two disagreeing `SEMESTER_START`
+constants, the unpaginated roster read, and `buildWeeklyReport` disagreeing
+with the exporter about cancellations and about what counts as a class day —
+were resolved by the class data model branch. Absence is a stored row now, so
+the derivations that disagreed no longer exist.
