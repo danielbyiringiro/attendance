@@ -74,20 +74,26 @@ export const addClassMember = async (
 };
 
 /**
- * Remove someone from a class. The server refuses to remove the last member —
- * with no admin bypass, a class with nobody on it is reachable only from the
- * SQL editor.
+ * Remove someone from a class.
+ *
+ * The server refuses two things. The last member, because with no admin bypass
+ * a class nobody is on is reachable only from the SQL editor. And the caller
+ * themselves, unless `confirmSelf` says so — the members list reorders as it
+ * loads, so aiming at a collaborator and hitting your own row is a mis-click
+ * away, and only another member could give the access back.
  */
 export const removeClassMember = async (
   classId: string,
   staffId: string,
-): Promise<{ removed: boolean; remaining: number }> => {
+  opts: { confirmSelf?: boolean } = {},
+): Promise<{ removed: boolean; remaining: number; was_self: boolean }> => {
   const { data, error } = await supabase.rpc("remove_class_member", {
     p_class_id: classId,
     p_staff_id: staffId,
+    p_confirm_self: opts.confirmSelf ?? false,
   });
   if (error) fail("Could not remove them", error);
-  return data as { removed: boolean; remaining: number };
+  return data as { removed: boolean; remaining: number; was_self: boolean };
 };
 
 export interface AddableStaff {

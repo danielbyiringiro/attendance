@@ -2,7 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Mail, Search, UserMinus, UserPlus } from "lucide-react";
+import { LogOut, Loader2, Mail, Search, UserMinus, UserPlus } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   addClassMember,
@@ -38,6 +48,7 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
+  const [leaving, setLeaving] = useState<ClassMember | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -126,14 +137,22 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
     }
   };
 
-  const handleRemove = async (member: ClassMember) => {
+  // Leaving is a different act from removing somebody else, so it is a
+  // different control with its own confirmation. The server refuses an
+  // unconfirmed self-removal regardless — this is not the only guard.
+  const handleRemove = async (member: ClassMember, confirmSelf = false) => {
     setIsWorking(true);
     try {
-      await removeClassMember(classId, member.staff_id);
-      toast({
-        title: "Removed",
-        description: `${member.email ?? "They"} can no longer see this class.`,
+      const result = await removeClassMember(classId, member.staff_id, {
+        confirmSelf,
       });
+      toast({
+        title: result.was_self ? "You left this class" : "Removed",
+        description: result.was_self
+          ? "It is gone from your class list. Another member can add you back."
+          : `${member.email ?? "They"} can no longer see this class.`,
+      });
+      setLeaving(null);
       await load();
     } catch (e) {
       toast({
@@ -170,19 +189,33 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
                 </Badge>
               )}
             </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={isWorking || members.length === 1}
-              title={
-                members.length === 1
-                  ? "The last person cannot be removed — the class would be unreachable"
-                  : "Remove"
-              }
-              onClick={() => handleRemove(m)}
-            >
-              <UserMinus className="h-3.5 w-3.5" />
-            </Button>
+            {m.is_you ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive"
+                disabled={isWorking || members.length === 1}
+                title={
+                  members.length === 1
+                    ? "You are the only person on this class — leaving would make it unreachable"
+                    : "Leave this class"
+                }
+                onClick={() => setLeaving(m)}
+              >
+                <LogOut className="mr-1 h-3.5 w-3.5" />
+                Leave
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isWorking}
+                title="Remove"
+                onClick={() => handleRemove(m)}
+              >
+                <UserMinus className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         ))}
         {!isLoading && members.length === 0 && (
@@ -245,6 +278,31 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
           )}
         </div>
       )}
+
+      <AlertDialog
+        open={leaving !== null}
+        onOpenChange={(o) => !o && setLeaving(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave this class?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will lose access to it — its sessions, its roster and its
+              attendance. There is no admin who can undo this: only somebody
+              still on the class can add you back.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Stay</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => leaving && handleRemove(leaving, true)}
+            >
+              Leave the class
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <p className="mt-2 text-xs text-muted-foreground">
         Search covers people you already share a class with. Anyone else can be
