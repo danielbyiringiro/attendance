@@ -20,21 +20,14 @@ import {
 import {
   Ban,
   Loader2,
-  Lock,
   MoreVertical,
   PencilLine,
-  PlayCircle,
   RefreshCw,
   UserCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  cancelSession,
-  closeSession,
-  listSessions,
-  openSession,
-  updateSession,
-} from "@/lib/api/sessions";
+import { cancelSession, listSessions, updateSession } from "@/lib/api/sessions";
+import SessionActions from "@/components/ta/SessionActions";
 import { markAllPresent } from "@/lib/api/attendance";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
@@ -163,56 +156,6 @@ const SessionList = ({
   }, [sessions, cohortFilter]);
 
   const openCount = sessions.filter((s) => s.status === "open").length;
-
-  const run = async (
-    session: SessionRow,
-    work: () => Promise<void>,
-  ): Promise<void> => {
-    setBusyId(session.id);
-    try {
-      await work();
-      await load();
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const handleOpen = (s: SessionRow) =>
-    run(s, async () => {
-      try {
-        const result = await openSession(s.id);
-        toast({
-          title: `Open — PIN ${result.pin}`,
-          description: "Read this out. It closes on its own when the window ends.",
-        });
-      } catch (e) {
-        toast({
-          title: "Could not open the session",
-          description: e instanceof Error ? e.message : "Unexpected error.",
-          variant: "destructive",
-        });
-      }
-    });
-
-  const handleClose = (s: SessionRow) =>
-    run(s, async () => {
-      try {
-        const absences = await closeSession(s.id);
-        toast({
-          title: "Session closed",
-          description:
-            absences === 0
-              ? "Everyone enrolled was accounted for."
-              : `${absences} student${absences === 1 ? " was" : "s were"} recorded absent.`,
-        });
-      } catch (e) {
-        toast({
-          title: "Could not close the session",
-          description: e instanceof Error ? e.message : "Unexpected error.",
-          variant: "destructive",
-        });
-      }
-    });
 
   const startEditing = (s: SessionRow) => {
     setEditing(s);
@@ -438,37 +381,7 @@ const SessionList = ({
                   buttons per row made the common case — open, then close —
                   something you had to look for. */}
               <div className="flex shrink-0 items-center gap-1">
-                {s.status === "scheduled" && (
-                  <Button
-                    size="sm"
-                    disabled={busyId === s.id}
-                    onClick={() => handleOpen(s)}
-                  >
-                    <PlayCircle className="mr-1 h-4 w-4" />
-                    Open
-                  </Button>
-                )}
-                {s.status === "open" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busyId === s.id}
-                    onClick={() => handleClose(s)}
-                  >
-                    <Lock className="mr-1 h-4 w-4" />
-                    Close
-                  </Button>
-                )}
-                {s.status === "closed" && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busyId === s.id}
-                    onClick={() => handleOpen(s)}
-                  >
-                    Reopen
-                  </Button>
-                )}
+                <SessionActions session={s} onChanged={load} />
 
                 {/* Retiming one session is a frequent job, so it stays on the
                     row rather than behind the menu. */}

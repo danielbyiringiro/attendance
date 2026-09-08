@@ -57,6 +57,7 @@ import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
 import Sessions from "@/components/ta/sections/Sessions";
+import SessionActions from "@/components/ta/SessionActions";
 import StudentRoster from "@/components/ta/StudentRoster";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -1269,75 +1270,93 @@ const TADashboard = ({
         {/* Controls and today's lists */}
         {isAttendanceSection && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Today's sessions, with the PIN each one actually issued.
-                This was a single PIN box backed by the session_state
-                singleton: one PIN, one timer, for the whole installation. It
-                had no relationship to the per-session PIN open_session hands
-                out and mark_attendance resolves, so the dashboard could
-                confidently show a PIN that opened nothing. */}
+            {/* Today's sessions: the PIN each one actually issued, and the
+                one button that applies. This was a single PIN box backed by
+                the session_state singleton — one PIN, one timer, for the whole
+                installation — with no relationship to the per-session PIN
+                open_session hands out and mark_attendance resolves. */}
             {isAttendanceSection && (
               <Card className="border-2 shadow-medium">
-                <CardHeader>
+                <CardHeader className="flex-row items-center justify-between space-y-0">
                   <CardTitle className="flex items-center gap-2">
                     <Timer className="h-5 w-5" />
                     Today
                   </CardTitle>
+                  <Button variant="ghost" size="sm" onClick={loadToday}>
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {todaySessions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No session today for this class. Class Sessions has the
-                      full list, and Schedule sets which days it meets.
+                      No session today for this class. Schedule sets which days
+                      it meets; Class Sessions has every other day.
                     </p>
                   ) : (
-                    todaySessions.map((sn) => (
-                      <div key={sn.id} className="rounded-md border p-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">
-                            Cohort{" "}
-                            {cohorts.find((c) => c.id === sn.cohort_id)?.label ??
-                              "?"}
-                          </Badge>
-                          <Badge
-                            variant={
-                              sn.status === "open" ? "default" : "secondary"
-                            }
-                          >
-                            {sn.status}
-                          </Badge>
+                    todaySessions.map((sn) => {
+                      const label =
+                        cohorts.find((c) => c.id === sn.cohort_id)?.label ?? "?";
+                      const here = validPresentStudents.filter(
+                        (p) => p.cohort === label,
+                      ).length;
+                      const enrolled = roster.filter(
+                        (r) => r.cohort === label,
+                      ).length;
+
+                      return (
+                        <div key={sn.id} className="space-y-2 rounded-md border p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">Cohort {label}</Badge>
+                            <Badge
+                              variant={
+                                sn.status === "open" ? "default" : "secondary"
+                              }
+                            >
+                              {sn.status}
+                            </Badge>
+                            <span className="ml-auto text-sm tabular-nums text-muted-foreground">
+                              {here}/{enrolled} here
+                            </span>
+                          </div>
+
+                          {sn.status === "open" && sn.pin && (
+                            <>
+                              <p className="text-center font-mono text-2xl tracking-widest">
+                                {sn.pin}
+                              </p>
+                              <p className="text-center text-xs text-muted-foreground">
+                                Check-in closes {sn.auto_close_minutes} minutes
+                                after it opened.
+                              </p>
+                            </>
+                          )}
+
+                          {sn.status === "closed" && (
+                            <p className="text-xs text-muted-foreground">
+                              Closed — anyone who did not mark is recorded
+                              absent. Reopening does not undo that; their state
+                              changes when they check in.
+                            </p>
+                          )}
+
+                          {sn.status === "cancelled" && (
+                            <p className="text-xs text-muted-foreground">
+                              Cancelled
+                              {sn.cancellation_reason
+                                ? ` — ${sn.cancellation_reason}`
+                                : "."}
+                            </p>
+                          )}
+
+                          <SessionActions
+                            session={sn}
+                            onChanged={loadToday}
+                            full
+                          />
                         </div>
-
-                        {sn.status === "open" && sn.pin ? (
-                          <>
-                            <p className="mt-2 text-center font-mono text-2xl tracking-widest">
-                              {sn.pin}
-                            </p>
-                            <p className="mt-1 text-center text-xs text-muted-foreground">
-                              Read this out. Check-in closes{" "}
-                              {sn.auto_close_minutes} minutes after it opened.
-                            </p>
-                          </>
-                        ) : (
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {sn.status === "scheduled"
-                              ? "Not open yet — open it under Class Sessions to get a PIN."
-                              : sn.status === "closed"
-                                ? "Closed. Absences have been recorded."
-                                : "Cancelled."}
-                          </p>
-                        )}
-                      </div>
-                    ))
+                      );
+                    })
                   )}
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={loadToday}
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Refresh
-                  </Button>
                 </CardContent>
               </Card>
             )}
