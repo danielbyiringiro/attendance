@@ -429,6 +429,20 @@ const SessionList = ({
                   </Button>
                 )}
 
+                {/* Retiming one session is a frequent job, so it stays on the
+                    row rather than behind the menu. */}
+                {s.status === "scheduled" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Change the day or time"
+                    disabled={busyId === s.id}
+                    onClick={() => startEditing(s)}
+                  >
+                    <PencilLine className="h-4 w-4" />
+                  </Button>
+                )}
+
                 {s.status !== "cancelled" && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -437,15 +451,6 @@ const SessionList = ({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        disabled={s.status !== "scheduled"}
-                        onClick={() => startEditing(s)}
-                      >
-                        <PencilLine className="mr-2 h-4 w-4" />
-                        {s.status === "scheduled"
-                          ? "Move…"
-                          : "Move (already run)"}
-                      </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-destructive"
                         onClick={() => {
