@@ -22,6 +22,7 @@ import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { createClass, updateClass } from "@/lib/api/classes";
 import type { ClassWithCohorts } from "@/lib/api/types";
+import { addDays, toDateStr } from "@/lib/dates";
 
 interface ClassFormDialogProps {
   open: boolean;
@@ -48,12 +49,12 @@ const TIMEZONES = [
   "UTC",
 ];
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate(),
-  ).padStart(2, "0")}`;
-};
+const today = () => toDateStr(new Date());
+
+// Sessions only exist between the term dates, so a term ending today produces
+// a class that can never have one — and nothing on screen said why. Sixteen
+// weeks is a semester; it is a starting point, not a rule.
+const defaultTermEnd = () => toDateStr(addDays(new Date(), 16 * 7));
 
 const ClassFormDialog = ({
   open,
@@ -68,7 +69,7 @@ const ClassFormDialog = ({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [termStart, setTermStart] = useState(today());
-  const [termEnd, setTermEnd] = useState(today());
+  const [termEnd, setTermEnd] = useState(defaultTermEnd());
   const [timezone, setTimezone] = useState("Africa/Accra");
   const [cohortMode, setCohortMode] = useState<"count" | "labels">("count");
   const [cohortCount, setCohortCount] = useState("1");
@@ -118,7 +119,16 @@ const ClassFormDialog = ({
     if (termEnd < termStart) {
       toast({
         title: "The term ends before it starts",
-        description: "Sessions are generated between these two dates.",
+        description: "Sessions are only created between these two dates.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (termEnd <= today()) {
+      toast({
+        title: "That term has already ended",
+        description:
+          "Sessions are only created between the term dates, so this class could never have one. Move the end date forward.",
         variant: "destructive",
       });
       return;

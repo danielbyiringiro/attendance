@@ -26,6 +26,7 @@ import {
   type ScheduleSlot,
 } from "@/lib/api/classes";
 import { applyScheduleToFuture, generateSessions } from "@/lib/api/sessions";
+import { todayStr } from "@/lib/dates";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
 // Monday first, Sunday last: the week as a person reads it, not as Postgres
@@ -43,12 +44,20 @@ const DAYS = [
 const dayName = (weekday: number) =>
   DAYS.find((d) => d.weekday === weekday)?.label ?? "?";
 
-/** One meeting in the editor. `key` is local, so two new rows stay distinct. */
+/**
+ * One meeting in the editor. `key` is local, so two new rows stay distinct.
+ *
+ * `duration` and `signup` are two different lengths and were previously one
+ * box labelled "min": how long the class runs, and how long check-in stays
+ * open once you open it. A three-hour lab that takes attendance in the first
+ * ten minutes needs both, and they were the same number.
+ */
 interface Slot {
   key: string;
   weekday: number;
   startTime: string;
   duration: string;
+  signup: string;
 }
 
 let nextKey = 0;
@@ -57,6 +66,7 @@ const newSlot = (weekday = 2): Slot => ({
   weekday,
   startTime: "09:00",
   duration: "",
+  signup: "",
 });
 
 /** "09:00:00" -> "09:00", so the value fits an <input type="time">. */
@@ -77,7 +87,8 @@ const sameSlots = (a: Slot[], b: Slot[]) => {
     (slot, i) =>
       slot.weekday === right[i].weekday &&
       slot.startTime === right[i].startTime &&
-      slot.duration === right[i].duration,
+      slot.duration === right[i].duration &&
+      slot.signup === right[i].signup,
   );
 };
 
@@ -122,6 +133,7 @@ const Schedule = () => {
           weekday: r.weekday,
           startTime: toInputTime(r.start_time),
           duration: r.duration_minutes ? String(r.duration_minutes) : "",
+          signup: r.auto_close_minutes ? String(r.auto_close_minutes) : "",
         });
       });
       setSlots(byCohort);
@@ -212,6 +224,7 @@ const Schedule = () => {
           weekday: s.weekday,
           startTime: s.startTime,
           durationMinutes: s.duration ? Number(s.duration) : undefined,
+          autoCloseMinutes: s.signup ? Number(s.signup) : undefined,
         }));
         await setCohortSchedules([cohort.id], payload);
       }
@@ -226,12 +239,22 @@ const Schedule = () => {
         result.created > 0 && `${result.created} added`,
       ].filter(Boolean);
 
+      // "Nothing needed changing" is true but useless when the real reason is
+      // that the term ended before today, so there are no future days at all.
+      const termOver = activeClass.term_ends_on < todayStr();
+
       toast({
-        title: `Saved ${dirty.length} cohort${dirty.length === 1 ? "" : "s"}`,
+        title:
+          changes.length === 0 && termOver
+            ? "Saved, but no sessions were created"
+            : `Saved ${dirty.length} cohort${dirty.length === 1 ? "" : "s"}`,
         description:
-          changes.length === 0
-            ? "No session from today onward needed changing."
-            : `${changes.join(", ")}, from today onward. Nothing earlier changed, and sessions you cancelled or moved by hand were left alone.`,
+          changes.length === 0 && termOver
+            ? `This class's term ended on ${activeClass.term_ends_on}. Sessions only exist between the term dates, so there are no days left to create — move the end date forward under Classes.`
+            : changes.length === 0
+              ? "No session from today onward needed changing."
+              : `${changes.join(", ")}, from today onward. Nothing earlier changed, and sessions you cancelled or moved by hand were left alone.`,
+        variant: changes.length === 0 && termOver ? "destructive" : undefined,
       });
       await load();
     } catch (e) {
@@ -346,6 +369,16 @@ const Schedule = () => {
                 </div>
 
                 <div className="space-y-1 rounded-md border p-2">
+                  {/* Two different lengths, so both are named. One unlabelled
+                      "min" box could not say which it governed. */}
+                  {rows.length > 0 && (
+                    <div className="hidden items-center gap-2 px-1 text-xs text-muted-foreground sm:flex">
+                      <span className="w-36">Day</span>
+                      <span className="w-32">Starts</span>
+                      <span className="w-[6.5rem]">Class runs</span>
+                      <span className="w-[6.5rem]">Sign-up open</span>
+                    </div>
+                  )}
                   {rows.length === 0 ? (
                     <p className="px-1 py-2 text-sm text-muted-foreground">
                       No days yet.
@@ -392,11 +425,12 @@ const Schedule = () => {
                             }
                           />
 
-                          <div className="flex items-center gap-1">
+                          <div className="flex w-[6.5rem] items-center gap-1">
                             <Input
                               type="number"
                               min={1}
-                              className="w-24"
+                              className="w-[4.5rem]"
+                              title="How long the class runs"
                               placeholder={String(
                                 activeClass.default_duration_minutes,
                               )}
@@ -404,6 +438,27 @@ const Schedule = () => {
                               onChange={(e) =>
                                 patch(cohort.id, slot.key, {
                                   duration: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              min
+                            </span>
+                          </div>
+
+                          <div className="flex w-[6.5rem] items-center gap-1">
+                            <Input
+                              type="number"
+                              min={1}
+                              className="w-[4.5rem]"
+                              title="How long check-in stays open after you open the session"
+                              placeholder={String(
+                                activeClass.default_auto_close_minutes,
+                              )}
+                              value={slot.signup}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  signup: e.target.value,
                                 })
                               }
                             />
@@ -469,9 +524,15 @@ const Schedule = () => {
               Saving takes effect from today: sessions move to their new times,
               days a cohort no longer meets are removed, and new ones are created
               through to the end of term. Nothing earlier changes, and a session
-              you cancelled or moved by hand stays as it is. Leave a length blank
-              to use the class default ({activeClass.default_duration_minutes}{" "}
-              minutes).
+              you cancelled or moved by hand stays as it is.
+              <br />
+              <strong>Class runs</strong> is how long the meeting lasts (default{" "}
+              {activeClass.default_duration_minutes} min).{" "}
+              <strong>Sign-up open</strong> is how long students can still check
+              in after you open the session (default{" "}
+              {activeClass.default_auto_close_minutes} min) — a three-hour lab
+              can take attendance in the first ten minutes. Leave either blank
+              to use the class default.
             </p>
           </div>
         </CardContent>

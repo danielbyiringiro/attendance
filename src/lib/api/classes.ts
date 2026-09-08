@@ -160,14 +160,22 @@ export const listSchedules = async (
   return (data ?? []) as CohortScheduleRow[];
 };
 
-/** One weekday a cohort meets, with its own time. */
+/** One weekday a cohort meets, with its own time and windows. */
 export interface ScheduleSlot {
   /** 0 = Sunday .. 6 = Saturday. */
   weekday: number;
   /** "HH:MM". */
   startTime: string;
-  /** Omit to inherit the class default at generation time. */
+  /** How long the class runs. Omit to inherit the class default. */
   durationMinutes?: number;
+  /**
+   * How long check-in stays open after the TA opens the session — the sign-up
+   * window. A different number from the class length: a three-hour lab may
+   * take attendance in the first ten minutes.
+   */
+  autoCloseMinutes?: number;
+  /** Marks after this many minutes are `late` rather than `present`. */
+  lateWindowMinutes?: number;
 }
 
 /**
@@ -191,6 +199,8 @@ export const setCohortSchedules = async (
       weekday: s.weekday,
       start_time: s.startTime,
       duration_minutes: s.durationMinutes ?? null,
+      auto_close_minutes: s.autoCloseMinutes ?? null,
+      late_window_minutes: s.lateWindowMinutes ?? null,
     })),
   });
   if (error) fail("Could not save the schedule", error);

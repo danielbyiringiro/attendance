@@ -101,6 +101,7 @@ const SessionList = ({
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
+  const [editSignup, setEditSignup] = useState("");
 
   const cohortLabel = useMemo(
     () => new Map(cohorts.map((c) => [c.id, c.label])),
@@ -217,6 +218,7 @@ const SessionList = ({
     // unchanged would then move the session.
     setEditTime(timeIn(s.starts_at, timezone, false));
     setEditDuration(String(s.duration_minutes));
+    setEditSignup(String(s.auto_close_minutes));
   };
 
   const handleEdit = async () => {
@@ -227,6 +229,7 @@ const SessionList = ({
         date: editDate || undefined,
         startTime: editTime || undefined,
         durationMinutes: editDuration ? Number(editDuration) : undefined,
+        autoCloseMinutes: editSignup ? Number(editSignup) : undefined,
       });
       toast({
         title: "Session moved",
@@ -387,7 +390,8 @@ const SessionList = ({
                     )}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    {s.duration_minutes} min
+                    {s.duration_minutes} min class · {s.auto_close_minutes} min
+                    sign-up
                     {s.cancellation_reason && ` · ${s.cancellation_reason}`}
                   </p>
                 </div>
@@ -505,7 +509,7 @@ const SessionList = ({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="edit-duration">Length (minutes)</Label>
+              <Label htmlFor="edit-duration">Class runs (min)</Label>
               <Input
                 id="edit-duration"
                 type="number"
@@ -513,6 +517,19 @@ const SessionList = ({
                 value={editDuration}
                 onChange={(e) => setEditDuration(e.target.value)}
               />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-signup">Sign-up open (min)</Label>
+              <Input
+                id="edit-signup"
+                type="number"
+                min={1}
+                value={editSignup}
+                onChange={(e) => setEditSignup(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                How long check-in stays open once you open it.
+              </p>
             </div>
           </div>
 

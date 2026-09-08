@@ -170,7 +170,12 @@ export const updateSession = async (
     date?: string;
     /** "HH:MM". */
     startTime?: string;
+    /** How long the class runs. */
     durationMinutes?: number;
+    /** How long check-in stays open once opened — the sign-up window. */
+    autoCloseMinutes?: number;
+    /** Marks after this many minutes are `late` rather than `present`. */
+    lateWindowMinutes?: number;
     notes?: string;
   },
 ): Promise<SessionRow> => {
@@ -180,6 +185,8 @@ export const updateSession = async (
     p_start_time: changes.startTime ?? null,
     p_duration_minutes: changes.durationMinutes ?? null,
     p_notes: changes.notes ?? null,
+    p_auto_close_minutes: changes.autoCloseMinutes ?? null,
+    p_late_window_minutes: changes.lateWindowMinutes ?? null,
   });
   if (error) fail("Could not change the session", error);
   return data as SessionRow;

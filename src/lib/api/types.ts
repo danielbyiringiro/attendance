@@ -59,7 +59,12 @@ export interface CohortScheduleRow {
   /** 0 = Sunday .. 6 = Saturday, matching Postgres EXTRACT(DOW). */
   weekday: number;
   start_time: string; // HH:MM:SS
+  /** How long the class runs. NULL inherits the class default. */
   duration_minutes: number | null;
+  /** How long check-in stays open once the session is opened. */
+  auto_close_minutes: number | null;
+  /** How long after opening a mark still counts as present rather than late. */
+  late_window_minutes: number | null;
   delivery_mode: DeliveryMode | null;
   effective_from: string | null;
   effective_until: string | null;
