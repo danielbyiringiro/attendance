@@ -58,6 +58,7 @@ import AbsenceHistoryDialog from "@/components/ta/AbsenceHistoryDialog";
 import Classes from "@/components/ta/sections/Classes";
 import Schedule from "@/components/ta/sections/Schedule";
 import Sessions from "@/components/ta/sections/Sessions";
+import Admin from "@/components/ta/sections/Admin";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -106,7 +107,8 @@ interface TADashboardProps {
     | "students"
     | "sessions"
     | "schedule"
-    | "classes";
+    | "classes"
+    | "admin";
   onLogout: () => void;
 }
 
@@ -933,6 +935,7 @@ const TADashboard = ({
   const isStudentsSection = activeSection === "students";
   const isSessionsSection = activeSection === "sessions";
   const isScheduleSection = activeSection === "schedule";
+  const isAdminSection = activeSection === "admin";
   const isClassesSection = activeSection === "classes";
   // A lookup rather than a five-deep ternary: adding a section to the nested
   // version meant threading a branch into two of them and leaving a dead arm
@@ -949,6 +952,10 @@ const TADashboard = ({
     schedule: {
       title: "Schedule",
       description: "Set when each cohort meets",
+    },
+    admin: {
+      title: "Admin",
+      description: "Approve accounts, and repair a class nobody can reach",
     },
     analytics: {
       title: "Attendance Analytics",
@@ -996,7 +1003,8 @@ const TADashboard = ({
         {/* Every count below is of one class's roster, so say when there isn't
             one and when it is still arriving — an empty roster otherwise reads
             as a class where everybody is absent. */}
-        {!isClassesSection && !isScheduleSection && !isSessionsSection && !activeClass && (
+        {!isClassesSection && !isScheduleSection && !isSessionsSection &&
+          !isAdminSection && !activeClass && (
           <Card className="border-2 border-dashed">
             <CardContent className="pt-6 text-center">
               <p className="font-medium">No class selected</p>
@@ -1006,7 +1014,8 @@ const TADashboard = ({
             </CardContent>
           </Card>
         )}
-        {!isClassesSection && !isScheduleSection && !isSessionsSection && activeClass && isRosterLoading && (
+        {!isClassesSection && !isScheduleSection && !isSessionsSection &&
+          !isAdminSection && activeClass && isRosterLoading && (
           <p className="text-sm text-muted-foreground">Loading the roster…</p>
         )}
 
@@ -1016,6 +1025,7 @@ const TADashboard = ({
         {isClassesSection && <Classes />}
         {isSessionsSection && <Sessions />}
         {isScheduleSection && <Schedule />}
+        {isAdminSection && <Admin />}
 
         {isAnalyticsSection && (
           <>

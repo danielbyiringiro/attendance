@@ -107,7 +107,7 @@ $grandfather$;
 -- variables inside a dollar-quoted block, so :'name' here is a syntax error.
 DO $bootstrap$
 DECLARE
-  v_email text := lower(btrim('first.admin@example.edu'));
+  v_email text := lower(btrim(''));
   n integer;
 BEGIN
   UPDATE public.staff SET is_admin = true
