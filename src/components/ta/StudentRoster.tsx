@@ -69,6 +69,7 @@ const StudentRoster = ({
   onMarkPresent,
   presentIds,
   minAttendancePercentage = 75,
+  onVisibleChange,
 }: StudentRosterProps) => {
   const { toast } = useToast();
   const [log, setLog] = useState<AttendanceLog | null>(null);
@@ -170,6 +171,12 @@ const StudentRoster = ({
     absenceFloor,
     minAttendancePercentage,
   ]);
+
+  // Tell the heading what is actually on screen. Depends on the count rather
+  // than on `shown` itself, so re-sorting the same students does not fire it.
+  useEffect(() => {
+    onVisibleChange?.(shown.length);
+  }, [shown.length, onVisibleChange]);
 
   // Whatever is on screen, as a file. The point of narrowing to "below 75%" is
   // usually to do something about those students, which happens outside this

@@ -262,6 +262,9 @@ const TADashboard = ({
   // Add/Remove student state
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
   const [showRosterUpload, setShowRosterUpload] = useState(false);
+  // Reported up by StudentRoster, which owns the filters. null until it
+  // first reports, so the heading shows the plain class size on load.
+  const [visibleStudents, setVisibleStudents] = useState<number | null>(null);
   const [addStudentId, setAddStudentId] = useState("");
   const [addStudentName, setAddStudentName] = useState("");
   // A cohort label of the active class, not one of three fixed letters.
@@ -1217,9 +1220,20 @@ const TADashboard = ({
         {isStudentsSection && activeClass && (
           <Card className="border-2 shadow-medium">
             <CardHeader>
+              {/*
+                Counts what the filters leave, not what the class holds. The
+                cohort, search and risk filters live inside StudentRoster, so
+                the number has to come back from it — otherwise this heading
+                says 48 above a list of 12 and quietly contradicts itself.
+
+                Both numbers while a filter is narrowing, because "12 students"
+                on its own loses the fact that the class has 48.
+              */}
               <CardTitle className="flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                {roster.length} student{roster.length === 1 ? "" : "s"}
+                {visibleStudents !== null && visibleStudents !== roster.length
+                  ? `${visibleStudents} of ${roster.length} students`
+                  : `${roster.length} student${roster.length === 1 ? "" : "s"}`}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1230,6 +1244,7 @@ const TADashboard = ({
                 presentIds={new Set(validPresentStudents.map((p) => p.id))}
                 onMarkPresent={handleMarkAttendanceManually}
                 minAttendancePercentage={activeClass.min_attendance_percentage}
+                onVisibleChange={setVisibleStudents}
               />
             </CardContent>
           </Card>
