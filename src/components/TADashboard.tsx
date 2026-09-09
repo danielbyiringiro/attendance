@@ -1036,85 +1036,14 @@ const TADashboard = ({
         {isScheduleSection && <Schedule />}
         {isAdminSection && <Admin />}
 
-        {isAnalyticsSection && (
-          <>
-            {/* Stats Overview */}
-            <div
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-            >
-              <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserCheck className="h-5 w-5 text-success" />
-                    <div>
-                      <p className="text-2xl font-bold text-success">
-                        {validPresentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Present</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+        {/*
+          What this screen can do, above what it is showing.
 
-              <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserX className="h-5 w-5 text-destructive" />
-                    <div>
-                      <p className="text-2xl font-bold text-destructive">
-                        {absentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Absent</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {cohortTallies.map((c) => (
-                <Card key={c.id} className="border-2 border-primary/25 bg-gradient-card shadow-soft">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center space-x-2">
-                      <Users className="h-5 w-5 text-primary" />
-                      <div>
-                        <p className="text-2xl font-bold">
-                          {c.present}/{c.total}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Cohort {c.label}
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {/* Per-student standing. Was reachable only by opening a dialog,
-                typing a name and pressing a button, which could not show you
-                the class. */}
-            <Card className="border-2">
-              <CardHeader>
-                <CardTitle className="text-base">Students</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {activeClass && (
-                  <StudentRoster
-                    classId={activeClass.id}
-                    cohorts={cohorts}
-                    roster={roster}
-                    presentIds={new Set(validPresentStudents.map((p) => p.id))}
-                    minAttendancePercentage={
-                      activeClass.min_attendance_percentage
-                    }
-                    onRosterChanged={() => void loadRoster()}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          </>
-        )}
-
-        {/* Action Buttons */}
+          These sat after the student roster, which is the whole class —
+          so reaching Export Attendance meant scrolling past forty people,
+          and the Students tab put its own buttons first, so the two
+          screens disagreed about where actions live.
+        */}
         {(isAnalyticsSection || isStudentsSection) && (
           <div className="flex gap-4 flex-wrap">
             {isAnalyticsSection && (
@@ -1219,6 +1148,85 @@ const TADashboard = ({
             )}
           </div>
         )}
+
+        {isAnalyticsSection && (
+          <>
+            {/* Stats Overview */}
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+            >
+              <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
+                <CardContent className="pt-6">
+                  <div className="flex items-center space-x-2">
+                    <UserCheck className="h-5 w-5 text-success" />
+                    <div>
+                      <p className="text-2xl font-bold text-success">
+                        {validPresentStudents.length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Present</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
+                <CardContent className="pt-6">
+                  <div className="flex items-center space-x-2">
+                    <UserX className="h-5 w-5 text-destructive" />
+                    <div>
+                      <p className="text-2xl font-bold text-destructive">
+                        {absentStudents.length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Absent</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {cohortTallies.map((c) => (
+                <Card key={c.id} className="border-2 border-primary/25 bg-gradient-card shadow-soft">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center space-x-2">
+                      <Users className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="text-2xl font-bold">
+                          {c.present}/{c.total}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Cohort {c.label}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {/* Per-student standing. Was reachable only by opening a dialog,
+                typing a name and pressing a button, which could not show you
+                the class. */}
+            <Card className="border-2">
+              <CardHeader>
+                <CardTitle className="text-base">Students</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {activeClass && (
+                  <StudentRoster
+                    classId={activeClass.id}
+                    cohorts={cohorts}
+                    roster={roster}
+                    presentIds={new Set(validPresentStudents.map((p) => p.id))}
+                    minAttendancePercentage={
+                      activeClass.min_attendance_percentage
+                    }
+                    onRosterChanged={() => void loadRoster()}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
 
         {/* Students: the whole class, filtered as you type. */}
         {isStudentsSection && activeClass && (
