@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:sql": "bash ./sql/tests/run.sh",
-    "test:attendance": "node ./scripts/test-attendance.mjs"
+    "test:attendance": "node ./scripts/test-attendance.mjs",
+    "test:roster": "node ./scripts/test-roster.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
