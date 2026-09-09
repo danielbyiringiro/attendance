@@ -93,6 +93,7 @@ const RosterUpload = ({
     studentId: null,
     name: null,
     headerRow: null,
+    firstDataRow: 0,
   });
   const [moveExisting, setMoveExisting] = useState(false);
   const [preview, setPreview] = useState<UpsertEnrolmentsResult | null>(null);
@@ -103,7 +104,12 @@ const RosterUpload = ({
   const reset = () => {
     setStep("pick");
     setTable(null);
-    setMapping({ studentId: null, name: null, headerRow: null });
+    setMapping({
+      studentId: null,
+      name: null,
+      headerRow: null,
+      firstDataRow: 0,
+    });
     setMoveExisting(false);
     setPreview(null);
     setResult(null);
@@ -155,8 +161,12 @@ const RosterUpload = ({
         return;
       }
 
+      const guess = autoMap(extracted.rows);
       setTable(extracted);
-      setMapping(autoMap(extracted.rows));
+      setMapping(guess);
+      // Nothing was recognised, so the grid is the only way to work out what
+      // the columns are. Opening it saves hunting for the toggle.
+      setShowRaw(guess.headerRow === null);
       setStep("map");
     } catch (e) {
       // Deliberately not echoing the file name: it alone identifies a class
@@ -447,6 +457,34 @@ const RosterUpload = ({
               </div>
             )}
 
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Data starts at row</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={table.rows.length}
+                  className="h-9 w-24"
+                  value={mapping.firstDataRow + 1}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (!Number.isFinite(n)) return;
+                    setMapping({
+                      ...mapping,
+                      firstDataRow: Math.min(
+                        Math.max(0, n - 1),
+                        Math.max(0, table.rows.length - 1),
+                      ),
+                    });
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Everything above this is ignored. A report's own headings are
+                  just more text — uploaded, they become students.
+                </p>
+              </div>
+            </div>
+
             {/*
               What the file actually gave us, before any interpretation.
               A PDF has no table in it — the rows above are reconstructed from
@@ -477,11 +515,28 @@ const RosterUpload = ({
                           className={
                             r === mapping.headerRow
                               ? "border-t bg-primary/10 font-medium"
-                              : "border-t"
+                              : r < mapping.firstDataRow
+                                ? "border-t opacity-40"
+                                : "border-t"
                           }
                         >
-                          <td className="w-10 px-2 py-1 text-right text-muted-foreground">
-                            {r + 1}
+                          {/* Clicking the number is the quickest way to say
+                              "the students start here". */}
+                          <td className="w-10 p-0 text-right align-top">
+                            <button
+                              type="button"
+                              title="Start the data at this row"
+                              onClick={() =>
+                                setMapping({ ...mapping, firstDataRow: r })
+                              }
+                              className={
+                                r === mapping.firstDataRow
+                                  ? "w-full px-2 py-1 text-right font-semibold text-primary"
+                                  : "w-full px-2 py-1 text-right text-muted-foreground hover:text-foreground"
+                              }
+                            >
+                              {r + 1}
+                            </button>
                           </td>
                           {row.map((cell, c) => (
                             <td

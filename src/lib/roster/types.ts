@@ -47,6 +47,15 @@ export interface ColumnMapping {
   name: number | null;
   /** Index of the row holding the column titles, or null if there is none. */
   headerRow: number | null;
+  /**
+   * The first row that is actually a student.
+   *
+   * Separate from headerRow because a document can have neither titles nor a
+   * blank line before its data — a report's own heading is just another row of
+   * text, and uploading it enrols a student called "Faculty of Science". The
+   * server enforces no format on an ID, so nothing downstream would object.
+   */
+  firstDataRow: number;
 }
 
 /** One row as the upload will send it. */

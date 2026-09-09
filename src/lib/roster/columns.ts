@@ -115,6 +115,64 @@ export const preambleOf = (rows: string[][], headerRow: number | null): string[]
     .filter(Boolean);
 
 /**
+ * Does this cell look like somebody's ID rather than a word?
+ *
+ * Contains a digit, holds together as one token, and is long enough to be an
+ * identifier. "20250001" passes; "Matric", "Faculty of Science" and "Semester
+ * 3" do not.
+ */
+const looksLikeAnId = (cell: string): boolean => {
+  const c = cell.trim();
+  return c.length >= 3 && c.length <= 24 && !/\s/.test(c) && /\d/.test(c);
+};
+
+/**
+ * Where the students start, when there are no column titles to go by.
+ *
+ * A report's own heading is just more text: nothing separates "Faculty of
+ * Science" from a student except that it does not look like a roster row. So
+ * two things have to hold. The row must be as wide as the table — preamble
+ * lines are usually one cell where the data has five — and it must contain
+ * something shaped like an ID.
+ *
+ * Both are needed. Width alone stops at the untitled header row, whose cells
+ * are words; the ID test alone would accept a stray "2025-2026" sitting on its
+ * own line above the table.
+ */
+export const findFirstDataRow = (
+  rows: string[][],
+  headerRow: number | null,
+): number => {
+  if (headerRow !== null) return headerRow + 1;
+  if (rows.length === 0) return 0;
+
+  const widths = new Map<number, number>();
+  for (const row of rows) {
+    const w = row.filter((c) => c.trim()).length;
+    if (w > 1) widths.set(w, (widths.get(w) ?? 0) + 1);
+  }
+
+  if (widths.size === 0) return 0;
+
+  const table = [...widths.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+  const full = rows.findIndex(
+    (row) =>
+      row.filter((c) => c.trim()).length === table &&
+      row.some((c) => looksLikeAnId(c)),
+  );
+  if (full !== -1) return full;
+
+  // No ID-shaped cell anywhere — an all-alphabetic roster is unusual but
+  // possible. Fall back to the first row of table width and let the sample on
+  // screen show whether that was right.
+  const wide = rows.findIndex(
+    (row) => row.filter((c) => c.trim()).length === table,
+  );
+  return wide === -1 ? 0 : wide;
+};
+
+/**
  * Guess the mapping. Every field may be null, and null means "ask".
  *
  * With no header row this returns nulls rather than guessing from the shape of
@@ -124,7 +182,12 @@ export const preambleOf = (rows: string[][], headerRow: number | null): string[]
 export const autoMap = (rows: string[][]): ColumnMapping => {
   const headerRow = findHeaderRow(rows);
   if (headerRow === null) {
-    return { studentId: null, name: null, headerRow: null };
+    return {
+      studentId: null,
+      name: null,
+      headerRow: null,
+      firstDataRow: findFirstDataRow(rows, null),
+    };
   }
 
   const header = rows[headerRow];
@@ -150,7 +213,12 @@ export const autoMap = (rows: string[][]): ColumnMapping => {
     }
   });
 
-  return { studentId, name, headerRow };
+  return {
+    studentId,
+    name,
+    headerRow,
+    firstDataRow: findFirstDataRow(rows, headerRow),
+  };
 };
 
 /**
@@ -185,7 +253,12 @@ export const applyMapping = (
 
   const header =
     mapping.headerRow === null ? [] : table.rows[mapping.headerRow] ?? [];
-  const first = mapping.headerRow === null ? 0 : mapping.headerRow + 1;
+
+  // Not headerRow + 1: a document can have data that starts well below its
+  // titles, or no titles at all above a block of report headings. Uploading
+  // those enrols students called "Faculty of Science", and nothing downstream
+  // objects because no format is enforced on an ID.
+  const first = Math.max(0, mapping.firstDataRow ?? 0);
 
   for (let i = first; i < table.rows.length; i += 1) {
     const cells = table.rows[i];

@@ -344,5 +344,72 @@ const MIXED = [
 eq("mixed font sizes on one line stay on one line", groupIntoLines(MIXED).length, 2);
 
 
+// ---------------------------------------------------------------------------
+// A roster that is not a CAMU report
+//
+// Unfamiliar column titles, or none at all, with the document's own headings
+// sitting above the table. Nothing distinguishes "Faculty of Science" from a
+// student except that it does not look like a roster row -- and the server
+// enforces no format on an ID, so an upload of it would succeed silently.
+// ---------------------------------------------------------------------------
+
+const UNFAMILIAR = tableFromCsv(
+  [
+    "Faculty of Science",
+    "Class list, Semester 3",
+    "Matric,Student,Programme",
+    "20250001,Ama Serwaa,BSc CS",
+    "20250002,Kofi Boateng,BSc CS",
+  ].join("\n"),
+);
+
+const unfamiliarMap = autoMap(UNFAMILIAR.rows);
+
+eq("unrecognised titles are not guessed at", unfamiliarMap.studentId, null);
+eq(
+  "but the data is found below the headings and the untitled header",
+  unfamiliarMap.firstDataRow,
+  3,
+);
+
+eq(
+  "so picking the column by hand uploads students only",
+  applyMapping(UNFAMILIAR, { ...unfamiliarMap, studentId: 0, name: 1 }).rows,
+  [
+    { student_id: "20250001", name: "Ama Serwaa" },
+    { student_id: "20250002", name: "Kofi Boateng" },
+  ],
+);
+
+const NO_TITLES = tableFromCsv(
+  [
+    "Faculty of Science",
+    "Class list, Semester 3",
+    "20250001,Ama Serwaa",
+    "20250002,Kofi Boateng",
+  ].join("\n"),
+);
+
+const noTitlesMap = autoMap(NO_TITLES.rows);
+eq("with no titles at all the data still starts in the right place", noTitlesMap.firstDataRow, 2);
+eq(
+  "and the headings are not enrolled as students",
+  applyMapping(NO_TITLES, { ...noTitlesMap, studentId: 0, name: 1 }).rows,
+  [
+    { student_id: "20250001", name: "Ama Serwaa" },
+    { student_id: "20250002", name: "Kofi Boateng" },
+  ],
+);
+
+// A stray year on its own line must not be mistaken for the start of the table.
+const STRAY = tableFromCsv(
+  ["2025-2026", "20250001,Ama Serwaa", "20250002,Kofi Boateng"].join("\n"),
+);
+eq("a one-cell line containing digits is not the first data row", autoMap(STRAY.rows).firstDataRow, 1);
+
+// Where titles ARE recognised, the row after them is still the answer.
+eq("a recognised header still decides where data starts", camuMap.firstDataRow, 6);
+
+
 console.log(`\n${checks} checks, ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -24,6 +24,7 @@ export {
   autoMap,
   codesMatch,
   courseCodeIn,
+  findFirstDataRow,
   findHeaderRow,
   preambleOf,
 } from "./columns";
