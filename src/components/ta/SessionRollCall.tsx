@@ -15,6 +15,7 @@ import {
   ClipboardCheck,
   Loader2,
   Search,
+  SkipForward,
   Undo2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -106,6 +107,15 @@ const SessionRollCall = ({
    * does not stick.
    */
   const [focusId, setFocusId] = useState<string | null>(null);
+  /**
+   * Passed over for now, in the order they were passed over.
+   *
+   * Skipping is not a mark and must not become one — somebody whose name you
+   * cannot pronounce, or who has stepped out, is not absent. They go to the
+   * back so the register keeps moving, and the list still refuses to empty
+   * until every one of them has been called.
+   */
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [showDone, setShowDone] = useState(false);
 
   const load = useCallback(async () => {
@@ -131,6 +141,7 @@ const SessionRollCall = ({
       setJustMarked([]);
       setShowDone(false);
       setFocusId(null);
+      setSkipped([]);
       void load();
     }
   }, [session, load]);
@@ -153,6 +164,8 @@ const SessionRollCall = ({
 
   const remaining = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    const passedOver = new Map(skipped.map((id, i) => [id, i]));
+
     return attendees
       .filter(stillToCall)
       .filter(
@@ -160,8 +173,19 @@ const SessionRollCall = ({
           needle === "" ||
           a.student_id.toLowerCase().includes(needle) ||
           (a.name ?? "").toLowerCase().includes(needle),
-      );
-  }, [attendees, query]);
+      )
+      // Anybody skipped goes after everybody who has not been, and among
+      // themselves in the order they were skipped — so a second pass through
+      // the stragglers runs in the same order as the first.
+      .sort((a, b) => {
+        const x = passedOver.get(a.student_id) ?? -1;
+        const y = passedOver.get(b.student_id) ?? -1;
+        if (x === y) return 0;
+        if (x === -1) return -1;
+        if (y === -1) return 1;
+        return x - y;
+      });
+  }, [attendees, query, skipped]);
 
   const done = useMemo(
     () => attendees.filter((a) => !stillToCall(a)),
@@ -202,6 +226,7 @@ const SessionRollCall = ({
       // Back to "whoever is next": a pull-forward is for one student, not a
       // mode somebody has to remember to leave.
       setFocusId(null);
+      setSkipped((ids) => ids.filter((id) => id !== attendee.student_id));
       onChanged();
     } catch (e) {
       // Put it back. Leaving the optimistic value would show a mark that does
@@ -220,6 +245,20 @@ const SessionRollCall = ({
     } finally {
       setBusyId(null);
     }
+  };
+
+  /**
+   * Pass over the student on the card.
+   *
+   * Deliberately writes nothing. The register is a record of what somebody
+   * determined, and "I will come back to you" is not a determination.
+   */
+  const skip = (attendee: SessionAttendee) => {
+    setSkipped((ids) => [
+      ...ids.filter((id) => id !== attendee.student_id),
+      attendee.student_id,
+    ]);
+    setFocusId(null);
   };
 
   /**
@@ -262,6 +301,12 @@ const SessionRollCall = ({
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
       if (typing) return;
+
+      if (e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        skip(current);
+        return;
+      }
 
       const call = CALLS.find(
         (c) => c.key.toLowerCase() === e.key.toLowerCase(),
@@ -398,6 +443,24 @@ const SessionRollCall = ({
                 </Button>
               ))}
             </div>
+
+            {/*
+              Only worth offering when there is somewhere to send them. With
+              one name left, skipping shows the same card again, which reads
+              as a broken button rather than a deliberate no-op.
+            */}
+            {remaining.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                disabled={busyId === current.student_id}
+                onClick={() => skip(current)}
+              >
+                <SkipForward className="mr-2 h-4 w-4" />
+                Skip — come back to them (S)
+              </Button>
+            )}
           </div>
         )}
 
@@ -446,6 +509,9 @@ const SessionRollCall = ({
                     </span>
                     <span className="block font-mono text-xs text-muted-foreground">
                       {a.student_id}
+                      {skipped.includes(a.student_id) && (
+                        <span className="ml-2">skipped</span>
+                      )}
                       {a.state === "unexcused" &&
                         a.marked_by_role === "system" && (
                           <span className="ml-2">absent by default</span>
