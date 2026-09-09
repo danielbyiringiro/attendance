@@ -179,6 +179,9 @@ const Index = () => {
       success: true,
       name: result.name,
       class: result.class,
+      // Rebuilt field by field rather than spread, so anything the RPC adds
+      // has to be named here too — this one was added by migration 025.
+      class_code: result.class_code,
       cohort: result.cohort,
       state: result.state,
     };
