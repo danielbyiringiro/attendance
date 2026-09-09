@@ -20,6 +20,15 @@ export interface SessionAttendee {
   name: string | null;
   state: AttendanceState | null;
   marked_at: string | null;
+  /**
+   * Who decided this, when anybody did.
+   *
+   * 'system' is close_session filling in an absence for everybody who never
+   * marked — a default, not a judgement. Distinguishing it from a 'staff' or
+   * 'student' mark is what lets a register know the difference between
+   * somebody who was called absent and somebody nobody has looked at yet.
+   */
+  marked_by_role: "student" | "staff" | "system" | null;
 }
 
 /**
@@ -51,7 +60,7 @@ export const rosterForSession = async (
 
   const { data: records, error: recordError } = await supabase
     .from("attendance_records")
-    .select("student_id, state, marked_at")
+    .select("student_id, state, marked_at, marked_by_role")
     .eq("session_id", sessionId);
   if (recordError) fail("Could not load attendance", recordError);
 
@@ -60,6 +69,7 @@ export const rosterForSession = async (
       student_id: string;
       state: AttendanceState;
       marked_at: string;
+      marked_by_role: "student" | "staff" | "system";
     }>).map((r) => [r.student_id, r]),
   );
 
@@ -73,6 +83,7 @@ export const rosterForSession = async (
       name: e.students?.name ?? null,
       state: record?.state ?? null,
       marked_at: record?.marked_at ?? null,
+      marked_by_role: record?.marked_by_role ?? null,
     };
   });
 };

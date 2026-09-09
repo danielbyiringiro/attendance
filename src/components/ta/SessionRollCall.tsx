@@ -113,10 +113,26 @@ const SessionRollCall = ({
     }
   }, [session, load]);
 
+  /**
+   * Still to call.
+   *
+   * NOT simply "has no record". close_session writes an explicit unexcused row
+   * for everybody who never checked in, so the moment a session closes every
+   * student has a state and a list of the unmarked is empty — which is what it
+   * did before this, on exactly the sessions somebody most wants to correct.
+   *
+   * A system-written absence is a default, not a judgement: it means nobody
+   * looked. So it belongs on the list. A mark made by a person, or by the
+   * student's own check-in, is a decision and does not.
+   */
+  const stillToCall = (a: SessionAttendee) =>
+    a.state === null ||
+    (a.state === "unexcused" && a.marked_by_role === "system");
+
   const remaining = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return attendees
-      .filter((a) => a.state === null)
+      .filter(stillToCall)
       .filter(
         (a) =>
           needle === "" ||
@@ -126,7 +142,7 @@ const SessionRollCall = ({
   }, [attendees, query]);
 
   const done = useMemo(
-    () => attendees.filter((a) => a.state !== null),
+    () => attendees.filter((a) => !stillToCall(a)),
     [attendees],
   );
 
@@ -190,6 +206,9 @@ const SessionRollCall = ({
 
   const total = attendees.length;
   const marked = done.length;
+  const defaulted = attendees.filter(
+    (a) => a.state === "unexcused" && a.marked_by_role === "system",
+  ).length;
 
   return (
     <Dialog open={session !== null} onOpenChange={onOpenChange}>
@@ -202,6 +221,14 @@ const SessionRollCall = ({
           <DialogDescription>
             {marked} of {total} marked. Each one you mark leaves the list, so
             what is left is what is left to do.
+            {defaulted > 0 && (
+              <>
+                {" "}
+                {defaulted} {defaulted === 1 ? "is" : "are"} down as absent
+                because the session closed without them checking in — they are
+                still on the list, since nobody has actually looked.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -277,11 +304,14 @@ const SessionRollCall = ({
                   <p className="truncate text-sm font-medium">
                     {a.name || a.student_id}
                   </p>
-                  {a.name && (
-                    <p className="font-mono text-xs text-muted-foreground">
-                      {a.student_id}
-                    </p>
-                  )}
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {a.name ? `${a.student_id}` : ""}
+                    {a.state === "unexcused" && a.marked_by_role === "system" && (
+                      <span className={a.name ? "ml-2" : ""}>
+                        absent by default — nobody has marked them
+                      </span>
+                    )}
+                  </p>
                 </div>
 
                 <div className="flex gap-1.5">
