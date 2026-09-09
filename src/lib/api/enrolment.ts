@@ -92,6 +92,7 @@ export const upsertEnrolments = async (
   cohortId: string,
   rows: RosterRow[],
   moveExisting = false,
+  dryRun = false,
 ): Promise<UpsertEnrolmentsResult> => {
   const { data, error } = await supabase.rpc("upsert_enrolments", {
     p_cohort_id: cohortId,
@@ -100,10 +101,25 @@ export const upsertEnrolments = async (
       name: r.name ?? null,
     })),
     p_move_existing: moveExisting,
+    p_dry_run: dryRun,
   });
   if (error) fail("Could not upload the roster", error);
   return data as UpsertEnrolmentsResult;
 };
+
+/**
+ * What an upload would do, having done none of it.
+ *
+ * Deliberately the same function as the write rather than an equivalent
+ * calculation: see migration 023. Everything a preview shows is therefore a
+ * promise the write is checked against, not an estimate.
+ */
+export const previewEnrolments = (
+  cohortId: string,
+  rows: RosterRow[],
+  moveExisting = false,
+): Promise<UpsertEnrolmentsResult> =>
+  upsertEnrolments(cohortId, rows, moveExisting, true);
 
 /** A student the Canvas match believes is filed under the wrong cohort. */
 export interface CohortChange {

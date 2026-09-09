@@ -41,6 +41,7 @@ import {
   Calendar as CalendarIcon,
   Search,
   UserPlus,
+  FileUp,
   UserMinus,
   CalendarDays,
   CalendarCheck,
@@ -63,6 +64,7 @@ import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import ThemeToggle from "@/components/ThemeToggle";
 import StudentRoster from "@/components/ta/StudentRoster";
+import RosterUpload from "@/components/ta/RosterUpload";
 import { useActiveClass } from "@/lib/classContext";
 import {
   dropEnrolment,
@@ -259,6 +261,7 @@ const TADashboard = ({
 
   // Add/Remove student state
   const [showAddStudentDialog, setShowAddStudentDialog] = useState(false);
+  const [showRosterUpload, setShowRosterUpload] = useState(false);
   const [addStudentId, setAddStudentId] = useState("");
   const [addStudentName, setAddStudentName] = useState("");
   // A cohort label of the active class, not one of three fixed letters.
@@ -1165,6 +1168,19 @@ const TADashboard = ({
                   <UserPlus className="h-4 w-4" />
                   Add Student
                 </Button>
+                {/*
+                  Beside the single add rather than replacing it: adding one
+                  student is the common case mid-term, and a file picker is a
+                  poor way to do it.
+                */}
+                <Button
+                  onClick={() => setShowRosterUpload(true)}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <FileUp className="h-4 w-4" />
+                  Upload List
+                </Button>
                 <Button
                   onClick={() => {
                     setShowRemoveStudentDialog(true);
@@ -1577,6 +1593,19 @@ const TADashboard = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/*
+        Roster upload. The file is read in the browser and never stored; only
+        the student IDs and names are sent, through the same server function
+        that produced the preview.
+      */}
+      <RosterUpload
+        open={showRosterUpload}
+        onOpenChange={setShowRosterUpload}
+        cohorts={cohorts}
+        classCode={activeClass?.code ?? null}
+        onUploaded={() => void loadRoster()}
+      />
 
       {/* Add Student Dialog */}
       <Dialog
