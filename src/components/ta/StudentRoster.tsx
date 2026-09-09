@@ -172,6 +172,19 @@ const StudentRoster = ({
     minAttendancePercentage,
   ]);
 
+  // Switching class clears the filters.
+  //
+  // The cohort filter is held by LABEL, so "C" survives into a class that has
+  // no cohort C and the roster comes up empty with only "No student matches
+  // that filter" to explain it. A search term and a risk filter survive the
+  // same way and are just as puzzling — they were about the class you were
+  // looking at, not this one.
+  useEffect(() => {
+    setCohortFilter("all");
+    setQuery("");
+    setRisk("all");
+  }, [classId]);
+
   // Tell the heading what is actually on screen. Depends on the count rather
   // than on `shown` itself, so re-sorting the same students does not fire it.
   useEffect(() => {

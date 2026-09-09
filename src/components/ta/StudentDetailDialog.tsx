@@ -14,7 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Check, Loader2, Pencil, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   setAttendanceState,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/api/attendance";
 import type { AttendanceState } from "@/lib/api/types";
 import type { StudentStanding } from "@/components/ta/StudentRoster";
+import { updateStudent } from "@/lib/api/enrolment";
 import { fromDateStr } from "@/lib/dates";
 import { format } from "date-fns";
 
@@ -62,6 +65,10 @@ const StudentDetailDialog = ({
   onChanged,
 }: StudentDetailDialogProps) => {
   const { toast } = useToast();
+  // Editing the name in place. `draft` is null when not editing, so an empty
+  // string stays a legitimate value — clearing a name is allowed.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const marks = useMemo(() => {
@@ -92,20 +99,102 @@ const StudentDetailDialog = ({
     }
   };
 
+  const saveName = async () => {
+    if (!student || draft === null) return;
+
+    setIsSaving(true);
+    try {
+      const saved = await updateStudent(student.student_id, draft.trim() || null);
+      setDraft(null);
+      toast({
+        title: saved.name ? "Name updated" : "Name cleared",
+        description: `${student.student_id} now shows as ${saved.name ?? "their ID"} in every class they take.`,
+      });
+      onChanged();
+    } catch (e) {
+      toast({
+        title: "Could not update the name",
+        description: e instanceof Error ? e.message : "Unknown error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <Dialog open={student !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         {student && (
           <>
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                {student.name || student.student_id}
-                <Badge variant="outline">Cohort {student.cohort}</Badge>
+              <DialogTitle className="flex flex-wrap items-center gap-2">
+                {draft === null ? (
+                  <>
+                    {student.name || student.student_id}
+                    <Badge variant="outline">Cohort {student.cohort}</Badge>
+                    {/*
+                      A name comes from whatever roster was uploaded, and
+                      rosters are wrong: misspelt, surname-first, or absent
+                      because the export had no name column. The person looking
+                      at the record is the one who knows.
+                    */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-muted-foreground"
+                      onClick={() => setDraft(student.name ?? "")}
+                    >
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      {student.name ? "Edit name" : "Add a name"}
+                    </Button>
+                  </>
+                ) : (
+                  <div className="flex w-full items-center gap-2">
+                    <Input
+                      autoFocus
+                      value={draft}
+                      placeholder="Their name"
+                      className="h-9"
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveName();
+                        if (e.key === "Escape") setDraft(null);
+                      }}
+                    />
+                    <Button size="sm" disabled={isSaving} onClick={() => void saveName()}>
+                      {isSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isSaving}
+                      onClick={() => setDraft(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </DialogTitle>
               <DialogDescription>
-                {student.name ? `${student.student_id} · ` : ""}
-                {student.sessions} session
-                {student.sessions === 1 ? "" : "s"} on record in this class.
+                {draft !== null ? (
+                  <>
+                    {student.student_id} · one person is one record here, so
+                    this name is what every class they take will show. Their ID
+                    cannot be changed — it is what every attendance record hangs
+                    on.
+                  </>
+                ) : (
+                  <>
+                    {student.name ? `${student.student_id} · ` : ""}
+                    {student.sessions} session
+                    {student.sessions === 1 ? "" : "s"} on record in this class.
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
 

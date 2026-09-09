@@ -176,3 +176,26 @@ export const dropEnrolment = async (
     .eq("student_id", studentId);
   if (error) fail("Could not remove the student", error);
 };
+
+/**
+ * Correct a student's name.
+ *
+ * `students` is a global registry, so this changes the name in every class the
+ * person takes — which is why the server permits it only to somebody who
+ * manages a class they are enrolled in, and why a roster upload deliberately
+ * cannot do it. Say so wherever this is offered.
+ *
+ * Their ID is not editable here. It is the join key for every attendance
+ * record, and the foreign keys carry no ON UPDATE CASCADE.
+ */
+export const updateStudent = async (
+  studentId: string,
+  name: string | null,
+): Promise<{ student_id: string; name: string | null }> => {
+  const { data, error } = await supabase.rpc("update_student", {
+    p_student_id: studentId,
+    p_name: name,
+  });
+  if (error) fail("Could not update the student", error);
+  return data as { student_id: string; name: string | null };
+};
