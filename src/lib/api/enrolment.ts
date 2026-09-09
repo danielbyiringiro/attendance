@@ -199,3 +199,39 @@ export const updateStudent = async (
   if (error) fail("Could not update the student", error);
   return data as { student_id: string; name: string | null };
 };
+
+/** What a corrected ID took with it. */
+export interface StudentIdChange {
+  student_id: string;
+  previous_id?: string;
+  unchanged: boolean;
+  enrolments?: number;
+  attendance_records?: number;
+  flags?: number;
+}
+
+/**
+ * Correct a mistyped student ID, carrying their history with them.
+ *
+ * The symptom this fixes is silent: with the wrong ID on the roster the
+ * student types their real one, nothing matches, and they are marked absent
+ * all term while looking perfectly enrolled.
+ *
+ * Their enrolments, attendance records and flags move with them — they are the
+ * same person, not a new one. Migration 024 had to add ON UPDATE CASCADE to
+ * every foreign key onto `students` for that to be possible at all.
+ *
+ * An ID somebody else already holds is refused: that is a merge, which has to
+ * decide what happens when both records have attendance for the same session.
+ */
+export const changeStudentId = async (
+  from: string,
+  to: string,
+): Promise<StudentIdChange> => {
+  const { data, error } = await supabase.rpc("change_student_id", {
+    p_from: from,
+    p_to: to,
+  });
+  if (error) fail("Could not change the student ID", error);
+  return data as StudentIdChange;
+};

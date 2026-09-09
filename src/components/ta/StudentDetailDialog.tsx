@@ -23,14 +23,22 @@ import {
   stateLabel,
   type AttendanceLog,
 } from "@/lib/api/attendance";
-import type { AttendanceState } from "@/lib/api/types";
+import type { AttendanceState, CohortRow } from "@/lib/api/types";
 import type { StudentStanding } from "@/components/ta/StudentRoster";
-import { updateStudent } from "@/lib/api/enrolment";
+import {
+  changeStudentId,
+  moveToCohort,
+  updateStudent,
+} from "@/lib/api/enrolment";
 import { fromDateStr } from "@/lib/dates";
 import { format } from "date-fns";
 
 interface StudentDetailDialogProps {
   student: StudentStanding | null;
+  /** The class this record belongs to, for a cohort move. */
+  classId: string;
+  /** Cohorts of that class, so the student can be moved between them. */
+  cohorts: CohortRow[];
   log: AttendanceLog | null;
   threshold: number;
   onOpenChange: (open: boolean) => void;
@@ -59,6 +67,8 @@ const STATE_STYLE: Record<string, string> = {
 /** One student's whole record in this class, session by session. */
 const StudentDetailDialog = ({
   student,
+  classId,
+  cohorts,
   log,
   threshold,
   onOpenChange,
@@ -69,6 +79,10 @@ const StudentDetailDialog = ({
   // string stays a legitimate value — clearing a name is allowed.
   const [draft, setDraft] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // Correcting the ID is separate from the name: it moves every attendance
+  // record the person has, so it is deliberately not one keystroke away.
+  const [idDraft, setIdDraft] = useState<string | null>(null);
+  const [isMoving, setIsMoving] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const marks = useMemo(() => {
@@ -119,6 +133,65 @@ const StudentDetailDialog = ({
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const saveId = async () => {
+    if (!student || idDraft === null) return;
+
+    const next = idDraft.trim();
+    if (!next || next === student.student_id) {
+      setIdDraft(null);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const moved = await changeStudentId(student.student_id, next);
+      setIdDraft(null);
+      toast({
+        title: `Now ${moved.student_id}`,
+        description: `${moved.attendance_records ?? 0} attendance record${
+          moved.attendance_records === 1 ? "" : "s"
+        } and ${moved.enrolments ?? 0} enrolment${
+          moved.enrolments === 1 ? "" : "s"
+        } moved with them.`,
+      });
+      onChanged();
+      onOpenChange(false);
+    } catch (e) {
+      toast({
+        title: "Could not change the ID",
+        description: e instanceof Error ? e.message : "Unknown error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const changeCohort = async (cohortId: string) => {
+    if (!student) return;
+
+    setIsMoving(true);
+    try {
+      await moveToCohort(classId, student.student_id, cohortId);
+      const label = cohorts.find((c) => c.id === cohortId)?.label ?? "";
+      toast({
+        title: `Moved to Cohort ${label}`,
+        description:
+          "Their attendance is now counted against that cohort's sessions, which changes what they count as absent from.",
+      });
+      onChanged();
+      onOpenChange(false);
+    } catch (e) {
+      toast({
+        title: "Could not move them",
+        description: e instanceof Error ? e.message : "Unknown error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsMoving(false);
     }
   };
 
@@ -230,6 +303,98 @@ const StudentDetailDialog = ({
                 Below the {threshold}% this class requires.
               </p>
             )}
+
+            {/*
+              The two edits that are not the name.
+
+              Both move attendance rather than just relabelling something, so
+              both close the dialog and re-read behind it — leaving a stale
+              record on screen after moving its owner is how somebody makes the
+              next change against numbers that no longer apply.
+            */}
+            <div className="grid gap-3 rounded-md border px-3 py-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Cohort
+                </label>
+                <Select
+                  value={cohorts.find((c) => c.label === student.cohort)?.id ?? ""}
+                  onValueChange={(v) => void changeCohort(v)}
+                  disabled={isMoving || cohorts.length === 0}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Choose a cohort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cohorts.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        Cohort {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Changes which sessions they count as absent from.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Student ID
+                </label>
+
+                {idDraft === null ? (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm">
+                      {student.student_id}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-muted-foreground"
+                      onClick={() => setIdDraft(student.student_id)}
+                    >
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      Correct
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      autoFocus
+                      value={idDraft}
+                      className="h-9 font-mono"
+                      onChange={(e) => setIdDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveId();
+                        if (e.key === "Escape") setIdDraft(null);
+                      }}
+                    />
+                    <Button size="sm" disabled={isSaving} onClick={() => void saveId()}>
+                      {isSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isSaving}
+                      onClick={() => setIdDraft(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {idDraft === null
+                    ? "What they type at check-in. If it is wrong, nothing they type matches and they are marked absent."
+                    : `Their ${student.sessions} session${student.sessions === 1 ? "" : "s"} and every flag move with them. An ID another student already has will be refused.`}
+                </p>
+              </div>
+            </div>
 
             <div className="space-y-1">
               <p className="text-sm font-medium">Session by session</p>

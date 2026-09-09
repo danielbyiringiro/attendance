@@ -397,6 +397,8 @@ const StudentRoster = ({
 
       <StudentDetailDialog
         student={openStudent}
+        classId={classId}
+        cohorts={cohorts}
         log={log}
         threshold={minAttendancePercentage}
         onOpenChange={(open) => !open && setOpenStudent(null)}
