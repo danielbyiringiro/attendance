@@ -333,7 +333,7 @@ const SessionRollCall = ({
 
   return (
     <Dialog open={session !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0">
+      <DialogContent className="flex max-h-[90dvh] max-w-2xl flex-col gap-0 p-4 sm:p-6">
         <DialogHeader className="shrink-0 pb-4">
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="h-5 w-5" />
@@ -400,10 +400,10 @@ const SessionRollCall = ({
           pulls that student forward for the out-of-order case.
         */}
         {current && !isLoading && (
-          <div className="shrink-0 space-y-3 rounded-lg border-2 border-primary/40 bg-primary/5 p-4 shadow-soft">
+          <div className="shrink-0 space-y-3 rounded-lg border-2 border-primary/40 bg-primary/5 p-3 shadow-soft sm:p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-xl font-bold">
+                <p className="truncate text-lg font-bold sm:text-xl">
                   {current.name || current.student_id}
                 </p>
                 <p className="font-mono text-sm text-muted-foreground">
@@ -426,7 +426,7 @@ const SessionRollCall = ({
               {CALLS.map((call) => (
                 <Button
                   key={call.state}
-                  className={`h-14 text-base ${call.className}`}
+                  className={`h-16 px-2 text-sm sm:h-14 sm:px-4 sm:text-base ${call.className}`}
                   disabled={busyId === current.student_id}
                   onClick={() => void mark(current, call.state)}
                 >
@@ -435,7 +435,12 @@ const SessionRollCall = ({
                   ) : (
                     <span className="flex flex-col leading-tight">
                       <span>{call.label}</span>
-                      <span className="text-[10px] font-normal opacity-70">
+                      {/*
+                        Hidden on a phone. There is no keyboard to press it
+                        with, so it is nothing but noise in the place where
+                        space is tightest.
+                      */}
+                      <span className="hidden text-[10px] font-normal opacity-70 sm:block">
                         press {call.key}
                       </span>
                     </span>
@@ -458,13 +463,16 @@ const SessionRollCall = ({
                 onClick={() => skip(current)}
               >
                 <SkipForward className="mr-2 h-4 w-4" />
-                Skip — come back to them (S)
+                Skip
+                <span className="hidden sm:inline">
+                  &nbsp;— come back to them (S)
+                </span>
               </Button>
             )}
           </div>
         )}
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 pt-3">
+        <div className="min-h-[5rem] flex-1 space-y-2 overflow-y-auto pr-1 pt-3">
           {isLoading ? (
             <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
