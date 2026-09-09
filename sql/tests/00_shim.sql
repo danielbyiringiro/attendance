@@ -60,10 +60,19 @@ GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 -- auth.users. Supabase owns this table; migration 003 reads it to bootstrap the
 -- staff list, and the suites SET request.jwt.claim.sub to one of these ids to
 -- act as that person.
+-- raw_user_meta_data is where Supabase Auth puts whatever signUp() was given in
+-- options.data — which is the only place the name typed on the signup form
+-- survives, since confirming an email later starts a fresh browser with no
+-- memory of the form. Migration 021 reads it.
 CREATE TABLE IF NOT EXISTS auth.users (
-  id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  email text UNIQUE
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email              text UNIQUE,
+  raw_user_meta_data jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- Separately, so a container built before this column existed still gains it.
+ALTER TABLE auth.users
+  ADD COLUMN IF NOT EXISTS raw_user_meta_data jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 INSERT INTO auth.users (id, email) VALUES
   ('11111111-1111-1111-1111-111111111111', 'ta.one@example.edu'),
