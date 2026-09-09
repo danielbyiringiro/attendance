@@ -40,6 +40,7 @@ import {
   XCircle,
   Calendar as CalendarIcon,
   Search,
+  ClipboardCheck,
   UserPlus,
   FileUp,
   UserMinus,
@@ -62,6 +63,7 @@ import Sessions from "@/components/ta/sections/Sessions";
 import Admin from "@/components/ta/sections/Admin";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
+import SessionRollCall from "@/components/ta/SessionRollCall";
 import ThemeToggle from "@/components/ThemeToggle";
 import StudentRoster from "@/components/ta/StudentRoster";
 import RosterUpload from "@/components/ta/RosterUpload";
@@ -165,6 +167,7 @@ const TADashboard = ({
   // Which session's roster is open — "who is missing" is the question a TA has
   // mid-class, and the count alone does not answer it.
   const [rosterFor, setRosterFor] = useState<SessionRow | null>(null);
+  const [rollCallFor, setRollCallFor] = useState<SessionRow | null>(null);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
 
   const loadToday = useCallback(async () => {
@@ -1345,6 +1348,24 @@ const TADashboard = ({
                             </p>
                           )}
 
+                          {/*
+                            Reading the register by hand. The PIN covers the
+                            ordinary case; this covers the projector being down
+                            and the flat phone. Not offered for a cancelled
+                            session — there is nothing to mark.
+                          */}
+                          {sn.status !== "cancelled" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => setRollCallFor(sn)}
+                            >
+                              <ClipboardCheck className="mr-2 h-4 w-4" />
+                              Mark manually
+                            </Button>
+                          )}
+
                           <SessionActions
                             session={sn}
                             onChanged={loadToday}
@@ -1508,6 +1529,15 @@ const TADashboard = ({
           </div>
         )}
       </div>
+
+      <SessionRollCall
+        session={rollCallFor}
+        cohortLabel={
+          cohorts.find((c) => c.id === rollCallFor?.cohort_id)?.label ?? ""
+        }
+        onOpenChange={(o) => !o && setRollCallFor(null)}
+        onChanged={loadToday}
+      />
 
       <SessionRosterDialog
         session={rosterFor}
