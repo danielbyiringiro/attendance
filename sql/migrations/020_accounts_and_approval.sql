@@ -105,9 +105,12 @@ $grandfather$;
 --
 -- A plpgsql variable rather than a psql \set: psql does not interpolate its
 -- variables inside a dollar-quoted block, so :'name' here is a syntax error.
+--
+-- The address below is a placeholder and matches nothing. Replace it in your
+-- own copy when you run this; do not commit a real one back.
 DO $bootstrap$
 DECLARE
-  v_email text := lower(btrim(''));
+  v_email text := lower(btrim('first.admin@example.edu'));
   n integer;
 BEGIN
   UPDATE public.staff SET is_admin = true
@@ -117,8 +120,8 @@ BEGIN
   IF n = 0 THEN
     RAISE WARNING
       'no staff row matches % — nobody is an admin, so no account can ever be '
-      'approved. Set first_admin_email at the top of this file to an address '
-      'that has signed in at least once, and re-apply.', v_email;
+      'approved. Set v_email in this bootstrap block to an address that has '
+      'signed in at least once, and re-apply.', v_email;
   ELSE
     RAISE NOTICE '020: % is now an admin', v_email;
   END IF;
