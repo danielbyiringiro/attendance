@@ -14,12 +14,14 @@ import {
   Clock,
   GraduationCap,
   History,
+  ShieldCheck,
   Settings,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { ensureStaff } from "@/lib/api/staff";
+import { ensureStaff, type StaffIdentity } from "@/lib/api/staff";
+import AccountPending from "@/components/AccountPending";
 import { getOpenSessionSummary } from "@/lib/api/sessions";
 import {
   Sidebar,
@@ -50,7 +52,8 @@ type TATab =
   | "students"
   | "sessions"
   | "schedule"
-  | "classes";
+  | "classes"
+  | "admin";
 
 // One row per sidebar entry. Previously these were four hand-duplicated
 // 14-line SidebarMenuItem blocks, so adding a section meant a fifth copy-paste
@@ -59,6 +62,7 @@ const TA_TABS: ReadonlyArray<{
   id: TATab;
   label: string;
   icon: LucideIcon;
+  adminOnly?: boolean;
 }> = [
   { id: "attendance", label: "Attendance", icon: CalendarDays },
   { id: "analytics", label: "Attendance Analytics", icon: BarChart3 },
@@ -66,6 +70,8 @@ const TA_TABS: ReadonlyArray<{
   { id: "sessions", label: "Class Sessions", icon: Clock },
   { id: "schedule", label: "Schedule", icon: CalendarClock },
   { id: "classes", label: "Classes", icon: GraduationCap },
+  // Only rendered for an admin — see the filter where TA_TABS is mapped.
+  { id: "admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
 ];
 
 // Keys used to persist the TA dashboard across page reloads. sessionStorage is
@@ -78,7 +84,12 @@ const TA_TAB_KEY = "ta_active_tab";
 const Index = () => {
   // Informational only — see the effect below.
   const [openCount, setOpenCount] = useState(0);
+  // A session is no longer the same thing as being a TA. Since migration 020
+  // an account can exist, be signed in, and still be waiting for an admin —
+  // `isTA = !!session` would let a pending account straight into the dashboard.
   const [isTA, setIsTA] = useState(false);
+  const [identity, setIdentity] = useState<StaffIdentity | null>(null);
+  const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
   const [taTab, setTaTab] = useState<TATab>(
@@ -95,22 +106,35 @@ const Index = () => {
     // over the accounts that existed then, so anyone provisioned since needs
     // this. Idempotent, and deliberately not awaited: failing to record the
     // staff row must not block signing in.
-    const claimStaffRow = () => {
-      void ensureStaff().catch((e) => {
+    // A staff row is what current_staff_id() resolves to, and since 020 it also
+    // carries the approval that decides whether the account can do anything.
+    // Awaited now, unlike before: the answer determines which screen renders.
+    const resolve = async () => {
+      setIsResolvingIdentity(true);
+      try {
+        setIdentity(await ensureStaff());
+      } catch (e) {
         console.error("ensure_staff failed:", e);
-      });
+        // Failing to resolve must not silently promote somebody: treat it as
+        // not yet approved rather than assuming the best.
+        setIdentity(null);
+      } finally {
+        setIsResolvingIdentity(false);
+      }
     };
 
     supabase.auth.getSession().then(({ data }) => {
       setIsTA(!!data.session);
-      if (data.session) claimStaffRow();
+      if (data.session) void resolve();
+      else setIdentity(null);
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsTA(!!session);
-      if (session) claimStaffRow();
+      if (session) void resolve();
+      else setIdentity(null);
     });
 
     return () => subscription.unsubscribe();
@@ -208,11 +232,26 @@ const Index = () => {
 
   const handleTALogout = async () => {
     await supabase.auth.signOut();
+    setIdentity(null);
     sessionStorage.removeItem(TA_TAB_KEY);
     // The roster and today's attendance live in TADashboard now and unmount
     // with it, so there is nothing left to clear here.
   };
 
+
+  // Signed in, but the account is not approved. It is not an error state and
+  // must not read like one.
+  if (isTA && identity && identity.status !== "approved") {
+    return <AccountPending identity={identity} onSignOut={handleTALogout} />;
+  }
+
+  if (isTA && (isResolvingIdentity || !identity)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30">
+        <p className="text-sm text-muted-foreground">Checking your account…</p>
+      </div>
+    );
+  }
 
   if (isTA) {
     return (
@@ -228,7 +267,9 @@ const Index = () => {
               <SidebarGroupLabel>Navigation</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {TA_TABS.map(({ id, label, icon: Icon }) => (
+                  {TA_TABS.filter(
+                    (t) => !t.adminOnly || identity?.is_admin,
+                  ).map(({ id, label, icon: Icon }) => (
                     <SidebarMenuItem key={id}>
                       <SidebarMenuButton
                         asChild

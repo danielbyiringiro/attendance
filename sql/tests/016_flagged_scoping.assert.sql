@@ -12,11 +12,16 @@ BEGIN;
 
 DO $seed$
 BEGIN
+  -- 022 refuses an auth account whose domain is not on the list, so a
+  -- fixture has to declare the domain it invents people in.
+  INSERT INTO public.allowed_email_domains (domain) VALUES ('example.edu')
+  ON CONFLICT (domain) DO NOTHING;
+
   INSERT INTO auth.users (id, email) VALUES
     ('66666666-6666-6666-6666-666666666666', 'other-ta@example.edu')
   ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.staff (user_id, email, display_name) VALUES
-    ('66666666-6666-6666-6666-666666666666', 'other-ta@example.edu', 'Other TA')
+  INSERT INTO public.staff (user_id, email, display_name, status) VALUES
+    ('66666666-6666-6666-6666-666666666666', 'other-ta@example.edu', 'Other TA', 'approved')
   ON CONFLICT (user_id) DO NOTHING;
 END
 $seed$;
