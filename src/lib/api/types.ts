@@ -161,6 +161,12 @@ export interface ClassDeletionPreview {
 }
 
 export interface UpsertEnrolmentsResult {
+  /**
+   * True when nothing was written. A dry run reports exactly what a real call
+   * would, because it IS the real call, asked to return before its two writes
+   * — see migration 023. Preview and result therefore cannot disagree.
+   */
+  dry_run: boolean;
   created_students: number;
   reused_students: number;
   enrolled: number;

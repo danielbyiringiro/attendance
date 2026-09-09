@@ -42,6 +42,26 @@ interface StudentRosterProps {
   presentIds?: Set<string>;
   /** Below this, a rate is shown in red. */
   minAttendancePercentage?: number;
+  /**
+   * Re-read the roster itself.
+   *
+   * `load` below only re-reads attendance. Names, cohorts and IDs come from
+   * the `roster` prop, which this component does not own — so an edit to a
+   * student would leave the list showing what it said before, and the change
+   * would look as though it had not happened.
+   */
+  onRosterChanged?: () => void;
+  /**
+   * How many students the filters currently leave visible.
+   *
+   * Reported upwards because the heading that states the number sits outside
+   * this component, while the cohort, search and risk filters that decide it
+   * all live inside. Without this the heading counts the whole class and
+   * silently contradicts the list under it.
+   *
+   * Must be a stable function — a setState setter, not a fresh closure.
+   */
+  onVisibleChange?: (visible: number) => void;
 }
 
 const rateColour = (rate: number, threshold: number) =>
@@ -69,6 +89,8 @@ const StudentRoster = ({
   onMarkPresent,
   presentIds,
   minAttendancePercentage = 75,
+  onRosterChanged,
+  onVisibleChange,
 }: StudentRosterProps) => {
   const { toast } = useToast();
   const [log, setLog] = useState<AttendanceLog | null>(null);
@@ -170,6 +192,25 @@ const StudentRoster = ({
     absenceFloor,
     minAttendancePercentage,
   ]);
+
+  // Switching class clears the filters.
+  //
+  // The cohort filter is held by LABEL, so "C" survives into a class that has
+  // no cohort C and the roster comes up empty with only "No student matches
+  // that filter" to explain it. A search term and a risk filter survive the
+  // same way and are just as puzzling — they were about the class you were
+  // looking at, not this one.
+  useEffect(() => {
+    setCohortFilter("all");
+    setQuery("");
+    setRisk("all");
+  }, [classId]);
+
+  // Tell the heading what is actually on screen. Depends on the count rather
+  // than on `shown` itself, so re-sorting the same students does not fire it.
+  useEffect(() => {
+    onVisibleChange?.(shown.length);
+  }, [shown.length, onVisibleChange]);
 
   // Whatever is on screen, as a file. The point of narrowing to "below 75%" is
   // usually to do something about those students, which happens outside this
@@ -377,10 +418,17 @@ const StudentRoster = ({
 
       <StudentDetailDialog
         student={openStudent}
+        classId={classId}
+        cohorts={cohorts}
         log={log}
         threshold={minAttendancePercentage}
         onOpenChange={(open) => !open && setOpenStudent(null)}
-        onChanged={load}
+        onChanged={() => {
+          // Both: an attendance correction changes the log, an edit to the
+          // student changes the roster, and the dialog offers both.
+          void load();
+          onRosterChanged?.();
+        }}
       />
     </div>
   );

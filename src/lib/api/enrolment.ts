@@ -92,6 +92,7 @@ export const upsertEnrolments = async (
   cohortId: string,
   rows: RosterRow[],
   moveExisting = false,
+  dryRun = false,
 ): Promise<UpsertEnrolmentsResult> => {
   const { data, error } = await supabase.rpc("upsert_enrolments", {
     p_cohort_id: cohortId,
@@ -100,10 +101,25 @@ export const upsertEnrolments = async (
       name: r.name ?? null,
     })),
     p_move_existing: moveExisting,
+    p_dry_run: dryRun,
   });
   if (error) fail("Could not upload the roster", error);
   return data as UpsertEnrolmentsResult;
 };
+
+/**
+ * What an upload would do, having done none of it.
+ *
+ * Deliberately the same function as the write rather than an equivalent
+ * calculation: see migration 023. Everything a preview shows is therefore a
+ * promise the write is checked against, not an estimate.
+ */
+export const previewEnrolments = (
+  cohortId: string,
+  rows: RosterRow[],
+  moveExisting = false,
+): Promise<UpsertEnrolmentsResult> =>
+  upsertEnrolments(cohortId, rows, moveExisting, true);
 
 /** A student the Canvas match believes is filed under the wrong cohort. */
 export interface CohortChange {
@@ -159,4 +175,106 @@ export const dropEnrolment = async (
     .eq("class_id", classId)
     .eq("student_id", studentId);
   if (error) fail("Could not remove the student", error);
+};
+
+/**
+ * Correct a student's name.
+ *
+ * `students` is a global registry, so this changes the name in every class the
+ * person takes — which is why the server permits it only to somebody who
+ * manages a class they are enrolled in, and why a roster upload deliberately
+ * cannot do it. Say so wherever this is offered.
+ *
+ * Their ID is not editable here. It is the join key for every attendance
+ * record, and the foreign keys carry no ON UPDATE CASCADE.
+ */
+export const updateStudent = async (
+  studentId: string,
+  name: string | null,
+): Promise<{ student_id: string; name: string | null }> => {
+  const { data, error } = await supabase.rpc("update_student", {
+    p_student_id: studentId,
+    p_name: name,
+  });
+  if (error) fail("Could not update the student", error);
+  return data as { student_id: string; name: string | null };
+};
+
+/** What a corrected ID took with it. */
+export interface StudentIdChange {
+  student_id: string;
+  previous_id?: string;
+  unchanged: boolean;
+  enrolments?: number;
+  attendance_records?: number;
+  flags?: number;
+}
+
+/**
+ * Correct a mistyped student ID, carrying their history with them.
+ *
+ * The symptom this fixes is silent: with the wrong ID on the roster the
+ * student types their real one, nothing matches, and they are marked absent
+ * all term while looking perfectly enrolled.
+ *
+ * Their enrolments, attendance records and flags move with them — they are the
+ * same person, not a new one. Migration 024 had to add ON UPDATE CASCADE to
+ * every foreign key onto `students` for that to be possible at all.
+ *
+ * An ID somebody else already holds is refused: that is a merge, which has to
+ * decide what happens when both records have attendance for the same session.
+ */
+export const changeStudentId = async (
+  from: string,
+  to: string,
+): Promise<StudentIdChange> => {
+  const { data, error } = await supabase.rpc("change_student_id", {
+    p_from: from,
+    p_to: to,
+  });
+  if (error) fail("Could not change the student ID", error);
+  return data as StudentIdChange;
+};
+
+/** What one edit is asking to change. A key present means "change this". */
+export interface StudentEdit {
+  /** null clears the name; omit the key to leave it alone. */
+  name?: string | null;
+  cohort_id?: string;
+  student_id?: string;
+}
+
+/** What actually changed, as the server reports it. */
+export interface StudentEditResult {
+  student_id: string;
+  previous_id?: string;
+  name?: string | null;
+  cohort_label?: string;
+  attendance_records?: number;
+  enrolments?: number;
+  flags?: number;
+}
+
+/**
+ * Apply a student edit as ONE transaction.
+ *
+ * The dialog offers name, cohort and ID on one form, so the save has to behave
+ * like one action. Three separate calls cannot: the rename succeeds, the ID
+ * change is refused, and the record is left in a state nobody asked for with
+ * the dialog already closed. Migration 024 makes it one function, so a refusal
+ * anywhere rolls the whole edit back.
+ *
+ * Key presence carries the intent — `{name: null}` clears a name, omitting the
+ * key leaves it alone — because null cannot mean both.
+ */
+export const editStudent = async (
+  studentId: string,
+  changes: StudentEdit,
+): Promise<StudentEditResult> => {
+  const { data, error } = await supabase.rpc("edit_student", {
+    p_student_id: studentId,
+    p_changes: changes,
+  });
+  if (error) fail("Could not save the changes", error);
+  return data as StudentEditResult;
 };
