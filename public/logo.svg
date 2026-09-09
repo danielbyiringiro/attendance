@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Attendance">
+  <!--
+    A register with a mark against it.
+
+    The two rules on the left are names on a list; the tick is one of them
+    answered. That is the whole product in one shape, and it stays legible when
+    the rules disappear at favicon size, which is why favicon.svg drops them
+    rather than shrinking them.
+
+    The gradient is the platform's own: --primary (217 91% 60%) into --accent
+    (162 100% 45%), the pair already used behind the check-in heading.
+  -->
+  <defs>
+    <linearGradient id="attendanceMark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3C83F6" />
+      <stop offset="1" stop-color="#00E6A1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#attendanceMark)" />
+
+  <g stroke="#FFFFFF" stroke-linecap="round" fill="none">
+    <!-- Two names on the register. -->
+    <path d="M16 24h13" stroke-width="4" opacity="0.55" />
+    <path d="M16 34h9" stroke-width="4" opacity="0.55" />
+
+    <!-- The one that has been called. -->
+    <path d="M22 45.5l7 7 16.5-19" stroke-width="6" stroke-linejoin="round" />
+  </g>
+</svg>

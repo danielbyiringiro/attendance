@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Clock, Loader2, Users } from "lucide-react";
+import { CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import Logo from "@/components/Logo";
 
 export interface MarkResult {
   success: boolean;
@@ -97,10 +98,8 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
       <div className="w-full max-w-md space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="flex items-center justify-center mb-4">
-            <div className="p-3 bg-gradient-to-r from-primary to-accent rounded-full">
-              <Users className="h-8 w-8 text-primary-foreground" />
-            </div>
+          <div className="mb-4 flex items-center justify-center">
+            <Logo className="h-16 w-16 shadow-soft" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
             Attendance Check-In
