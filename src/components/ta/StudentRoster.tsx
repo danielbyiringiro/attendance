@@ -43,6 +43,15 @@ interface StudentRosterProps {
   /** Below this, a rate is shown in red. */
   minAttendancePercentage?: number;
   /**
+   * Re-read the roster itself.
+   *
+   * `load` below only re-reads attendance. Names, cohorts and IDs come from
+   * the `roster` prop, which this component does not own — so an edit to a
+   * student would leave the list showing what it said before, and the change
+   * would look as though it had not happened.
+   */
+  onRosterChanged?: () => void;
+  /**
    * How many students the filters currently leave visible.
    *
    * Reported upwards because the heading that states the number sits outside
@@ -80,6 +89,7 @@ const StudentRoster = ({
   onMarkPresent,
   presentIds,
   minAttendancePercentage = 75,
+  onRosterChanged,
   onVisibleChange,
 }: StudentRosterProps) => {
   const { toast } = useToast();
@@ -413,7 +423,12 @@ const StudentRoster = ({
         log={log}
         threshold={minAttendancePercentage}
         onOpenChange={(open) => !open && setOpenStudent(null)}
-        onChanged={load}
+        onChanged={() => {
+          // Both: an attendance correction changes the log, an edit to the
+          // student changes the roster, and the dialog offers both.
+          void load();
+          onRosterChanged?.();
+        }}
       />
     </div>
   );

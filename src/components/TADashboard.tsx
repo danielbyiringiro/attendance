@@ -1103,6 +1103,7 @@ const TADashboard = ({
                     minAttendancePercentage={
                       activeClass.min_attendance_percentage
                     }
+                    onRosterChanged={() => void loadRoster()}
                   />
                 )}
               </CardContent>
@@ -1244,6 +1245,7 @@ const TADashboard = ({
                 presentIds={new Set(validPresentStudents.map((p) => p.id))}
                 onMarkPresent={handleMarkAttendanceManually}
                 minAttendancePercentage={activeClass.min_attendance_percentage}
+                onRosterChanged={() => void loadRoster()}
                 onVisibleChange={setVisibleStudents}
               />
             </CardContent>
