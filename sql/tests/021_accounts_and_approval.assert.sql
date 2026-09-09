@@ -18,9 +18,23 @@ BEGIN
 
   INSERT INTO auth.users (id, email) VALUES
     ('a0000000-0000-0000-0000-00000000000a', 'admin-021@example.edu'),
-    ('b0000000-0000-0000-0000-00000000000b', 'pending-021@example.edu'),
+    ('b0000000-0000-0000-0000-00000000000b', 'pending-021@example.edu')
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Since 022, an address outside the allowed domains cannot become an auth
+  -- account at all — so the only way this one exists is the way it still
+  -- happens in practice: the domain was on the list when they signed up, and
+  -- an admin removed it afterwards. ensure_staff is what must still refuse
+  -- them, and this sets that situation up honestly rather than by disabling
+  -- the trigger.
+  INSERT INTO public.allowed_email_domains (domain) VALUES ('elsewhere.com')
+  ON CONFLICT (domain) DO NOTHING;
+
+  INSERT INTO auth.users (id, email) VALUES
     ('c0000000-0000-0000-0000-00000000000c', 'outsider-021@elsewhere.com')
   ON CONFLICT (id) DO NOTHING;
+
+  DELETE FROM public.allowed_email_domains WHERE domain = 'elsewhere.com';
 
   INSERT INTO public.staff (user_id, email, display_name, status, is_admin) VALUES
     ('a0000000-0000-0000-0000-00000000000a', 'admin-021@example.edu',

@@ -31,16 +31,19 @@ GRANT EXECUTE ON FUNCTION public.assert_class_id(text) TO authenticated;
 
 DO $seed$
 BEGIN
+  -- Migration 020 restricts signup to allowed domains, seeded with the real
+  -- institution's. The whole fixture uses example.edu addresses.
+  --
+  -- Before the account below, not after: since 022 the domain list is enforced
+  -- by a trigger on auth.users, so declaring it afterwards is too late.
+  INSERT INTO public.allowed_email_domains (domain) VALUES ('example.edu')
+  ON CONFLICT (domain) DO NOTHING;
+
   -- A fourth account that the 003 bootstrap never saw, standing in for someone
   -- provisioned after this migration ran.
   INSERT INTO auth.users (id, email)
   VALUES ('44444444-4444-4444-4444-444444444444', 'latecomer@example.edu')
   ON CONFLICT (id) DO NOTHING;
-
-  -- Migration 020 restricts signup to allowed domains, seeded with the real
-  -- institution's. The whole fixture uses example.edu addresses.
-  INSERT INTO public.allowed_email_domains (domain) VALUES ('example.edu')
-  ON CONFLICT (domain) DO NOTHING;
 END
 $seed$;
 

@@ -87,7 +87,18 @@ const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
     const { error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: { data: { display_name: displayName.trim() || null } },
+      options: {
+        // Read back by migration 021's ensure_staff rather than passed from
+        // here: with email confirmation on there is no session yet, and the
+        // browser that eventually runs ensure_staff is a different one that
+        // never saw this form.
+        data: { display_name: displayName.trim() || null },
+        // Where the confirmation link comes back to. Without this Supabase
+        // uses the project's Site URL, which is one value for every
+        // deployment — so a link mailed from a preview build, or from
+        // localhost during development, lands on production instead.
+        emailRedirectTo: window.location.origin,
+      },
     });
 
     if (error) {
