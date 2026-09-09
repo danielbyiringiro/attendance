@@ -1,57 +1,60 @@
 -- ============================================================================
--- 026 — close the tables anon was never meant to reach
+-- 026 — make the legacy tables' protection explicit, and fix the signup hint
 --
--- WHAT WAS OPEN
+-- WHAT IS ACTUALLY TRUE, having checked
 --
--- public.students is readable by anyone holding the anon key — which ships in
--- the browser bundle, by design, because every rule that matters is supposed
--- to be enforced by RLS. Every student ID and every name in the installation,
--- to anybody who opens the check-in page and a console.
+-- students, canvas_row_mappings and flagged_resolutions carry no REVOKE and no
+-- policy from any migration in this repo. On the production database they are
+-- nonetheless protected: RLS was switched on for them in the Supabase
+-- dashboard, years before these migrations existed. So nothing was leaking.
 --
--- canvas_row_mappings is the same, and joins a student ID to their row in a
--- Canvas gradebook. flagged_resolutions likewise: how a disputed attendance
--- record was settled.
+-- It was leaking in the TEST HARNESS, where the legacy fixture creates those
+-- tables the way the original schema did — without RLS — and Supabase's default
+-- grant to anon therefore stood unopposed. That is what the sweep in 027
+-- found, and the first draft of this file said the production database was
+-- open. It was not. The check was one query and it should have been run before
+-- the claim, not after.
 --
--- HOW IT HAPPENED
+-- WHY THIS IS STILL WORTH APPLYING
 --
--- Every table the migrations create is revoked from anon at the end of the file
--- that creates it — 001, 002, 004 and 005 each sweep their own. 015 revoked the
--- legacy tables it retired. 016 revoked flagged when it took ownership of it.
+-- Their protection rests entirely on a checkbox somebody ticked in a dashboard
+-- and nothing in this repository. A table restored from a backup, recreated by
+-- hand, or created in a second environment from these migrations gets no such
+-- protection, and the failure is silent — a table with neither a REVOKE nor RLS
+-- looks identical in the dashboard to one that is fine.
 --
--- These three are the tables that predate the migrations and were NOT retired.
--- students is kept deliberately, as the global person registry; the other two
--- were simply never revisited. Being kept is exactly why they were missed:
--- every sweep was written around a set of tables somebody was changing, and
--- nobody was changing these.
+-- Every table these migrations create is revoked from anon in the file that
+-- creates it. 015 swept the legacy tables it retired; 016 swept flagged when it
+-- took ownership. These three predate the migrations and were not retired —
+-- students deliberately, as the global person registry. Being KEPT is why no
+-- sweep was ever about them. This makes them match everything else.
 --
--- Supabase grants anon and authenticated full table privileges by default and
--- expects RLS to take them back. A table with neither a REVOKE nor RLS is
--- therefore wide open, and looks no different in the dashboard from one that is
--- fine.
+-- WHAT IT DOES
 --
--- WHAT THIS DOES
+-- Revokes anon, enables RLS, and adds the house policy — readable and writable
+-- by `authenticated`, which is what every other table here has. Idempotent, so
+-- where RLS is already on this is close to a no-op that writes the intent down.
 --
--- Revokes anon on all three, and turns RLS on with the house policy — readable
--- and writable by `authenticated`, which is what every other table here has.
 -- No SECURITY DEFINER function is affected: they run as the owner, so
--- mark_attendance still reads students exactly as before.
+-- mark_attendance still reads students exactly as before. 027 asserts that,
+-- because getting it wrong would lock every student out of marking attendance.
 --
--- AND ONE THING IN THE OTHER DIRECTION
+-- AND ONE REAL BUG, IN THE OTHER DIRECTION
 --
--- allowed_email_domains has RLS with a policy `TO authenticated` — but the
--- screen that reads it is the SIGNUP screen, which is shown to people who are
--- by definition not signed in yet. So the hint naming the accepted domains has
--- never rendered for anybody it was written for; they see "No email domains are
--- accepted yet" instead, which is both wrong and discouraging.
+-- allowed_email_domains has a policy TO authenticated, but the screen that
+-- reads it is the SIGNUP screen, which is shown to people who by definition do
+-- not have an account yet. So the hint naming the accepted domains has never
+-- rendered for anybody it was written for: since 020 they have seen "No email
+-- domains are accepted yet", which is wrong and discouraging. This one is live.
 --
 -- The list is not a secret. It is which institution this installation belongs
--- to, printed on the page as soon as somebody guesses. anon gets to read it.
+-- to, printed on the page as soon as somebody guesses.
 --
 -- Run AFTER 025. Idempotent.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- The three that were open
+-- The three the migrations never claimed
 -- ----------------------------------------------------------------------------
 
 DO $shut$
@@ -82,7 +85,9 @@ BEGIN
       t || '_auth_all', t);
 
     EXECUTE format('SELECT count(*) FROM public.%I', t) INTO n;
-    RAISE NOTICE '026: public.% closed to anon (% row(s) were exposed)', t, n;
+    RAISE NOTICE
+      '026: public.% now revoked from anon with RLS and a policy (% row(s))',
+      t, n;
   END LOOP;
 END
 $shut$;

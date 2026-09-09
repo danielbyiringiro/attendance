@@ -1,15 +1,29 @@
 -- ============================================================================
 -- Migration 026 — what an anonymous visitor can reach
 --
--- The bug this closes was not a broken rule. It was three tables that no rule
--- had ever been written about: they predate the migrations, they were not
--- retired by 015, and every REVOKE sweep since was written around whichever
--- tables somebody happened to be changing.
+-- WHAT THIS FOUND, AND WHAT IT DID NOT
 --
--- So the assertion is a SWEEP, not a list. It walks every table in public and
--- fails on any that anon can read without RLS, whatever its name and whenever
--- it was added. A named list would have passed happily for the whole time this
--- was broken, because nobody would have thought to put students on it.
+-- The sweep below failed the first time it was written, naming students,
+-- canvas_row_mappings and flagged_resolutions. That was true of the HARNESS,
+-- where the legacy fixture creates those tables as the original schema did —
+-- without RLS — leaving Supabase's default grant to anon unopposed.
+--
+-- It was not true of the production database, where RLS had been switched on
+-- for them in the dashboard years earlier. Nothing was leaking. Checking took
+-- one query and should have preceded the claim.
+--
+-- The fixture is left as it is on purpose. It models the state 026 has to be
+-- able to repair — a table with the default grant and no RLS — and if it were
+-- changed to match production, this file would pass whether or not 026 had
+-- ever run.
+--
+-- WHY IT IS A SWEEP AND NOT A LIST
+--
+-- It walks every table in public and fails on any that anon can read without
+-- RLS, whatever its name and whenever it was added. A named list would have
+-- passed happily throughout, because nobody would have thought to put students
+-- on it — protection that rests on somebody having ticked a box in a dashboard
+-- is protection nothing in this repository knows about.
 --
 -- Wrapped in a transaction that is rolled back.
 -- ============================================================================
@@ -50,7 +64,7 @@ END
 $sweep$;
 
 -- ----------------------------------------------------------------------------
--- And specifically: the three that were open
+-- And specifically: the three the migrations never claimed
 --
 -- Named as well as swept, so a failure says which one came back rather than
 -- only that something did.
