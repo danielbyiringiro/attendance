@@ -165,3 +165,100 @@
     display: none; /* Chrome, Safari and Opera */
   }
 }
+
+/* ============================================================================
+   Accessibility preferences
+   ============================================================================
+
+   Driven by classes that src/lib/accessibility.tsx puts on <html>. Kept here,
+   in one place, so no component has to know these settings exist — a
+   preference that only some screens honour is worse than one that does not
+   exist, because it looks like it is working.
+
+   Text size is not here: it is the root font size, so every rem in the app
+   already follows it.
+   ============================================================================ */
+
+/* ---- Reduced motion ------------------------------------------------------
+   The app already respects prefers-reduced-motion. These two classes are the
+   override in each direction, for a machine whose setting is wrong for the
+   person using it — a shared lab computer, or an OS where nobody has found the
+   toggle. */
+
+.a11y-motion-off *,
+.a11y-motion-off *::before,
+.a11y-motion-off *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ---- Focus ---------------------------------------------------------------
+   :focus-visible shows the ring for keyboard focus and hides it for a mouse
+   click, which is right by default and wrong for anybody who loses track of
+   where they are. This makes it unconditional. */
+
+.a11y-focus :focus {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* ---- Underlined links ----------------------------------------------------
+   Colour alone carries the meaning otherwise, which it cannot for somebody who
+   does not see the difference between that colour and the text around it. */
+
+.a11y-underline a,
+.a11y-underline [role="link"],
+.a11y-underline button.link,
+.a11y-underline .underline-offset-2 {
+  text-decoration: underline !important;
+  text-underline-offset: 2px;
+}
+
+/* ---- High contrast -------------------------------------------------------
+   Not a separate palette. The tokens keep their hues — the platform's colour
+   is deliberate and stripping it would be a different product — but the pairs
+   that carry meaning are pushed apart, borders are made solid rather than
+   suggested, and muted text stops being muted.
+
+   Redefined for both schemes, because "high contrast" against white and
+   against near-black are different numbers. */
+
+.a11y-contrast {
+  --muted-foreground: 0 0% 25%;
+  --border: 0 0% 35%;
+  --input: 0 0% 35%;
+  --ring: 217 91% 40%;
+}
+
+.a11y-contrast.dark {
+  --muted-foreground: 0 0% 85%;
+  --border: 0 0% 70%;
+  --input: 0 0% 70%;
+  --ring: 217 91% 75%;
+}
+
+/* Borders are the main thing a low-contrast design loses. */
+.a11y-contrast *,
+.a11y-contrast *::before,
+.a11y-contrast *::after {
+  border-color: hsl(var(--border));
+}
+
+/* Anything deliberately faded stops being faded: opacity is the one thing the
+   token overrides above cannot reach. */
+.a11y-contrast .text-muted-foreground {
+  color: hsl(var(--muted-foreground));
+}
+
+.a11y-contrast [class*="opacity-"]:not(:disabled) {
+  opacity: 1;
+}
+
+/* Gradients read as flat blocks at high contrast, and the text on them has to
+   survive either end of the gradient. */
+.a11y-contrast .bg-gradient-primary {
+  background-image: none;
+  background-color: hsl(var(--primary));
+}

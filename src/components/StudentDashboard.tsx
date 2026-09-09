@@ -36,6 +36,7 @@ import type { AttendanceState } from "@/lib/api/types";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import ThemeToggle from "@/components/ThemeToggle";
+import AccessibilitySettings from "@/components/AccessibilitySettings";
 
 interface AttendanceRecord {
   /** The session this row is about — what a flag is filed against. */
@@ -389,6 +390,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Check-in
           </Button>
+          <AccessibilitySettings />
           <ThemeToggle />
         </div>
 
