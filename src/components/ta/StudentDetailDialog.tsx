@@ -25,11 +25,7 @@ import {
 } from "@/lib/api/attendance";
 import type { AttendanceState, CohortRow } from "@/lib/api/types";
 import type { StudentStanding } from "@/components/ta/StudentRoster";
-import {
-  changeStudentId,
-  moveToCohort,
-  updateStudent,
-} from "@/lib/api/enrolment";
+import { editStudent, type StudentEdit } from "@/lib/api/enrolment";
 import { fromDateStr } from "@/lib/dates";
 import { format } from "date-fns";
 
@@ -75,14 +71,15 @@ const StudentDetailDialog = ({
   onChanged,
 }: StudentDetailDialogProps) => {
   const { toast } = useToast();
-  // Editing the name in place. `draft` is null when not editing, so an empty
-  // string stays a legitimate value — clearing a name is allowed.
-  const [draft, setDraft] = useState<string | null>(null);
+  // One edit form for the whole student, not three controls scattered about.
+  // `form` is null when not editing; entering it snapshots what is on record,
+  // and saving sends only the fields that actually differ.
+  const [form, setForm] = useState<{
+    name: string;
+    studentId: string;
+    cohortId: string;
+  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  // Correcting the ID is separate from the name: it moves every attendance
-  // record the person has, so it is deliberately not one keystroke away.
-  const [idDraft, setIdDraft] = useState<string | null>(null);
-  const [isMoving, setIsMoving] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const marks = useMemo(() => {
@@ -113,85 +110,74 @@ const StudentDetailDialog = ({
     }
   };
 
-  const saveName = async () => {
-    if (!student || draft === null) return;
-
-    setIsSaving(true);
-    try {
-      const saved = await updateStudent(student.student_id, draft.trim() || null);
-      setDraft(null);
-      toast({
-        title: saved.name ? "Name updated" : "Name cleared",
-        description: `${student.student_id} now shows as ${saved.name ?? "their ID"} in every class they take.`,
-      });
-      onChanged();
-    } catch (e) {
-      toast({
-        title: "Could not update the name",
-        description: e instanceof Error ? e.message : "Unknown error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
+  const startEditing = () => {
+    if (!student) return;
+    setForm({
+      name: student.name ?? "",
+      studentId: student.student_id,
+      cohortId: cohorts.find((c) => c.label === student.cohort)?.id ?? "",
+    });
   };
 
-  const saveId = async () => {
-    if (!student || idDraft === null) return;
+  const save = async () => {
+    if (!student || !form) return;
 
-    const next = idDraft.trim();
-    if (!next || next === student.student_id) {
-      setIdDraft(null);
+    // Only what actually differs. Key presence is what the server reads as
+    // "change this", so sending an unchanged field would be a needless write —
+    // and for the ID, a needless rewrite of every attendance record.
+    const changes: StudentEdit = {};
+
+    const name = form.name.trim() || null;
+    if (name !== (student.name ?? null)) changes.name = name;
+
+    const id = form.studentId.trim();
+    if (id && id !== student.student_id) changes.student_id = id;
+
+    const currentCohortId = cohorts.find((c) => c.label === student.cohort)?.id;
+    if (form.cohortId && form.cohortId !== currentCohortId) {
+      changes.cohort_id = form.cohortId;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      setForm(null);
       return;
     }
 
     setIsSaving(true);
     try {
-      const moved = await changeStudentId(student.student_id, next);
-      setIdDraft(null);
-      toast({
-        title: `Now ${moved.student_id}`,
-        description: `${moved.attendance_records ?? 0} attendance record${
-          moved.attendance_records === 1 ? "" : "s"
-        } and ${moved.enrolments ?? 0} enrolment${
-          moved.enrolments === 1 ? "" : "s"
-        } moved with them.`,
-      });
+      const saved = await editStudent(student.student_id, changes);
+
+      // Say what moved rather than just "saved". An ID change carries every
+      // attendance record with it, and that is worth seeing confirmed.
+      const parts: string[] = [];
+      if (changes.name !== undefined) {
+        parts.push(saved.name ? `now ${saved.name}` : "name cleared");
+      }
+      if (saved.cohort_label) parts.push(`moved to Cohort ${saved.cohort_label}`);
+      if (saved.previous_id) {
+        parts.push(
+          `${saved.previous_id} → ${saved.student_id}, taking ${
+            saved.attendance_records ?? 0
+          } attendance record${saved.attendance_records === 1 ? "" : "s"}`,
+        );
+      }
+
+      setForm(null);
+      toast({ title: "Student updated", description: parts.join(" · ") });
       onChanged();
+
+      // The record on screen is now describing somebody who has moved or been
+      // renamed. Close rather than leave stale numbers to act on.
       onOpenChange(false);
     } catch (e) {
+      // Nothing was written: the whole edit is one transaction.
       toast({
-        title: "Could not change the ID",
+        title: "Nothing was changed",
         description: e instanceof Error ? e.message : "Unknown error.",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const changeCohort = async (cohortId: string) => {
-    if (!student) return;
-
-    setIsMoving(true);
-    try {
-      await moveToCohort(classId, student.student_id, cohortId);
-      const label = cohorts.find((c) => c.id === cohortId)?.label ?? "";
-      toast({
-        title: `Moved to Cohort ${label}`,
-        description:
-          "Their attendance is now counted against that cohort's sessions, which changes what they count as absent from.",
-      });
-      onChanged();
-      onOpenChange(false);
-    } catch (e) {
-      toast({
-        title: "Could not move them",
-        description: e instanceof Error ? e.message : "Unknown error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsMoving(false);
     }
   };
 
@@ -202,72 +188,32 @@ const StudentDetailDialog = ({
           <>
             <DialogHeader>
               <DialogTitle className="flex flex-wrap items-center gap-2">
-                {draft === null ? (
-                  <>
-                    {student.name || student.student_id}
-                    <Badge variant="outline">Cohort {student.cohort}</Badge>
-                    {/*
-                      A name comes from whatever roster was uploaded, and
-                      rosters are wrong: misspelt, surname-first, or absent
-                      because the export had no name column. The person looking
-                      at the record is the one who knows.
-                    */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-muted-foreground"
-                      onClick={() => setDraft(student.name ?? "")}
-                    >
-                      <Pencil className="mr-1 h-3.5 w-3.5" />
-                      {student.name ? "Edit name" : "Add a name"}
-                    </Button>
-                  </>
-                ) : (
-                  <div className="flex w-full items-center gap-2">
-                    <Input
-                      autoFocus
-                      value={draft}
-                      placeholder="Their name"
-                      className="h-9"
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveName();
-                        if (e.key === "Escape") setDraft(null);
-                      }}
-                    />
-                    <Button size="sm" disabled={isSaving} onClick={() => void saveName()}>
-                      {isSaving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Check className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={isSaving}
-                      onClick={() => setDraft(null)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
+                {student.name || student.student_id}
+                <Badge variant="outline">Cohort {student.cohort}</Badge>
+                {/*
+                  One door into editing, not three. A name comes from whatever
+                  roster was uploaded and rosters are wrong — misspelt,
+                  surname-first, absent because the export had no name column,
+                  or carrying the wrong ID entirely. The person looking at the
+                  record is the one who knows, and they should be able to fix
+                  all of it in one go.
+                */}
+                {form === null && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-muted-foreground"
+                    onClick={startEditing}
+                  >
+                    <Pencil className="mr-1 h-3.5 w-3.5" />
+                    Edit student
+                  </Button>
                 )}
               </DialogTitle>
               <DialogDescription>
-                {draft !== null ? (
-                  <>
-                    {student.student_id} · one person is one record here, so
-                    this name is what every class they take will show. Their ID
-                    cannot be changed — it is what every attendance record hangs
-                    on.
-                  </>
-                ) : (
-                  <>
-                    {student.name ? `${student.student_id} · ` : ""}
-                    {student.sessions} session
-                    {student.sessions === 1 ? "" : "s"} on record in this class.
-                  </>
-                )}
+                {student.name ? `${student.student_id} · ` : ""}
+                {student.sessions} session
+                {student.sessions === 1 ? "" : "s"} on record in this class.
               </DialogDescription>
             </DialogHeader>
 
@@ -304,97 +250,100 @@ const StudentDetailDialog = ({
               </p>
             )}
 
-            {/*
-              The two edits that are not the name.
+            {form !== null && (
+              /*
+                One form for the whole student. Three separate controls invited
+                three separate saves, and an ID change is not the kind of thing
+                that should happen the moment somebody stops typing.
 
-              Both move attendance rather than just relabelling something, so
-              both close the dialog and re-read behind it — leaving a stale
-              record on screen after moving its owner is how somebody makes the
-              next change against numbers that no longer apply.
-            */}
-            <div className="grid gap-3 rounded-md border px-3 py-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Cohort
-                </label>
-                <Select
-                  value={cohorts.find((c) => c.label === student.cohort)?.id ?? ""}
-                  onValueChange={(v) => void changeCohort(v)}
-                  disabled={isMoving || cohorts.length === 0}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Choose a cohort" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {cohorts.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        Cohort {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Changes which sessions they count as absent from.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Student ID
-                </label>
-
-                {idDraft === null ? (
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm">
-                      {student.student_id}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-muted-foreground"
-                      onClick={() => setIdDraft(student.student_id)}
-                    >
-                      <Pencil className="mr-1 h-3.5 w-3.5" />
-                      Correct
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
+                It is one call, so it is one transaction: if the ID is refused,
+                the name and cohort do not quietly change anyway.
+              */
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Name
+                    </label>
                     <Input
                       autoFocus
-                      value={idDraft}
-                      className="h-9 font-mono"
-                      onChange={(e) => setIdDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveId();
-                        if (e.key === "Escape") setIdDraft(null);
-                      }}
+                      value={form.name}
+                      placeholder="Their name"
+                      className="h-9"
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
                     />
-                    <Button size="sm" disabled={isSaving} onClick={() => void saveId()}>
-                      {isSaving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Check className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={isSaving}
-                      onClick={() => setIdDraft(null)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      One person is one record, so this is the name every class
+                      they take will show.
+                    </p>
                   </div>
-                )}
 
-                <p className="text-xs text-muted-foreground">
-                  {idDraft === null
-                    ? "What they type at check-in. If it is wrong, nothing they type matches and they are marked absent."
-                    : `Their ${student.sessions} session${student.sessions === 1 ? "" : "s"} and every flag move with them. An ID another student already has will be refused.`}
-                </p>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Cohort
+                    </label>
+                    <Select
+                      value={form.cohortId}
+                      onValueChange={(v) => setForm({ ...form, cohortId: v })}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Choose a cohort" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cohorts.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            Cohort {c.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Changes which sessions they count as absent from.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Student ID
+                    </label>
+                    <Input
+                      value={form.studentId}
+                      className="h-9 font-mono"
+                      onChange={(e) =>
+                        setForm({ ...form, studentId: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      What they type at check-in — if it is wrong, nothing they
+                      type matches and they are marked absent. Changing it
+                      carries their {student.sessions} session
+                      {student.sessions === 1 ? "" : "s"} and every flag with
+                      them. An ID another student already has is refused.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSaving}
+                    onClick={() => setForm(null)}
+                  >
+                    <X className="mr-1 h-4 w-4" />
+                    Cancel
+                  </Button>
+                  <Button size="sm" disabled={isSaving} onClick={() => void save()}>
+                    {isSaving ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="mr-1 h-4 w-4" />
+                    )}
+                    Save changes
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-1">
               <p className="text-sm font-medium">Session by session</p>

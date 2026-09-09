@@ -37,3 +37,6 @@ supabase/.temp
 # baseline, and printed worklists. Worklists carry student names.
 Document/
 cohort-checkin-dossier.html
+
+# tsc -b incremental build state (npm run typecheck)
+*.tsbuildinfo

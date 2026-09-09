@@ -235,3 +235,46 @@ export const changeStudentId = async (
   if (error) fail("Could not change the student ID", error);
   return data as StudentIdChange;
 };
+
+/** What one edit is asking to change. A key present means "change this". */
+export interface StudentEdit {
+  /** null clears the name; omit the key to leave it alone. */
+  name?: string | null;
+  cohort_id?: string;
+  student_id?: string;
+}
+
+/** What actually changed, as the server reports it. */
+export interface StudentEditResult {
+  student_id: string;
+  previous_id?: string;
+  name?: string | null;
+  cohort_label?: string;
+  attendance_records?: number;
+  enrolments?: number;
+  flags?: number;
+}
+
+/**
+ * Apply a student edit as ONE transaction.
+ *
+ * The dialog offers name, cohort and ID on one form, so the save has to behave
+ * like one action. Three separate calls cannot: the rename succeeds, the ID
+ * change is refused, and the record is left in a state nobody asked for with
+ * the dialog already closed. Migration 024 makes it one function, so a refusal
+ * anywhere rolls the whole edit back.
+ *
+ * Key presence carries the intent — `{name: null}` clears a name, omitting the
+ * key leaves it alone — because null cannot mean both.
+ */
+export const editStudent = async (
+  studentId: string,
+  changes: StudentEdit,
+): Promise<StudentEditResult> => {
+  const { data, error } = await supabase.rpc("edit_student", {
+    p_student_id: studentId,
+    p_changes: changes,
+  });
+  if (error) fail("Could not save the changes", error);
+  return data as StudentEditResult;
+};

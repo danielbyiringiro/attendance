@@ -266,6 +266,111 @@ BEGIN
 END
 $stranger$;
 
+-- ----------------------------------------------------------------------------
+-- edit_student: all three at once, or none of them
+--
+-- The screen offers one form holding name, cohort and ID, so the save has to
+-- behave like one action. Three separate calls cannot: the rename succeeds,
+-- the ID change is refused, and the record is left in a state nobody asked
+-- for, with the dialog already closed.
+-- ----------------------------------------------------------------------------
+
+RESET ROLE;
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+DO $edit$
+DECLARE
+  v_class  uuid := (SELECT class_id FROM t025);
+  v_b      uuid;
+  r        jsonb;
+  t        text;
+  c        text;
+  failed   boolean;
+BEGIN
+  -- A second cohort to move into.
+  PERFORM public.add_cohort(v_class, 'B');
+  SELECT id INTO v_b FROM public.cohorts WHERE class_id = v_class AND label = 'B';
+
+  -- All three in one call.
+  r := public.edit_student('REN-1-FIXED', jsonb_build_object(
+         'name',       'Everything At Once',
+         'cohort_id',  v_b,
+         'student_id', 'REN-1-AGAIN'));
+
+  IF r ->> 'student_id' <> 'REN-1-AGAIN' THEN
+    RAISE EXCEPTION 'the id did not change: %', r;
+  END IF;
+
+  SELECT s.name, co.label INTO t, c
+  FROM public.students s
+  JOIN public.enrolments e ON e.student_id = s.student_id
+  JOIN public.cohorts co ON co.id = e.cohort_id
+  WHERE s.student_id = 'REN-1-AGAIN';
+
+  IF t <> 'Everything At Once' THEN
+    RAISE EXCEPTION 'the name did not change, is %', COALESCE(t, '(null)');
+  END IF;
+  IF c <> 'B' THEN
+    RAISE EXCEPTION 'the cohort did not change, is %', c;
+  END IF;
+
+  -- THE POINT: a refusal anywhere undoes the rest.
+  --
+  -- REN-2 already holds that ID, so the last step fails. The name and cohort
+  -- changes in the same call must not survive it.
+  failed := false;
+  BEGIN
+    PERFORM public.edit_student('REN-1-AGAIN', jsonb_build_object(
+      'name',       'Should Not Stick',
+      'cohort_id',  (SELECT id FROM public.cohorts
+                     WHERE class_id = v_class AND label = 'A'),
+      'student_id', 'REN-2'));
+  EXCEPTION WHEN others THEN failed := true;
+  END;
+
+  IF NOT failed THEN
+    RAISE EXCEPTION 'the edit was allowed to take an ID another student holds';
+  END IF;
+
+  SELECT s.name, co.label INTO t, c
+  FROM public.students s
+  JOIN public.enrolments e ON e.student_id = s.student_id
+  JOIN public.cohorts co ON co.id = e.cohort_id
+  WHERE s.student_id = 'REN-1-AGAIN';
+
+  IF t <> 'Everything At Once' THEN
+    RAISE EXCEPTION
+      'a failed edit left the name changed to % — the parts of one edit are '
+      'not landing in one transaction', COALESCE(t, '(null)');
+  END IF;
+  IF c <> 'B' THEN
+    RAISE EXCEPTION
+      'a failed edit left the cohort changed to % — the parts of one edit are '
+      'not landing in one transaction', c;
+  END IF;
+
+  -- Key presence, not value: omitting a key leaves that field alone.
+  PERFORM public.edit_student('REN-1-AGAIN', '{"name": "Renamed Only"}'::jsonb);
+
+  SELECT co.label INTO c
+  FROM public.enrolments e
+  JOIN public.cohorts co ON co.id = e.cohort_id
+  WHERE e.student_id = 'REN-1-AGAIN';
+
+  IF c <> 'B' THEN
+    RAISE EXCEPTION 'omitting cohort_id moved them anyway, to %', c;
+  END IF;
+
+  -- And an explicit null clears, rather than meaning "leave alone".
+  PERFORM public.edit_student('REN-1-AGAIN', '{"name": null}'::jsonb);
+  SELECT name INTO t FROM public.students WHERE student_id = 'REN-1-AGAIN';
+  IF t IS NOT NULL THEN
+    RAISE EXCEPTION 'an explicit null did not clear the name, it is %', t;
+  END IF;
+END
+$edit$;
+
 DO $done$ BEGIN RAISE NOTICE '025 student-edit assertions passed'; END $done$;
 
 ROLLBACK;

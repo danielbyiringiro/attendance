@@ -225,3 +225,142 @@ COMMENT ON FUNCTION public.change_student_id(text, text) IS
   'attendance and flags with them. Refuses an ID somebody else already holds: '
   'that is a merge, which has to decide what happens to conflicting '
   'attendance, and is not this.';
+
+-- ============================================================================
+-- Moving a student between cohorts of their class
+--
+-- Was a direct UPDATE from the browser. As a function it can check that the
+-- student is actually on the class before moving them, and — more usefully —
+-- it can be called from edit_student below, so a cohort change and an ID
+-- change land in the same transaction.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.move_student_cohort(
+  p_student_id text,
+  p_cohort_id  uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_id       text := btrim(COALESCE(p_student_id, ''));
+  v_class_id uuid;
+  v_label    text;
+BEGIN
+  SELECT class_id, label INTO v_class_id, v_label
+  FROM public.cohorts WHERE id = p_cohort_id;
+
+  IF v_class_id IS NULL THEN
+    RAISE EXCEPTION 'cohort % does not exist', p_cohort_id;
+  END IF;
+
+  IF NOT public.can_manage_class(v_class_id) THEN
+    RAISE EXCEPTION 'not permitted to change this class';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.enrolments
+    WHERE student_id = v_id AND class_id = v_class_id
+  ) THEN
+    RAISE EXCEPTION 'that student is not on this class';
+  END IF;
+
+  UPDATE public.enrolments
+     SET cohort_id = p_cohort_id
+   WHERE student_id = v_id AND class_id = v_class_id;
+
+  RETURN jsonb_build_object(
+    'student_id',   v_id,
+    'cohort_id',    p_cohort_id,
+    'cohort_label', v_label);
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.move_student_cohort(text, uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.move_student_cohort(text, uuid) TO authenticated;
+
+-- ============================================================================
+-- edit_student — all three changes, or none of them
+--
+-- The screen offers one "Edit student" form holding name, cohort and ID, so
+-- the save has to behave like one action. Three separate calls cannot: the
+-- rename succeeds, the ID change fails, and the record is left in a state
+-- nobody asked for, with the dialog closed and the failure a toast.
+--
+-- One function is one transaction, so a refusal anywhere rolls the whole edit
+-- back.
+--
+-- WHY jsonb RATHER THAN THREE NULLABLE PARAMETERS
+--
+-- NULL cannot mean both "leave this alone" and "clear it", and clearing a name
+-- is a thing people legitimately do — an export with no name column leaves a
+-- placeholder somebody may want gone. Key PRESENCE says what is being changed,
+-- and the value says what to. {"name": null} clears it; omitting "name" leaves
+-- it alone.
+--
+-- The order is deliberate: the ID goes last, so the name and cohort steps are
+-- still working with the ID the caller passed in.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.edit_student(
+  p_student_id text,
+  p_changes    jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_id      text := btrim(COALESCE(p_student_id, ''));
+  v_changes jsonb := COALESCE(p_changes, '{}'::jsonb);
+  v_result  jsonb := '{}'::jsonb;
+  v_moved   jsonb;
+  v_new     jsonb;
+BEGIN
+  IF v_id = '' THEN
+    RAISE EXCEPTION 'no student given';
+  END IF;
+
+  -- Each of these re-checks permission for itself. That is intentional
+  -- duplication: they are callable on their own, and a check that only exists
+  -- in the composite would be missing from the other three doors.
+
+  IF v_changes ? 'name' THEN
+    v_result := v_result || jsonb_build_object(
+      'name', public.update_student(v_id, v_changes ->> 'name') ->> 'name');
+  END IF;
+
+  IF v_changes ? 'cohort_id' AND (v_changes ->> 'cohort_id') IS NOT NULL THEN
+    v_moved := public.move_student_cohort(
+                 v_id, (v_changes ->> 'cohort_id')::uuid);
+    v_result := v_result || jsonb_build_object(
+      'cohort_label', v_moved ->> 'cohort_label');
+  END IF;
+
+  -- Last, so everything above ran against the ID the caller knows.
+  IF v_changes ? 'student_id'
+     AND NULLIF(btrim(COALESCE(v_changes ->> 'student_id', '')), '') IS NOT NULL
+     AND btrim(v_changes ->> 'student_id') <> v_id THEN
+    v_new := public.change_student_id(v_id, btrim(v_changes ->> 'student_id'));
+    v_result := v_result || jsonb_build_object(
+      'previous_id',        v_id,
+      'attendance_records', v_new -> 'attendance_records',
+      'enrolments',         v_new -> 'enrolments',
+      'flags',              v_new -> 'flags');
+    v_id := v_new ->> 'student_id';
+  END IF;
+
+  RETURN v_result || jsonb_build_object('student_id', v_id);
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.edit_student(text, jsonb) FROM public;
+GRANT EXECUTE ON FUNCTION public.edit_student(text, jsonb) TO authenticated;
+
+COMMENT ON FUNCTION public.edit_student(text, jsonb) IS
+  'Apply a student edit as one transaction: name, cohort and ID together, or '
+  'none of them. Key presence in p_changes says what is being changed, so '
+  '{"name": null} clears a name while omitting the key leaves it alone.';

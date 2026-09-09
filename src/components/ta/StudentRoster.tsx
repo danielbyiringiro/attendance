@@ -42,6 +42,17 @@ interface StudentRosterProps {
   presentIds?: Set<string>;
   /** Below this, a rate is shown in red. */
   minAttendancePercentage?: number;
+  /**
+   * How many students the filters currently leave visible.
+   *
+   * Reported upwards because the heading that states the number sits outside
+   * this component, while the cohort, search and risk filters that decide it
+   * all live inside. Without this the heading counts the whole class and
+   * silently contradicts the list under it.
+   *
+   * Must be a stable function — a setState setter, not a fresh closure.
+   */
+  onVisibleChange?: (visible: number) => void;
 }
 
 const rateColour = (rate: number, threshold: number) =>
