@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Clock, LogOut, MailX, ShieldX } from "lucide-react";
 import type { StaffIdentity } from "@/lib/api/staff";
 import ThemeToggle from "@/components/ThemeToggle";
+import AccessibilitySettings from "@/components/AccessibilitySettings";
 
 interface AccountPendingProps {
   identity: StaffIdentity;
@@ -56,6 +57,7 @@ const AccountPending = ({ identity, onSignOut }: AccountPendingProps) => {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="w-full max-w-md space-y-4">
         <div className="flex justify-end">
+          <AccessibilitySettings />
           <ThemeToggle />
         </div>
 

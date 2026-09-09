@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Eye, EyeOff, Loader2, Shield } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { listAllowedDomains } from "@/lib/api/staff";
+import Logo from "@/components/Logo";
 
 interface TALoginProps {
   onLogin: () => void;
@@ -142,9 +143,7 @@ const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
       <Card className="w-full max-w-md border-2 shadow-medium">
         <CardHeader className="text-center">
           <div className="mb-4 flex justify-center">
-            <div className="rounded-full bg-gradient-primary p-3 shadow-soft">
-              <Shield className="h-8 w-8 text-primary-foreground" />
-            </div>
+            <Logo className="h-14 w-14 shadow-soft" />
           </div>
           <CardTitle className="text-2xl">
             {mode === "signin" ? "TA Access" : "Request an account"}

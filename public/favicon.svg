@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Attendance">
+  <!--
+    The same mark with the register rules removed.
+
+    A tab icon is 16 CSS pixels. Two 4px rules at that size are a grey smudge
+    beside the tick, which reads as a worse tick rather than as a list — so the
+    detail is dropped and the tick is drawn larger instead. Same gradient, same
+    corner radius, so the two are recognisably one mark.
+  -->
+  <defs>
+    <linearGradient id="attendanceFavicon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3C83F6" />
+      <stop offset="1" stop-color="#00E6A1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#attendanceFavicon)" />
+
+  <path
+    d="M16 33l11 11 21-24"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="9"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

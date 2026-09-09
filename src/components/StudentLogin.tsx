@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Clock, Loader2, Users } from "lucide-react";
+import { CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import Logo from "@/components/Logo";
 
 export interface MarkResult {
   success: boolean;
@@ -12,6 +13,8 @@ export interface MarkResult {
   name?: string;
   /** Which class the PIN turned out to belong to. */
   class?: string;
+  /** Its code — what a timetable calls the course. Added in migration 025. */
+  class_code?: string;
   cohort?: string;
   state?: string;
 }
@@ -97,10 +100,8 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
       <div className="w-full max-w-md space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="flex items-center justify-center mb-4">
-            <div className="p-3 bg-gradient-to-r from-primary to-accent rounded-full">
-              <Users className="h-8 w-8 text-primary-foreground" />
-            </div>
+          <div className="mb-4 flex items-center justify-center">
+            <Logo className="h-16 w-16 shadow-soft" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
             Attendance Check-In
@@ -133,24 +134,59 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
           </CardContent>
         </Card>
 
-        {/* Confirmation, naming the class the PIN turned out to belong to.
-            A student in two courses needs to know which one they just marked. */}
+        {/*
+          Which class this was, said properly.
+
+          The class was already named here, in the same grey small print as the
+          student's own name — so the one fact somebody wants confirmed before
+          walking out of a room was the least prominent thing on the card. A
+          student with back-to-back lectures reads the code, which is what a
+          timetable calls the course, so that leads.
+
+          Nothing above the PIN box can say this: naming the open classes to
+          anyone who loads the page would announce which of the institution's
+          classes are meeting, and resolving it from a student ID would make
+          this box an enrolment oracle. See migration 025.
+        */}
         {marked && (
           <Card className="border-2 border-success/40 bg-success/5 shadow-medium">
-            <CardContent className="space-y-1 py-4 text-center">
+            <CardContent className="space-y-2 py-4 text-center">
               <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
-              <p className="font-medium">
+
+              <p className="text-sm font-medium">
                 {marked.state === "late" ? "Marked late" : "You are marked present"}
               </p>
-              <p className="text-sm text-muted-foreground">
-                {marked.name ? `${marked.name} · ` : ""}
-                {marked.class}
-                {marked.cohort ? ` · Cohort ${marked.cohort}` : ""}
-              </p>
-              {marked.state === "late" && (
-                <Badge variant="secondary" className="mt-1">
-                  after the late cut-off
-                </Badge>
+
+              <div className="space-y-0.5">
+                {marked.class_code && (
+                  <p className="text-2xl font-bold leading-tight tracking-tight">
+                    {marked.class_code}
+                  </p>
+                )}
+                {marked.class && (
+                  <p
+                    className={
+                      marked.class_code
+                        ? "text-sm text-muted-foreground"
+                        : "text-xl font-bold leading-tight"
+                    }
+                  >
+                    {marked.class}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                {marked.cohort && (
+                  <Badge variant="outline">Cohort {marked.cohort}</Badge>
+                )}
+                {marked.state === "late" && (
+                  <Badge variant="secondary">after the late cut-off</Badge>
+                )}
+              </div>
+
+              {marked.name && (
+                <p className="text-xs text-muted-foreground">{marked.name}</p>
               )}
             </CardContent>
           </Card>

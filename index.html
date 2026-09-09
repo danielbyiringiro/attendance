@@ -3,18 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Attendance Tracker - Student Check-In System</title>
-    <meta name="description" content="Modern attendance tracking platform for students and teaching assistants" />
-    <meta name="author" content="Lovable" />
 
-    <meta property="og:title" content="Attendance Tracker - Student Check-In System" />
-    <meta property="og:description" content="Modern attendance tracking platform for students and teaching assistants" />
+    <title>Attendance — class check-in and registers</title>
+    <meta
+      name="description"
+      content="Class attendance: students check in with a PIN, and teaching assistants keep the register, the roster and the reporting for their own classes."
+    />
+
+    <!--
+      SVG first, .ico as the fallback for browsers that want one. The .ico is
+      the scaffold's and is left alone rather than regenerated: it is only
+      reached by browsers that ignore the SVG, and replacing it properly needs
+      a rasteriser this project has no reason to carry.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
+
+    <!--
+      Both, so the browser chrome matches whichever scheme is showing rather
+      than only the light one. These are --primary and --background from
+      index.css, kept in step by hand: a meta tag cannot read a CSS variable.
+    -->
+    <meta
+      name="theme-color"
+      content="#3C83F6"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0B1220"
+      media="(prefers-color-scheme: dark)"
+    />
+
+    <meta property="og:title" content="Attendance — class check-in and registers" />
+    <meta
+      property="og:description"
+      content="Students check in with a PIN. Teaching assistants keep the register, the roster and the reporting for their own classes."
+    />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta property="og:image" content="/logo.svg" />
 
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@lovable_dev" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:image" content="/logo.svg" />
   </head>
 
   <body>

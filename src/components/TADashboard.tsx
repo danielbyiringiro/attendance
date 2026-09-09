@@ -65,6 +65,7 @@ import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import SessionRollCall from "@/components/ta/SessionRollCall";
 import ThemeToggle from "@/components/ThemeToggle";
+import AccessibilitySettings from "@/components/AccessibilitySettings";
 import StudentRoster from "@/components/ta/StudentRoster";
 import RosterUpload from "@/components/ta/RosterUpload";
 import { useActiveClass } from "@/lib/classContext";
@@ -1002,7 +1003,8 @@ const TADashboard = ({
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <ThemeToggle />
+            <AccessibilitySettings />
+          <ThemeToggle />
             <Button onClick={onLogout} variant="outline">
               Logout
             </Button>

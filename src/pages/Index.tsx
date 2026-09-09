@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import StudentLogin, { type MarkResult } from "@/components/StudentLogin";
 import ThemeToggle from "@/components/ThemeToggle";
+import AccessibilitySettings from "@/components/AccessibilitySettings";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
@@ -178,6 +179,9 @@ const Index = () => {
       success: true,
       name: result.name,
       class: result.class,
+      // Rebuilt field by field rather than spread, so anything the RPC adds
+      // has to be named here too — this one was added by migration 025.
+      class_code: result.class_code,
       cohort: result.cohort,
       state: result.state,
     };
@@ -324,7 +328,8 @@ const Index = () => {
 
       {/* Theme and TA access */}
       <div className="fixed right-4 top-4 flex items-center gap-1 opacity-70 transition-opacity hover:opacity-100">
-        <ThemeToggle />
+        <AccessibilitySettings />
+          <ThemeToggle />
         <Button onClick={() => setShowTALogin(true)} variant="ghost" size="sm">
           <Settings className="h-4 w-4" />
         </Button>

@@ -6,12 +6,19 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { ThemeProvider } from "@/lib/theme";
+import { AccessibilityProvider } from "@/lib/accessibility";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
+      {/*
+        Inside the theme, because high contrast redefines tokens the theme
+        sets and has to win. Outside everything else, because these settings
+        are applied to <html> and are not any one screen's business.
+      */}
+      <AccessibilityProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -23,6 +30,7 @@ const App = () => (
           </Routes>
         </BrowserRouter>
       </TooltipProvider>
+      </AccessibilityProvider>
     </ThemeProvider>
   </QueryClientProvider>
 );
