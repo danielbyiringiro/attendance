@@ -65,6 +65,9 @@ const {
   applyMapping,
   courseCodeIn,
   codesMatch,
+  buildGrid,
+  detectColumns,
+  groupIntoLines,
 } = await import(pathToFileURL(out).href);
 
 // ---------------------------------------------------------------------------
@@ -242,6 +245,104 @@ ok("CS254 does not match CS255", !codesMatch("CS254", "CS255"));
 ok("a missing code is not a disagreement", codesMatch(null, "CS254"));
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// PDF layout reconstruction
+//
+// A PDF has no table -- only glyphs at coordinates. These fixtures are the
+// CAMU layout expressed as positions, including the thing that actually breaks
+// naive extraction: the header wraps three deep. "ROLL NO/REGISTER NO." is
+// three runs on three lines, and treating each visual line as a table row
+// would put "NO." in a row of its own and hide the header completely.
+//
+// Coordinates are invented. So is everybody in them.
+// ---------------------------------------------------------------------------
+
+const COL = [20, 70, 140, 230, 340, 430, 520];
+const at = (text, col, y, height = 10) => ({
+  text,
+  x: COL[col],
+  y,
+  width: text.length * 5,
+  height,
+});
+
+const CAMU_PDF = [
+  at("2025-2026 | Computer Science | Semester 3 | Introduction to AI | CS254", 0, 20),
+  at("Enrolled Students", 0, 50),
+
+  // Header, wrapped exactly as it renders
+  at("S.NO.", 0, 100), at("ROLL NO", 1, 100), at("ROLL", 2, 100),
+  at("STUDENT NAME", 3, 100), at("ENROLLED", 4, 100),
+  at("ENROLLED", 5, 100), at("YEAR OF", 6, 100),
+
+  at("NO./REGISTER", 2, 112), at("DEPARTME", 4, 112),
+  at("PROGRAM", 5, 112), at("ADMISSION", 6, 112),
+
+  at("NO.", 2, 124), at("NT", 4, 124),
+
+  // Data
+  at("1", 0, 145), at("101", 1, 145), at("20250001", 2, 145),
+  at("Ama Serwaa", 3, 145), at("Computer Science", 4, 145),
+  at("BSc CS", 5, 145), at("2025", 6, 145),
+
+  // A name that wraps, with no serial number beside the continuation
+  at("2", 0, 165), at("102", 1, 165), at("20250002", 2, 165),
+  at("Kwabena", 3, 165), at("Information Systems", 4, 165),
+  at("BSc IS", 5, 165), at("2025", 6, 165),
+  at("Osei-Bonsu", 3, 177),
+];
+
+eq("every column is found", detectColumns(CAMU_PDF).length, 7);
+
+const grid = buildGrid(CAMU_PDF);
+const pdfHeaderRow = findHeaderRow(grid);
+
+ok(
+  "the wrapped header is one row, not three",
+  pdfHeaderRow !== null,
+  `findHeaderRow returned null; grid was ${JSON.stringify(grid)}`,
+);
+
+if (pdfHeaderRow !== null) {
+  eq("and its cells are rejoined", grid[pdfHeaderRow][2], "ROLL NO./REGISTER NO.");
+}
+
+const pdfMap = autoMap(grid);
+ok(
+  "so the register-number column is still the one chosen",
+  pdfMap.studentId === 2,
+  `picked column ${pdfMap.studentId}`,
+);
+
+const pdfRows = applyMapping(
+  { kind: "pdf", rows: grid, preamble: [], pageCount: 1 },
+  pdfMap,
+);
+
+eq("a name wrapped onto a second line is rejoined", pdfRows.rows, [
+  { student_id: "20250001", name: "Ama Serwaa" },
+  { student_id: "20250002", name: "Kwabena Osei-Bonsu" },
+]);
+
+// A run split mid-cell, which PDFs do at every font or kerning change.
+const SPLIT = [
+  at("ROLL NO/REGISTER NO.", 0, 100), at("STUDENT NAME", 1, 100),
+  at("20250003", 0, 120), at("Yaa", 1, 120),
+  { text: "Owusu", x: COL[1] + 22, y: 120, width: 25, height: 10 },
+];
+
+eq("runs split mid-cell are joined with a space", buildGrid(SPLIT)[1][1], "Yaa Owusu");
+
+// Grouped by vertical centre, so a bigger font beside a smaller one on the
+// same line does not split it.
+const MIXED = [
+  { text: "Big", x: 20, y: 100, width: 30, height: 16 },
+  { text: "small", x: 90, y: 103, width: 30, height: 10 },
+  { text: "next row", x: 20, y: 140, width: 40, height: 10 },
+];
+eq("mixed font sizes on one line stay on one line", groupIntoLines(MIXED).length, 2);
+
 
 console.log(`\n${checks} checks, ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);

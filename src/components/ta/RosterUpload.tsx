@@ -98,6 +98,7 @@ const RosterUpload = ({
   const [preview, setPreview] = useState<UpsertEnrolmentsResult | null>(null);
   const [result, setResult] = useState<UpsertEnrolmentsResult | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
   const reset = () => {
     setStep("pick");
@@ -106,6 +107,7 @@ const RosterUpload = ({
     setMoveExisting(false);
     setPreview(null);
     setResult(null);
+    setShowRaw(false);
     if (fileInput.current) fileInput.current.value = "";
   };
 
@@ -135,18 +137,14 @@ const RosterUpload = ({
     setIsBusy(true);
     try {
       const name = file.name.toLowerCase();
+      const isPdf =
+        name.endsWith(".pdf") || file.type === "application/pdf";
 
-      if (name.endsWith(".pdf")) {
-        toast({
-          title: "PDF is not supported yet",
-          description:
-            "Export the list as CSV for now. PDF reading is the next piece of this feature.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const extracted = await readCsvFile(file);
+      // pdfjs is about a megabyte and most uploads are CSV, so it is fetched
+      // only when somebody actually picks a PDF.
+      const extracted = isPdf
+        ? await (await import("@/lib/roster/pdfSource")).readPdfFile(file)
+        : await readCsvFile(file);
 
       if (extracted.rows.length === 0) {
         toast({
@@ -247,7 +245,7 @@ const RosterUpload = ({
           </DialogTitle>
           <DialogDescription>
             {step === "pick" &&
-              "A CSV exported from CAMU or Canvas. The file is read here in your browser and never stored anywhere."}
+              "A CSV or PDF exported from CAMU or Canvas. The file is read here in your browser and never stored anywhere."}
             {step === "map" &&
               "Check the columns before anything is uploaded. Getting the ID column wrong does not show up until attendance stops matching."}
             {step === "confirm" &&
@@ -302,7 +300,7 @@ const RosterUpload = ({
               ) : (
                 <span className="flex flex-col items-center gap-1">
                   <Upload className="h-5 w-5" />
-                  <span>Choose a CSV file</span>
+                  <span>Choose a CSV or PDF file</span>
                 </span>
               )}
             </Button>
@@ -440,6 +438,67 @@ const RosterUpload = ({
                 </div>
               </div>
             )}
+
+            {/*
+              What the file actually gave us, before any interpretation.
+              A PDF has no table in it — the rows above are reconstructed from
+              where the text sits on the page, and that reconstruction is
+              wrong often enough to be worth being able to look at. It is also
+              the only way to diagnose a bad read without sending the document
+              to anybody.
+            */}
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent"
+                onClick={() => setShowRaw(!showRaw)}
+              >
+                {showRaw ? "Hide" : "Show"} what was read from the file
+                {table.kind === "pdf" && ` (${table.pageCount} page${table.pageCount === 1 ? "" : "s"})`}
+              </Button>
+
+              {showRaw && (
+                <div className="max-h-64 overflow-auto rounded-md border">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {table.rows.slice(0, 40).map((row, r) => (
+                        <tr
+                          key={r}
+                          className={
+                            r === mapping.headerRow
+                              ? "border-t bg-primary/10 font-medium"
+                              : "border-t"
+                          }
+                        >
+                          <td className="w-10 px-2 py-1 text-right text-muted-foreground">
+                            {r + 1}
+                          </td>
+                          {row.map((cell, c) => (
+                            <td
+                              key={c}
+                              className={
+                                c === mapping.studentId
+                                  ? "whitespace-nowrap px-2 py-1 font-mono font-semibold"
+                                  : "whitespace-nowrap px-2 py-1"
+                              }
+                            >
+                              {cell || <span className="text-muted-foreground">·</span>}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {table.rows.length > 40 && (
+                    <p className="border-t px-2 py-1 text-xs text-muted-foreground">
+                      +{table.rows.length - 40} more rows
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
 
             {mapped.skipped.length > 0 && (
               <p className="text-xs text-muted-foreground">
