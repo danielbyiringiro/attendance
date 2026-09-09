@@ -34,22 +34,35 @@ interface SessionRollCallProps {
   onChanged: () => void;
 }
 
-/** The three calls worth making by hand, in the order a register is read. */
-const CALLS: { state: AttendanceState; label: string; className: string }[] = [
+/**
+ * The three calls worth making by hand, in the order a register is read.
+ *
+ * Each has a key, because the point of a card showing one student is that the
+ * next arrives by itself — and then reaching for the mouse is the slow part.
+ */
+const CALLS: {
+  state: AttendanceState;
+  label: string;
+  key: string;
+  className: string;
+}[] = [
   {
     state: "present",
     label: "Present",
+    key: "P",
     className: "bg-success text-success-foreground hover:bg-success/90",
   },
   {
     state: "unexcused",
     label: "Absent",
+    key: "A",
     className:
       "bg-destructive text-destructive-foreground hover:bg-destructive/90",
   },
   {
     state: "excused",
     label: "Excused",
+    key: "E",
     className: "bg-primary text-primary-foreground hover:bg-primary/90",
   },
 ];
@@ -85,6 +98,14 @@ const SessionRollCall = ({
   const [query, setQuery] = useState("");
   /** Marked in this sitting, newest first — the undo trail. */
   const [justMarked, setJustMarked] = useState<SessionAttendee[]>([]);
+  /**
+   * Somebody pulled to the front out of order.
+   *
+   * Null means "whoever is next", which is the normal case: the register is
+   * read in order and the card advances by itself. Cleared after a mark so it
+   * does not stick.
+   */
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
 
   const load = useCallback(async () => {
@@ -109,6 +130,7 @@ const SessionRollCall = ({
       setQuery("");
       setJustMarked([]);
       setShowDone(false);
+      setFocusId(null);
       void load();
     }
   }, [session, load]);
@@ -146,6 +168,18 @@ const SessionRollCall = ({
     [attendees],
   );
 
+  // Whoever the card is showing: the one pulled forward, else simply the next.
+  const current = useMemo(
+    () =>
+      remaining.find((a) => a.student_id === focusId) ?? remaining[0] ?? null,
+    [remaining, focusId],
+  );
+
+  const queue = useMemo(
+    () => remaining.filter((a) => a.student_id !== current?.student_id),
+    [remaining, current],
+  );
+
   const mark = async (attendee: SessionAttendee, state: AttendanceState) => {
     if (!session) return;
     setBusyId(attendee.student_id);
@@ -165,6 +199,9 @@ const SessionRollCall = ({
         { ...attendee, state },
         ...rows.filter((r) => r.student_id !== attendee.student_id),
       ]);
+      // Back to "whoever is next": a pull-forward is for one student, not a
+      // mode somebody has to remember to leave.
+      setFocusId(null);
       onChanged();
     } catch (e) {
       // Put it back. Leaving the optimistic value would show a mark that does
@@ -203,6 +240,45 @@ const SessionRollCall = ({
       rows.filter((r) => r.student_id !== attendee.student_id),
     );
   };
+
+  /**
+   * P, A and E call the student on the card.
+   *
+   * The card advances on its own, so without keys the whole flow is
+   * mouse-to-button-back-to-list for every name. Ignored while somebody is
+   * typing in the search box, and while a mark is in flight — a second press
+   * mid-request would race the optimistic update.
+   */
+  useEffect(() => {
+    if (!session || !current || busyId) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (typing) return;
+
+      const call = CALLS.find(
+        (c) => c.key.toLowerCase() === e.key.toLowerCase(),
+      );
+      if (!call) return;
+
+      e.preventDefault();
+      void mark(current, call.state);
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // `mark` is redefined every render; depending on it would rebind the
+    // listener constantly. The student and the in-flight flag are what
+    // actually decide what a keypress should do.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, current, busyId]);
 
   const total = attendees.length;
   const marked = done.length;
@@ -270,7 +346,62 @@ const SessionRollCall = ({
           )}
         </div>
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {/*
+          The one being called, then the queue.
+
+          A register is read one name at a time, and a flat list makes you find
+          your place again after every click. The card is where the marking
+          happens; the list below is what is coming, and clicking any of it
+          pulls that student forward for the out-of-order case.
+        */}
+        {current && !isLoading && (
+          <div className="shrink-0 space-y-3 rounded-lg border-2 border-primary/40 bg-primary/5 p-4 shadow-soft">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xl font-bold">
+                  {current.name || current.student_id}
+                </p>
+                <p className="font-mono text-sm text-muted-foreground">
+                  {current.student_id}
+                </p>
+                {current.state === "unexcused" &&
+                  current.marked_by_role === "system" && (
+                    <p className="mt-1 text-xs text-warning">
+                      Down as absent because the session closed without them
+                      checking in — nobody has actually looked.
+                    </p>
+                  )}
+              </div>
+              <Badge variant="outline" className="shrink-0 tabular-nums">
+                {remaining.length} left
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {CALLS.map((call) => (
+                <Button
+                  key={call.state}
+                  className={`h-14 text-base ${call.className}`}
+                  disabled={busyId === current.student_id}
+                  onClick={() => void mark(current, call.state)}
+                >
+                  {busyId === current.student_id ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <span className="flex flex-col leading-tight">
+                      <span>{call.label}</span>
+                      <span className="text-[10px] font-normal opacity-70">
+                        press {call.key}
+                      </span>
+                    </span>
+                  )}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 pt-3">
           {isLoading ? (
             <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -295,44 +426,35 @@ const SessionRollCall = ({
               )}
             </div>
           ) : (
-            remaining.map((a) => (
-              <div
-                key={a.student_id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {a.name || a.student_id}
-                  </p>
-                  <p className="font-mono text-xs text-muted-foreground">
-                    {a.name ? `${a.student_id}` : ""}
-                    {a.state === "unexcused" && a.marked_by_role === "system" && (
-                      <span className={a.name ? "ml-2" : ""}>
-                        absent by default — nobody has marked them
-                      </span>
-                    )}
-                  </p>
-                </div>
+            <>
+              {queue.length > 0 && (
+                <p className="text-xs font-medium text-muted-foreground">
+                  Up next — click anyone to call them now
+                </p>
+              )}
 
-                <div className="flex gap-1.5">
-                  {CALLS.map((call) => (
-                    <Button
-                      key={call.state}
-                      size="sm"
-                      className={call.className}
-                      disabled={busyId === a.student_id}
-                      onClick={() => void mark(a, call.state)}
-                    >
-                      {busyId === a.student_id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        call.label
-                      )}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            ))
+              {queue.map((a) => (
+                <button
+                  key={a.student_id}
+                  type="button"
+                  onClick={() => setFocusId(a.student_id)}
+                  className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors hover:border-primary/50 hover:bg-muted/50"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {a.name || a.student_id}
+                    </span>
+                    <span className="block font-mono text-xs text-muted-foreground">
+                      {a.student_id}
+                      {a.state === "unexcused" &&
+                        a.marked_by_role === "system" && (
+                          <span className="ml-2">absent by default</span>
+                        )}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </>
           )}
 
           {showDone && done.length > 0 && (
