@@ -237,8 +237,8 @@ const RosterUpload = ({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 sm:max-w-3xl">
+        <DialogHeader className="shrink-0 pb-4">
           <DialogTitle className="flex items-center gap-2">
             <FileUp className="h-5 w-5" />
             Upload a class list
@@ -253,6 +253,14 @@ const RosterUpload = ({
             {step === "done" && "Done."}
           </DialogDescription>
         </DialogHeader>
+
+        {/*
+          Only this scrolls. Reading a PDF produces a preamble, warnings,
+          two column pickers, a sample and a diagnostic grid, and when the
+          whole dialog scrolled together the button that continues went
+          off the bottom -- so the step looked like a dead end.
+        */}
+        <div className="-mx-1 flex-1 overflow-y-auto px-1">
 
         {/* ---- step 1 ---- */}
         {step === "pick" && (
@@ -638,7 +646,9 @@ const RosterUpload = ({
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:justify-between">
+        </div>
+
+        <DialogFooter className="mt-4 shrink-0 gap-2 border-t pt-4 sm:justify-between">
           {step === "map" || step === "confirm" ? (
             <Button
               variant="ghost"
