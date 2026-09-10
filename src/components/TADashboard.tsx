@@ -67,6 +67,7 @@ import SessionRollCall from "@/components/ta/SessionRollCall";
 import ThemeToggle from "@/components/ThemeToggle";
 import AccessibilitySettings from "@/components/AccessibilitySettings";
 import StudentRoster from "@/components/ta/StudentRoster";
+import AnalyticsOverview from "@/components/ta/AnalyticsOverview";
 import RosterUpload from "@/components/ta/RosterUpload";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -433,15 +434,6 @@ const TADashboard = ({
           const cohort = rosterEntry ? rosterEntry.cohort : cohortOf(id);
           return cohort === selectedCohort;
         });
-
-  // One tally per cohort the class actually has. These were three hardcoded
-  // A/B/C pairs, which is why a class with four cohorts could not be counted.
-  const cohortTallies = cohorts.map((co) => ({
-    id: co.id,
-    label: co.label,
-    present: validPresentStudents.filter((s) => s.cohort === co.label).length,
-    total: roster.filter((r) => r.cohort === co.label).length,
-  }));
 
   // Per-cohort report settings (lecturer + FI), for the active class.
   //
@@ -1153,56 +1145,23 @@ const TADashboard = ({
 
         {isAnalyticsSection && (
           <>
-            {/* Stats Overview */}
-            <div
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-            >
-              <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserCheck className="h-5 w-5 text-success" />
-                    <div>
-                      <p className="text-2xl font-bold text-success">
-                        {validPresentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Present</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+            {/*
+              The numbers, for a day you choose or for the term.
 
-              <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-center space-x-2">
-                    <UserX className="h-5 w-5 text-destructive" />
-                    <div>
-                      <p className="text-2xl font-bold text-destructive">
-                        {absentStudents.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground">Absent</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {cohortTallies.map((c) => (
-                <Card key={c.id} className="border-2 border-primary/25 bg-gradient-card shadow-soft">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center space-x-2">
-                      <Users className="h-5 w-5 text-primary" />
-                      <div>
-                        <p className="text-2xl font-bold">
-                          {c.present}/{c.total}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Cohort {c.label}
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+              These were today's and only today's, and computed by taking every
+              enrolled student who was not marked present and calling them
+              absent — the derivation migration 004 exists to have removed. It
+              cannot tell a student who missed a class from a day the class did
+              not meet, which a date picker makes obvious the first time
+              somebody lands on a Sunday.
+            */}
+            <AnalyticsOverview
+              classId={activeClass.id}
+              cohorts={cohorts}
+              roster={roster}
+              termStartsOn={activeClass.term_starts_on}
+              termEndsOn={activeClass.term_ends_on}
+            />
 
             {/* Per-student standing. Was reachable only by opening a dialog,
                 typing a name and pressing a button, which could not show you
