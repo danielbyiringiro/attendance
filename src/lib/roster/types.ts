@@ -15,7 +15,7 @@
  */
 
 /** Where a grid of text came from. Used for wording, not for logic. */
-export type SourceKind = "csv" | "pdf";
+export type SourceKind = "csv" | "pdf" | "xlsx";
 
 /**
  * A rectangle of strings, exactly as it appeared in the file.

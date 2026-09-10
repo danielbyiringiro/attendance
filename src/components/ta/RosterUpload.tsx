@@ -146,12 +146,39 @@ const RosterUpload = ({
       const name = file.name.toLowerCase();
       const isPdf =
         name.endsWith(".pdf") || file.type === "application/pdf";
+      // By extension rather than MIME type: a spreadsheet arrives as any of
+      // three different types depending on the browser and the machine, and
+      // sometimes as an empty string.
+      const isSheet = name.endsWith(".xlsx") || name.endsWith(".xlsm");
 
-      // pdfjs is about a megabyte and most uploads are CSV, so it is fetched
-      // only when somebody actually picks a PDF.
-      const extracted = isPdf
-        ? await (await import("@/lib/roster/pdfSource")).readPdfFile(file)
-        : await readCsvFile(file);
+      // Before reading anything. .xls is a different file format that happens
+      // to share a name, and the CSV reader would otherwise make a grid of
+      // mojibake out of it and ask which column held the student ID.
+      if (name.endsWith(".xls")) {
+        toast({
+          title: "That is the older Excel format",
+          description:
+            "Open it and save as .xlsx, or export as CSV. The two share a name but not a file format.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Each reader is fetched only when somebody picks that kind of file.
+      // pdfjs is about a megabyte, the spreadsheet reader is not small either,
+      // and most uploads are neither.
+      let extracted;
+      if (isPdf) {
+        extracted = await (
+          await import("@/lib/roster/pdfSource")
+        ).readPdfFile(file);
+      } else if (isSheet) {
+        extracted = await (
+          await import("@/lib/roster/xlsxSource")
+        ).readXlsxFile(file);
+      } else {
+        extracted = await readCsvFile(file);
+      }
 
       if (extracted.rows.length === 0) {
         toast({
@@ -256,7 +283,7 @@ const RosterUpload = ({
           </DialogTitle>
           <DialogDescription>
             {step === "pick" &&
-              "A CSV or PDF exported from CAMU or Canvas. The file is read here in your browser and never stored anywhere."}
+              "A spreadsheet, CSV or PDF exported from CAMU or Canvas. The file is read here in your browser and never stored anywhere."}
             {step === "map" &&
               "Check the columns before anything is uploaded. Getting the ID column wrong does not show up until attendance stops matching."}
             {step === "confirm" &&
@@ -300,7 +327,7 @@ const RosterUpload = ({
             <input
               ref={fileInput}
               type="file"
-              accept=".csv,text/csv,application/pdf"
+              accept=".csv,.xlsx,.xlsm,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -319,7 +346,7 @@ const RosterUpload = ({
               ) : (
                 <span className="flex flex-col items-center gap-1">
                   <Upload className="h-5 w-5" />
-                  <span>Choose a CSV or PDF file</span>
+                  <span>Choose a file</span>
                 </span>
               )}
             </Button>

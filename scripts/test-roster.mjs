@@ -68,6 +68,7 @@ const {
   buildGrid,
   detectColumns,
   groupIntoLines,
+  tableFromRows,
 } = await import(pathToFileURL(out).href);
 
 // ---------------------------------------------------------------------------
@@ -409,6 +410,98 @@ eq("a one-cell line containing digits is not the first data row", autoMap(STRAY.
 
 // Where titles ARE recognised, the row after them is still the answer.
 eq("a recognised header still decides where data starts", camuMap.firstDataRow, 6);
+
+
+// ---------------------------------------------------------------------------
+// The CAMU spreadsheet
+//
+// A different shape from the same institution's CSV and PDF: the course
+// details are stacked one per row in the first column with a blank row between
+// each, rather than on one pipe-separated line, and there is a single ID
+// column ("Register No") where the PDF carries two.
+//
+// Cells arrive typed, so a numeric ID arrives as a NUMBER. Everybody here is
+// invented.
+// ---------------------------------------------------------------------------
+
+const SHEET = [
+  ["University", null, null, null, null],
+  [null, null, null, null, null],
+  ["Under Graduate", null, null, null, null],
+  [null, null, null, null, null],
+  ["B.Sc - Computer Science", null, null, null, null],
+  [null, null, null, null, null],
+  ["Computer Science and Information Systems", null, null, null, null],
+  [null, null, null, null, null],
+  ["2026-2027", null, null, null, null],
+  [null, null, null, null, null],
+  ["Semester 1", null, null, null, null],
+  [null, null, null, null, null],
+  ["Section C", null, null, null, null],
+  [null, null, null, null, null],
+  ["CS341 - Web Technologies", null, null, null, null],
+  [null, null, null, null, null],
+  ["S.No.", "Register No", "Student Name", "Student Mobile", "Student Program"],
+  [1, 20260001, "Ama Serwaa", "0200000001", "BSc CS"],
+  [2, 20260002, "Kofi Boateng", "0200000002", "BSc CS"],
+  [3, 20260003, "Yaa Owusu", "0200000003", "BSc IS"],
+  [null, null, null, null, null],
+  [null, null, null, null, null],
+];
+
+const sheet = tableFromRows(SHEET);
+const sheetMap = autoMap(sheet.rows);
+
+eq("the header row is found under the stacked preamble", sheetMap.headerRow, 16);
+
+ok(
+  "Register No is the ID column",
+  sheetMap.studentId === 1,
+  `picked column ${sheetMap.studentId} (${sheet.rows[16][sheetMap.studentId]})`,
+);
+
+eq("Student Name is the name column", sheetMap.name, 2);
+
+// The serial column is 1, 2, 3 here as it is everywhere else.
+ok("S.No. is not taken for the ID", sheetMap.studentId !== 0);
+
+eq("every student is mapped", applyMapping(sheet, sheetMap).rows, [
+  { student_id: "20260001", name: "Ama Serwaa" },
+  { student_id: "20260002", name: "Kofi Boateng" },
+  { student_id: "20260003", name: "Yaa Owusu" },
+]);
+
+// A numeric cell must not come back as 2.0260001e+7 or "20260001.0" — an ID is
+// an identifier, and mark_attendance matches it exactly.
+ok(
+  "a numeric ID keeps its digits",
+  applyMapping(sheet, sheetMap).rows.every((r) => /^\d+$/.test(r.student_id)),
+  JSON.stringify(applyMapping(sheet, sheetMap).rows.map((r) => r.student_id)),
+);
+
+// The code sits in a row of its own rather than after a pipe.
+eq("the course code is read from the stacked preamble", courseCodeIn(sheet.preamble), "CS341");
+
+// A sheet's used range often runs past its content.
+eq(
+  "trailing empty rows are not reported as unusable lines",
+  applyMapping(sheet, sheetMap).skipped.length,
+  0,
+);
+
+// Cells that are blank in the middle still count as a missing ID, not a crash.
+const GAPPY_SHEET = [
+  ["S.No.", "Register No", "Student Name"],
+  [1, 20260001, "Ama Serwaa"],
+  [2, null, "No ID Here"],
+  [3, 20260003, "Yaa Owusu"],
+];
+const gappySheet = tableFromRows(GAPPY_SHEET);
+const gappySheetRows = applyMapping(gappySheet, autoMap(gappySheet.rows));
+eq("a blank numeric cell is a missing ID", gappySheetRows.rows.length, 2);
+eq("and is reported", gappySheetRows.skipped.map((s) => s.reason), [
+  "no ID in that column",
+]);
 
 
 console.log(`\n${checks} checks, ${failures} failure(s)`);

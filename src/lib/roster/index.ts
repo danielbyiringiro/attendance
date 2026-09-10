@@ -31,6 +31,16 @@ export {
 
 export { readCsvFile, tableFromCsv } from "./csvSource";
 
+/*
+ * The pure half of the spreadsheet reader. readXlsxFile stays out of here for
+ * the same reason readPdfFile does: it pulls in a library the main bundle does
+ * not need, and a plain-Node consumer of this module cannot load it. Import it
+ * directly and dynamically:
+ *
+ *   const { readXlsxFile } = await import("@/lib/roster/xlsxSource");
+ */
+export { tableFromRows, type SheetCell } from "./xlsxSource";
+
 export {
   buildGrid,
   detectColumns,
