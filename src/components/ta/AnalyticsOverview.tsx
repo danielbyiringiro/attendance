@@ -162,6 +162,16 @@ const AnalyticsOverview = ({
   const isDay = scope.mode === "day";
   const isToday = isDay && scope.date === todayStr();
 
+  /*
+   * Is there a class here at all?
+   *
+   * Held or still to come — both are a session, and both are worth showing
+   * cards for: one says how it went, the other says it is coming and which
+   * cohorts it involves. Neither is true of a Sunday, where four cards of
+   * zeroes would read as a class nobody attended.
+   */
+  const hasSessions = (stats?.held ?? 0) > 0 || upcoming.length > 0;
+
   return (
     <div className="space-y-4">
       {/* ---- what these numbers are about ---- */}
@@ -273,6 +283,7 @@ const AnalyticsOverview = ({
         </Card>
       )}
 
+      {hasSessions && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
           <CardContent className="pt-6">
@@ -366,6 +377,7 @@ const AnalyticsOverview = ({
           );
         })}
       </div>
+      )}
 
       {stats && stats.held > 0 && stats.cancelled > 0 && (
         <p className="text-xs text-muted-foreground">
