@@ -50,7 +50,11 @@ BEGIN
     (v_class_x, v_cx_a, 'S001', DATE '2026-05-18'),
     (v_class_x, v_cx_a, 'S002', DATE '2026-05-18'),
     (v_class_x, v_cx_b, 'S003', DATE '2026-05-18'),
-    (v_class_y, v_cy_a, 'S001', DATE '2026-05-18');
+    (v_class_y, v_cy_a, 'S001', DATE '2026-05-18'),
+    -- For the late-opening case further down. S001 marks at this session
+    -- early on, so a second mark from them would be refused as already_marked
+    -- and answer a different question.
+    (v_class_y, v_cy_a, 'S004', DATE '2026-05-18');
 
   INSERT INTO public.class_sessions (cohort_id, starts_at, session_date)
   VALUES (v_cx_a, now(), CURRENT_DATE) RETURNING id INTO v_sess_xa;
@@ -150,10 +154,23 @@ BEGIN
   END IF;
 
   -- --------------------------------------------------------------------------
-  -- Lateness is measured from when the TA opened, not the scheduled start
+  -- Lateness is measured from the class starting, or from the TA opening if
+  -- that came later
+  --
+  -- This block used to say "from when the TA opened, not the scheduled start",
+  -- and moved opened_at while leaving starts_at at creation time. Since 028
+  -- that describes a session opened THIRTY MINUTES BEFORE IT STARTS, where
+  -- present is the right answer — a student cannot be late for a class that
+  -- has not begun.
+  --
+  -- What that rule was protecting is still protected, and asserted below: a TA
+  -- who opens LATE must not mark a room full of people late for having waited.
+  -- So the class time moves with the opening here: a session that started half
+  -- an hour ago and was opened then.
   -- --------------------------------------------------------------------------
   UPDATE public.class_sessions
-     SET opened_at = now() - INTERVAL '30 minutes',
+     SET starts_at = now() - INTERVAL '30 minutes',
+         opened_at = now() - INTERVAL '30 minutes',
          late_window_minutes = 10,
          auto_close_minutes = 120
    WHERE id = v_sess_xb;
@@ -167,9 +184,33 @@ BEGIN
       r ->> 'state';
   END IF;
 
+  -- And the case the old rule existed to protect: a TA who opens LATE.
+  --
+  -- The class started an hour ago and the TA has only just opened it. Marking
+  -- from the class start alone would record everybody who waited as late, for
+  -- somebody else's lateness. The anchor is whichever came later, so it is the
+  -- opening here, and they are present.
+  UPDATE public.class_sessions
+     SET starts_at = now() - INTERVAL '60 minutes',
+         opened_at = now() - INTERVAL '2 minutes',
+         late_window_minutes = 10
+   WHERE id = v_sess_y;
+
+  r := public.mark_attendance('S004', 'YAAAA');
+  IF NOT (r ->> 'success')::boolean THEN
+    RAISE EXCEPTION 'S004 could not check in at a late-opened session: %', r;
+  END IF;
+  IF r ->> 'state' <> 'present' THEN
+    RAISE EXCEPTION
+      'a student marking two minutes after the TA opened was recorded % — a '
+      'room that waited an hour must not be marked late for it', r ->> 'state';
+  END IF;
+
   -- Past auto_close, the window is shut even though the session is still open.
   UPDATE public.class_sessions
-     SET opened_at = now() - INTERVAL '3 hours', auto_close_minutes = 15
+     SET starts_at  = now() - INTERVAL '3 hours',
+         opened_at  = now() - INTERVAL '3 hours',
+         auto_close_minutes = 15
    WHERE id = v_sess_xa;
 
   r := public.mark_attendance('S002', 'XAAAA');
