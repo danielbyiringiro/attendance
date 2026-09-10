@@ -68,6 +68,8 @@ interface Slot {
   startTime: string;
   duration: string;
   signup: string;
+  /** How many minutes before the start check-in may open. */
+  early: string;
 }
 
 let nextKey = 0;
@@ -77,6 +79,7 @@ const newSlot = (weekday = 2): Slot => ({
   startTime: "09:00",
   duration: "",
   signup: "",
+  early: "",
 });
 
 /** "09:00:00" -> "09:00", so the value fits an <input type="time">. */
@@ -98,7 +101,8 @@ const sameSlots = (a: Slot[], b: Slot[]) => {
       slot.weekday === right[i].weekday &&
       slot.startTime === right[i].startTime &&
       slot.duration === right[i].duration &&
-      slot.signup === right[i].signup,
+      slot.signup === right[i].signup &&
+      slot.early === right[i].early,
   );
 };
 
@@ -144,6 +148,7 @@ const Schedule = () => {
           startTime: toInputTime(r.start_time),
           duration: r.duration_minutes ? String(r.duration_minutes) : "",
           signup: r.auto_close_minutes ? String(r.auto_close_minutes) : "",
+          early: r.early_open_minutes ? String(r.early_open_minutes) : "",
         });
       });
       setSlots(byCohort);
@@ -262,6 +267,7 @@ const Schedule = () => {
               startTime: source.startTime,
               duration: source.duration,
               signup: source.signup,
+              early: source.early,
             },
       ),
     );
@@ -311,6 +317,7 @@ const Schedule = () => {
           startTime: s.startTime,
           durationMinutes: s.duration ? Number(s.duration) : undefined,
           autoCloseMinutes: s.signup ? Number(s.signup) : undefined,
+          earlyOpenMinutes: s.early ? Number(s.early) : undefined,
         }));
         await setCohortSchedules([cohort.id], payload);
       }
@@ -550,6 +557,27 @@ const Schedule = () => {
                             />
                             <span className="text-xs text-muted-foreground">
                               min
+                            </span>
+                          </div>
+
+                          <div className="flex w-[6.5rem] items-center gap-1">
+                            <Input
+                              type="number"
+                              min={0}
+                              className="w-[4.5rem]"
+                              title="How long before the start time check-in may open. The sign-up window still counts from the class starting, so opening early does not shorten it."
+                              placeholder={String(
+                                activeClass.default_early_open_minutes,
+                              )}
+                              value={slot.early}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  early: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              early
                             </span>
                           </div>
 

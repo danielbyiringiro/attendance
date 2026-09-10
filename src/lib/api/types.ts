@@ -65,6 +65,12 @@ export interface CohortScheduleRow {
   auto_close_minutes: number | null;
   /** How long after opening a mark still counts as present rather than late. */
   late_window_minutes: number | null;
+  /**
+   * How long before the start time check-in may open. NULL inherits the class
+   * default. Migration 028 made this mean something; before that it was
+   * written on every session and read by nothing.
+   */
+  early_open_minutes: number | null;
   delivery_mode: DeliveryMode | null;
   effective_from: string | null;
   effective_until: string | null;
@@ -142,6 +148,16 @@ export interface OpenSessionResult {
   session_id: string;
   pin: string;
   opened_at: string;
+  /**
+   * When students may start marking — earlier than `opened_at` is impossible,
+   * but later is normal: a session opened before its early-open window keeps
+   * the door shut until then. Added by migration 028.
+   */
+  opens_at: string;
+  /**
+   * Counted from the class starting, not from `opened_at`, so opening early
+   * does not shorten it.
+   */
   closes_at: string;
 }
 
