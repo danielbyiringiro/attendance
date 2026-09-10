@@ -176,6 +176,12 @@ export interface ScheduleSlot {
   autoCloseMinutes?: number;
   /** Marks after this many minutes are `late` rather than `present`. */
   lateWindowMinutes?: number;
+  /**
+   * How long before the start time check-in may open. Opening early does not
+   * spend the sign-up window — that counts from the class starting — so this
+   * is purely how early students may mark. Omit to inherit the class default.
+   */
+  earlyOpenMinutes?: number;
 }
 
 /**
@@ -201,6 +207,7 @@ export const setCohortSchedules = async (
       duration_minutes: s.durationMinutes ?? null,
       auto_close_minutes: s.autoCloseMinutes ?? null,
       late_window_minutes: s.lateWindowMinutes ?? null,
+      early_open_minutes: s.earlyOpenMinutes ?? null,
     })),
   });
   if (error) fail("Could not save the schedule", error);

@@ -15,9 +15,19 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { CalendarPlus, Copy, Loader2, Plus, Save, X } from "lucide-react";
+import {
+  CalendarPlus,
+  Copy,
+  CopyPlus,
+  Loader2,
+  Plus,
+  Save,
+  X,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -58,6 +68,8 @@ interface Slot {
   startTime: string;
   duration: string;
   signup: string;
+  /** How many minutes before the start check-in may open. */
+  early: string;
 }
 
 let nextKey = 0;
@@ -67,6 +79,7 @@ const newSlot = (weekday = 2): Slot => ({
   startTime: "09:00",
   duration: "",
   signup: "",
+  early: "",
 });
 
 /** "09:00:00" -> "09:00", so the value fits an <input type="time">. */
@@ -88,7 +101,8 @@ const sameSlots = (a: Slot[], b: Slot[]) => {
       slot.weekday === right[i].weekday &&
       slot.startTime === right[i].startTime &&
       slot.duration === right[i].duration &&
-      slot.signup === right[i].signup,
+      slot.signup === right[i].signup &&
+      slot.early === right[i].early,
   );
 };
 
@@ -134,6 +148,7 @@ const Schedule = () => {
           startTime: toInputTime(r.start_time),
           duration: r.duration_minutes ? String(r.duration_minutes) : "",
           signup: r.auto_close_minutes ? String(r.auto_close_minutes) : "",
+          early: r.early_open_minutes ? String(r.early_open_minutes) : "",
         });
       });
       setSlots(byCohort);
@@ -186,6 +201,83 @@ const Schedule = () => {
       (slots[cohortId] ?? []).filter((s) => s.key !== key),
     );
 
+  /**
+   * Put this day's times on another day, or on every day left.
+   *
+   * The times are the tedious part, not the weekday: a cohort meeting three
+   * times a week almost always meets at the same hour each time, and setting
+   * that up meant typing the same three numbers into every row. This copies
+   * the row and changes only the day, which is what "another session like this
+   * one" actually means.
+   */
+  const duplicateSlot = (cohortId: string, key: string, toWeekday: number) => {
+    const source = (slots[cohortId] ?? []).find((s) => s.key === key);
+    if (!source) return;
+
+    update(cohortId, [
+      ...(slots[cohortId] ?? []),
+      { ...source, key: `s${nextKey++}`, weekday: toWeekday },
+    ]);
+  };
+
+  const duplicateToFreeDays = (cohortId: string, key: string) => {
+    const existing = slots[cohortId] ?? [];
+    const source = existing.find((s) => s.key === key);
+    if (!source) return;
+
+    const taken = new Set(existing.map((s) => s.weekday));
+    const free = DAYS.filter((d) => !taken.has(d.weekday));
+    if (free.length === 0) return;
+
+    update(cohortId, [
+      ...existing,
+      ...free.map((d) => ({
+        ...source,
+        key: `s${nextKey++}`,
+        weekday: d.weekday,
+      })),
+    ]);
+
+    toast({
+      title: `Added ${free.length} day${free.length === 1 ? "" : "s"}`,
+      description: `Every remaining day now meets at ${source.startTime}. Save to put it into effect.`,
+    });
+  };
+
+  /**
+   * Make every day of this cohort match one of them.
+   *
+   * The other half of the same problem: the days are already right and the
+   * times drifted, or were typed once and need changing everywhere. Driven
+   * from a row rather than from a separate set of boxes, so there is no second
+   * place to define a time and no question about which one wins.
+   */
+  const levelTimes = (cohortId: string, key: string) => {
+    const existing = slots[cohortId] ?? [];
+    const source = existing.find((s) => s.key === key);
+    if (!source || existing.length < 2) return;
+
+    update(
+      cohortId,
+      existing.map((s) =>
+        s.key === key
+          ? s
+          : {
+              ...s,
+              startTime: source.startTime,
+              duration: source.duration,
+              signup: source.signup,
+              early: source.early,
+            },
+      ),
+    );
+
+    toast({
+      title: "Every day matched",
+      description: `All ${existing.length} days now start at ${source.startTime}. Save to put it into effect.`,
+    });
+  };
+
   const copyTo = (fromId: string, toId: string) => {
     update(
       toId,
@@ -225,6 +317,7 @@ const Schedule = () => {
           startTime: s.startTime,
           durationMinutes: s.duration ? Number(s.duration) : undefined,
           autoCloseMinutes: s.signup ? Number(s.signup) : undefined,
+          earlyOpenMinutes: s.early ? Number(s.early) : undefined,
         }));
         await setCohortSchedules([cohort.id], payload);
       }
@@ -466,6 +559,101 @@ const Schedule = () => {
                               min
                             </span>
                           </div>
+
+                          <div className="flex w-[6.5rem] items-center gap-1">
+                            <Input
+                              type="number"
+                              min={0}
+                              className="w-[4.5rem]"
+                              title="How long before the start time check-in may open. The sign-up window still counts from the class starting, so opening early does not shorten it."
+                              placeholder={String(
+                                activeClass.default_early_open_minutes,
+                              )}
+                              value={slot.early}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  early: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              early
+                            </span>
+                          </div>
+
+                          {/*
+                            Everything about this row except the day. A cohort
+                            meeting three times a week usually meets at the
+                            same hour each time, and that was three sets of the
+                            same three numbers.
+                          */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Use these times on another day"
+                              >
+                                <CopyPlus className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                Same times, another day
+                              </DropdownMenuLabel>
+
+                              {DAYS.filter(
+                                (d) =>
+                                  !(slots[cohort.id] ?? []).some(
+                                    (s) => s.weekday === d.weekday,
+                                  ),
+                              ).map((d) => (
+                                <DropdownMenuItem
+                                  key={d.weekday}
+                                  onClick={() =>
+                                    duplicateSlot(
+                                      cohort.id,
+                                      slot.key,
+                                      d.weekday,
+                                    )
+                                  }
+                                >
+                                  {d.label}
+                                </DropdownMenuItem>
+                              ))}
+
+                              {DAYS.some(
+                                (d) =>
+                                  !(slots[cohort.id] ?? []).some(
+                                    (s) => s.weekday === d.weekday,
+                                  ),
+                              ) && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      duplicateToFreeDays(cohort.id, slot.key)
+                                    }
+                                  >
+                                    Every remaining day
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+
+                              {(slots[cohort.id] ?? []).length > 1 && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      levelTimes(cohort.id, slot.key)
+                                    }
+                                  >
+                                    Make every day match this one
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
 
                           <Button
                             size="sm"
