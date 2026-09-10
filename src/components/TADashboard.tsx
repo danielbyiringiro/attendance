@@ -1155,13 +1155,22 @@ const TADashboard = ({
               not meet, which a date picker makes obvious the first time
               somebody lands on a Sunday.
             */}
-            <AnalyticsOverview
-              classId={activeClass.id}
-              cohorts={cohorts}
-              roster={roster}
-              termStartsOn={activeClass.term_starts_on}
-              termEndsOn={activeClass.term_ends_on}
-            />
+            {/*
+              Guarded, like the roster below it. There is a moment on load —
+              and whenever somebody has no class at all — where activeClass is
+              null, and the cards this replaced never read it, so nothing here
+              used to need the check. strictNullChecks is off in this project,
+              so the compiler had nothing to say about that.
+            */}
+            {activeClass && (
+              <AnalyticsOverview
+                classId={activeClass.id}
+                cohorts={cohorts}
+                roster={roster}
+                termStartsOn={activeClass.term_starts_on}
+                termEndsOn={activeClass.term_ends_on}
+              />
+            )}
 
             {/* Per-student standing. Was reachable only by opening a dialog,
                 typing a name and pressing a button, which could not show you

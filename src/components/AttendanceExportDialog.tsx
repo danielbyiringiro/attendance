@@ -92,7 +92,15 @@ const AttendanceExportDialog = ({
   const [cohort, setCohort] = useState<string>("all");
   const [shape, setShape] = useState<ExportShape>("summary");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("default");
-  const [mergeExcused, setMergeExcused] = useState(false);
+  /*
+   * On by default.
+   *
+   * An excused absence is one somebody approved, so counting it against a
+   * student is the answer almost nobody wants from an export — and off by
+   * default meant the common case needed a tick every single time, while the
+   * uncommon one got no ceremony at all. The alternative is still one click.
+   */
+  const [mergeExcused, setMergeExcused] = useState(true);
   const [startDate, setStartDate] = useState<Date>(termStart);
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [studentQuery, setStudentQuery] = useState("");
