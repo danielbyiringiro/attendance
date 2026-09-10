@@ -8,6 +8,11 @@
 -- Wrapped in a transaction that is rolled back.
 -- ============================================================================
 
+-- NOTE: the search half of this file was rewritten by migration 027. It used
+-- to assert that search reached only people you already shared a class with;
+-- it now asserts the opposite, because that rule could not survive its own
+-- bootstrap. The reasoning is at each assertion rather than only here.
+
 BEGIN;
 
 DO $seed$
@@ -77,16 +82,30 @@ BEGIN
     RAISE EXCEPTION 'searching by display name found %', jsonb_array_length(r);
   END IF;
 
-  -- Someone we have never worked with is NOT findable, by name or by email.
-  -- Without this the picker becomes a directory of every account.
+  -- Somebody we have never worked with IS findable, as of migration 027.
+  --
+  -- This assertion used to say the opposite, and it was right at the time: 009
+  -- kept the picker from becoming a directory of every account. What that rule
+  -- could not survive was its own bootstrap — a newly approved colleague is on
+  -- no class, so they shared one with nobody and could never be found by
+  -- anyone, which made putting a new TA on their first class impossible
+  -- without knowing their exact address.
+  --
+  -- The trade is deliberate: every row in `staff` is an account on an allowed
+  -- institutional domain that an admin has since approved, so this says roughly
+  -- what a departmental directory says. What replaced the old boundary is
+  -- asserted below and in 028 — approved only, never yourself, never somebody
+  -- already on the class, and you must manage the class to search it at all.
   r := public.search_addable_staff(v_solo, 'stranger');
-  IF jsonb_array_length(r) <> 0 THEN
-    RAISE EXCEPTION 'search reached someone outside our shared classes: %', r;
+  IF jsonb_array_length(r) <> 1 THEN
+    RAISE EXCEPTION
+      'an approved colleague on no shared class was not findable, which is the '
+      'bootstrap 027 exists to break: %', r;
   END IF;
 
   r := public.search_addable_staff(v_solo, 'sam');
-  IF jsonb_array_length(r) <> 0 THEN
-    RAISE EXCEPTION 'search reached a stranger by display name: %', r;
+  IF jsonb_array_length(r) <> 1 THEN
+    RAISE EXCEPTION 'the same person was not findable by display name: %', r;
   END IF;
 
   -- An empty query browses the whole circle. That is more than one person here:
@@ -101,11 +120,12 @@ BEGIN
   THEN
     RAISE EXCEPTION 'browsing did not include a colleague we share a class with: %', r;
   END IF;
-  IF EXISTS (
+  -- Browsing now reaches every approved colleague, for the same reason.
+  IF NOT EXISTS (
     SELECT 1 FROM jsonb_array_elements(r) e
     WHERE e ->> 'email' = 'stranger@example.edu')
   THEN
-    RAISE EXCEPTION 'browsing reached someone outside our shared classes: %', r;
+    RAISE EXCEPTION 'browsing did not include an approved colleague: %', r;
   END IF;
   IF EXISTS (
     SELECT 1 FROM jsonb_array_elements(r) e
@@ -126,21 +146,10 @@ BEGIN
     RAISE EXCEPTION 'search offered the caller themselves';
   END IF;
 
-  -- Picking by id is held to the same rule as searching. Otherwise the id alone
-  -- would be enough to add anybody, and the boundary comes back through a side
-  -- door.
-  ok := false;
-  BEGIN
-    PERFORM public.add_class_member_by_id(
-      v_solo, (SELECT id FROM public.staff WHERE email = 'stranger@example.edu'));
-  EXCEPTION WHEN others THEN
-    ok := true;
-  END;
-  IF NOT ok THEN
-    RAISE EXCEPTION 'a stranger was added by id without ever being findable';
-  END IF;
-
-  -- The colleague can be added by id, since we do share a class.
+  -- Picking by id is held to the same rule as searching, which is the point of
+  -- 027 changing both together: search offering somebody the picker then
+  -- refuses is worse than not offering them, because the failure lands after
+  -- the click and blames a rule the screen appeared not to have.
   PERFORM public.add_class_member_by_id(
     v_solo, (SELECT id FROM public.staff WHERE email = 'colleague@example.edu'));
 
@@ -148,11 +157,30 @@ BEGIN
     RAISE EXCEPTION 'adding the colleague by id did not take';
   END IF;
 
-  -- A full email still reaches anyone, which reveals nothing the caller did not
-  -- already know.
-  PERFORM public.add_class_member(v_solo, 'stranger@example.edu');
+  -- Including somebody we share no class with, who search now returns.
+  --
+  -- The id comes out of the search result rather than a direct SELECT: RLS on
+  -- `staff` is still shares_a_class_with(), so this caller cannot read that row
+  -- from the table at all. search_addable_staff is SECURITY DEFINER and can.
+  -- The UI is in the same position, which is why the picker passes an id it was
+  -- given rather than one it looked up.
+  DECLARE v_stranger uuid;
+  BEGIN
+    SELECT (row ->> 'staff_id')::uuid INTO v_stranger
+    FROM jsonb_array_elements(public.search_addable_staff(v_solo, 'stranger')) AS row
+    LIMIT 1;
+
+    IF v_stranger IS NULL THEN
+      RAISE EXCEPTION 'search did not carry the id of the person it offered';
+    END IF;
+
+    PERFORM public.add_class_member_by_id(v_solo, v_stranger);
+  END;
+
   IF jsonb_array_length(public.list_class_members(v_solo)) <> 3 THEN
-    RAISE EXCEPTION 'an exact email could not add someone outside the circle';
+    RAISE EXCEPTION
+      'search offered somebody the picker would not add — the two rules have '
+      'come apart';
   END IF;
 END
 $search$;
