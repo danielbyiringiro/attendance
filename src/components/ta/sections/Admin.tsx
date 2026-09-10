@@ -8,6 +8,7 @@ import {
   Check,
   Loader2,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
   UserMinus,
@@ -54,6 +55,18 @@ const Admin = () => {
   const [members, setMembers] = useState<ClassMember[]>([]);
   const [addEmail, setAddEmail] = useState("");
   const [deleting, setDeleting] = useState<AdminClassRow | null>(null);
+  /*
+   * Both lists grow without bound — every account this installation has ever
+   * approved, and every class anybody has ever made. They are the two screens
+   * that get longer for ever, and the reason to open Admin at all is usually
+   * one row in one of them.
+   *
+   * Filtered here rather than on the server: admin_list_staff and
+   * admin_list_classes each return everything already, so a query per keystroke
+   * would be a round trip to re-fetch what is on screen.
+   */
+  const [accountQuery, setAccountQuery] = useState("");
+  const [classQuery, setClassQuery] = useState("");
   const [confirmCode, setConfirmCode] = useState("");
 
   const load = useCallback(async () => {
@@ -113,7 +126,30 @@ const Admin = () => {
   };
 
   const pending = accounts.filter((a) => a.status === "pending");
-  const decided = accounts.filter((a) => a.status !== "pending");
+
+  // Waiting accounts are never filtered: they are a queue to work through, and
+  // hiding one behind a search term is how somebody waits a fortnight.
+  const matchesAccount = (a: StaffAccount) => {
+    const q = accountQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (a.email ?? "").toLowerCase().includes(q) ||
+      (a.display_name ?? "").toLowerCase().includes(q)
+    );
+  };
+
+  const decidedAll = accounts.filter((a) => a.status !== "pending");
+  const decided = decidedAll.filter(matchesAccount);
+
+  const matchesClass = (c: AdminClassRow) => {
+    const q = classQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      c.code.toLowerCase().includes(q) || (c.name ?? "").toLowerCase().includes(q)
+    );
+  };
+
+  const shownClasses = classes.filter(matchesClass);
 
   if (isLoading) {
     return (
@@ -204,10 +240,30 @@ const Admin = () => {
       <Card className="border-2">
         <CardHeader>
           <CardTitle className="text-base">
-            Accounts ({decided.length})
+            Accounts (
+            {accountQuery.trim()
+              ? `${decided.length} of ${decidedAll.length}`
+              : decidedAll.length}
+            )
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-1">
+          <div className="relative pb-2">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              value={accountQuery}
+              placeholder="Filter by name or email"
+              onChange={(e) => setAccountQuery(e.target.value)}
+            />
+          </div>
+
+          {decidedAll.length > 0 && decided.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No account matches that.
+            </p>
+          )}
+
           {decided.map((a) => (
             <div
               key={a.staff_id}
@@ -349,7 +405,13 @@ const Admin = () => {
       {/* Class repair */}
       <Card className="border-2">
         <CardHeader>
-          <CardTitle className="text-base">Classes</CardTitle>
+          <CardTitle className="text-base">
+            Classes (
+            {classQuery.trim()
+              ? `${shownClasses.length} of ${classes.length}`
+              : classes.length}
+            )
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <p className="text-xs text-muted-foreground">
@@ -358,7 +420,23 @@ const Admin = () => {
             sessions or attendance.
           </p>
 
-          {classes.map((c) => (
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              value={classQuery}
+              placeholder="Filter by code or name"
+              onChange={(e) => setClassQuery(e.target.value)}
+            />
+          </div>
+
+          {classes.length > 0 && shownClasses.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No class matches that.
+            </p>
+          )}
+
+          {shownClasses.map((c) => (
             <div key={c.class_id} className="rounded-lg border">
               <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <div className="min-w-0">

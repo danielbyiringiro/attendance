@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -81,11 +81,32 @@ const StudentDetailDialog = ({
   } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  /*
+   * One date out of a term.
+   *
+   * A student's record runs to every session their cohort has held, which by
+   * the end of a term is forty-odd rows. Somebody opens this because a student
+   * is disputing one particular day, and scrolling to find it is the whole
+   * task before the actual task.
+   */
+  const [onDate, setOnDate] = useState("");
+
+  useEffect(() => {
+    setOnDate("");
+  }, [student?.student_id]);
 
   const marks = useMemo(() => {
     if (!student || !log) return [];
-    return [...(log.byStudent.get(student.student_id) ?? [])].sort((a, b) =>
-      b.session_date.localeCompare(a.session_date),
+    return [...(log.byStudent.get(student.student_id) ?? [])]
+      .filter((m) => !onDate || m.session_date === onDate)
+      .sort((a, b) => b.session_date.localeCompare(a.session_date));
+  }, [student, log, onDate]);
+
+  /** Every session date this student has, for the bounds on the picker. */
+  const allDates = useMemo(() => {
+    if (!student || !log) return [];
+    return (log.byStudent.get(student.student_id) ?? []).map(
+      (m) => m.session_date,
     );
   }, [student, log]);
 
@@ -346,10 +367,44 @@ const StudentDetailDialog = ({
             )}
 
             <div className="space-y-1">
-              <p className="text-sm font-medium">Session by session</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  Session by session
+                  {onDate && allDates.length > 0 && (
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      · {marks.length} of {allDates.length}
+                    </span>
+                  )}
+                </p>
+
+                <div className="flex items-center gap-1">
+                  <Input
+                    type="date"
+                    className="h-8 w-[9.5rem]"
+                    value={onDate}
+                    min={allDates[allDates.length - 1]}
+                    max={allDates[0]}
+                    onChange={(e) => setOnDate(e.target.value)}
+                    title="Show one date"
+                  />
+                  {onDate && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2"
+                      onClick={() => setOnDate("")}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
               {marks.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
-                  No sessions have been closed for this student's cohort yet.
+                  {onDate
+                    ? "This student's cohort held no session on that date."
+                    : "No sessions have been closed for this student's cohort yet."}
                 </p>
               ) : (
                 marks.map((m) => (
