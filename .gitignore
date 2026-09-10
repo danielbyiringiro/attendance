@@ -40,3 +40,11 @@ cohort-checkin-dossier.html
 
 # tsc -b incremental build state (npm run typecheck)
 *.tsbuildinfo
+
+# A real attendance export lived here: 28 named students, their year group,
+# their instructors and their absence counts. No code ever read it. Ignoring
+# the whole of the repo root rather than one filename, because the next one
+# will not be called attendance_report.csv — exports land here by default when
+# somebody downloads one and forgets. Anything genuinely meant to be tracked
+# can still be added with `git add -f`, or put somewhere other than the root.
+/*.csv
