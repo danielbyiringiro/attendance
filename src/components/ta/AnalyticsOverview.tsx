@@ -20,7 +20,8 @@ import {
   tallyStates,
   type AttendanceLog,
 } from "@/lib/api/attendance";
-import type { CohortRow } from "@/lib/api/types";
+import { listSessions } from "@/lib/api/sessions";
+import type { CohortRow, SessionRow } from "@/lib/api/types";
 import { todayStr } from "@/lib/dates";
 
 interface AnalyticsOverviewProps {
@@ -67,6 +68,16 @@ const AnalyticsOverview = ({
   const { toast } = useToast();
   const [scope, setScope] = useState<Scope>({ mode: "day", date: todayStr() });
   const [log, setLog] = useState<AttendanceLog | null>(null);
+  /*
+   * Sessions that have not happened, which the log cannot show.
+   *
+   * attendanceLog deliberately leaves out `scheduled` ones — it answers "what
+   * was attended", and a session nobody has held yet has no attendance to
+   * report. But "nothing was held here" and "the class meets here on Thursday
+   * and has not yet" are different answers to the same question, and only the
+   * second tells somebody the date they picked was a class day at all.
+   */
+  const [upcoming, setUpcoming] = useState<SessionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const from = scope.mode === "day" ? scope.date : termStartsOn;
@@ -75,7 +86,12 @@ const AnalyticsOverview = ({
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      setLog(await attendanceLog(classId, { from, to }));
+      const [entries, sessions] = await Promise.all([
+        attendanceLog(classId, { from, to }),
+        listSessions({ classId, from, to }),
+      ]);
+      setLog(entries);
+      setUpcoming(sessions.filter((s) => s.status === "scheduled"));
     } catch (e) {
       toast({
         title: "Could not load attendance",
@@ -83,6 +99,7 @@ const AnalyticsOverview = ({
         variant: "destructive",
       });
       setLog(null);
+      setUpcoming([]);
     } finally {
       setIsLoading(false);
     }
@@ -222,19 +239,29 @@ const AnalyticsOverview = ({
         {isLoading && <Loader2 className="h-4 w-4 animate-spin opacity-60" />}
       </div>
 
-      {/* ---- the numbers ---- */}
-      {stats && stats.held === 0 ? (
-        /*
-          Said rather than shown as zeroes. Four cards reading 0 look like a
-          class where nobody turned up; this is a day the class did not meet,
-          which is a different thing and the more likely one on any given date.
-        */
+      {/*
+        What this day or term actually was, said before the numbers rather than
+        instead of them.
+
+        The cards used to be replaced by a message when nothing had been held.
+        That hid the shape of the class on exactly the days somebody is asking
+        about it — a date with a session still to come reads very differently
+        from a date with no class at all, and the cards are how you see which
+        cohorts are involved.
+      */}
+      {stats && stats.held === 0 && (
         <Card className="border-2 border-dashed">
-          <CardContent className="py-8 text-center">
+          <CardContent className="py-4 text-center">
             <p className="text-sm font-medium">
-              {isDay
-                ? "No session was held on this day."
-                : "No sessions have been held yet this term."}
+              {upcoming.length > 0
+                ? isDay
+                  ? `Nothing marked yet — ${upcoming.length} session${
+                      upcoming.length === 1 ? " is" : "s are"
+                    } scheduled for this day.`
+                  : `No session has been held yet — ${upcoming.length} scheduled this term.`
+                : isDay
+                  ? "No session was held on this day, and none is scheduled."
+                  : "No sessions have been held yet this term."}
             </p>
             {stats.cancelled > 0 && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -244,64 +271,69 @@ const AnalyticsOverview = ({
             )}
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
+      )}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-2">
+              <UserCheck className="h-5 w-5 text-success" />
+              <div>
+                <p className="text-2xl font-bold text-success">
+                  {isDay ? (stats?.presentPeople ?? 0) : (stats?.present ?? 0)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {isDay ? "Present" : "Marks present"}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-2">
+              <UserX className="h-5 w-5 text-destructive" />
+              <div>
+                <p className="text-2xl font-bold text-destructive">
+                  {isDay ? (stats?.absentPeople ?? 0) : (stats?.absent ?? 0)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {isDay ? "Absent" : "Marks absent"}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/*
+          The term's rate rather than a fourth count. Over a term the useful
+          number is the proportion, and it is the same definition every other
+          screen uses — tallyStates, so this cannot disagree with the roster or
+          with the export.
+        */}
+        {!isDay && (
+          <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
             <CardContent className="pt-6">
               <div className="flex items-center space-x-2">
-                <UserCheck className="h-5 w-5 text-success" />
+                <CalendarRange className="h-5 w-5 text-primary" />
                 <div>
-                  <p className="text-2xl font-bold text-success">
-                    {isDay ? (stats?.presentPeople ?? 0) : (stats?.present ?? 0)}
-                  </p>
+                  <p className="text-2xl font-bold">{stats?.rate ?? 0}%</p>
                   <p className="text-sm text-muted-foreground">
-                    {isDay ? "Present" : "Marks present"}
+                    Across {stats?.held ?? 0} session
+                    {stats?.held === 1 ? "" : "s"}
                   </p>
                 </div>
               </div>
             </CardContent>
           </Card>
+        )}
 
-          <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
-            <CardContent className="pt-6">
-              <div className="flex items-center space-x-2">
-                <UserX className="h-5 w-5 text-destructive" />
-                <div>
-                  <p className="text-2xl font-bold text-destructive">
-                    {isDay ? (stats?.absentPeople ?? 0) : (stats?.absent ?? 0)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {isDay ? "Absent" : "Marks absent"}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {stats?.byCohort.map((c) => {
+          // Which cohorts meet on this day, for the ones with nothing marked.
+          const due = upcoming.filter((u) => u.cohort_id === c.id).length;
 
-          {/*
-            The term's rate rather than a fourth count. Over a term the useful
-            number is the proportion, and it is the same definition every other
-            screen uses — tallyStates, so this cannot disagree with the roster
-            or with the export.
-          */}
-          {!isDay && (
-            <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
-              <CardContent className="pt-6">
-                <div className="flex items-center space-x-2">
-                  <CalendarRange className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="text-2xl font-bold">{stats?.rate ?? 0}%</p>
-                    <p className="text-sm text-muted-foreground">
-                      Across {stats?.held ?? 0} session
-                      {stats?.held === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {stats?.byCohort.map((c) => (
+          return (
             <Card
               key={c.id}
               className="border-2 border-primary/25 bg-gradient-card shadow-soft"
@@ -320,14 +352,20 @@ const AnalyticsOverview = ({
                           · {c.sessions} session{c.sessions === 1 ? "" : "s"}
                         </span>
                       )}
+                      {isDay && c.sessions === 0 && due > 0 && (
+                        <span className="ml-1 text-xs">· due today</span>
+                      )}
+                      {isDay && c.sessions === 0 && due === 0 && (
+                        <span className="ml-1 text-xs">· no class</span>
+                      )}
                     </p>
                   </div>
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       {stats && stats.held > 0 && stats.cancelled > 0 && (
         <p className="text-xs text-muted-foreground">

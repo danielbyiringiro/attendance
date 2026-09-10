@@ -86,6 +86,18 @@ const AttendanceExportDialog = ({
   const termStart = activeClass
     ? fromDateStr(activeClass.term_starts_on)
     : new Date();
+  /*
+   * The term's end, not today.
+   *
+   * An export is nearly always "the whole course so far", and the range is
+   * clamped to sessions that actually happened anyway — attendanceLog leaves
+   * out what has not been held. So ending at today bought nothing and quietly
+   * excluded a session held later the same day, or one in a class whose
+   * timezone is ahead of this browser's.
+   */
+  const termEnd = activeClass
+    ? fromDateStr(activeClass.term_ends_on)
+    : new Date();
 
   // "all", or a cohort uuid — two classes can each have a Cohort A, so a label
   // no longer identifies one.
@@ -102,7 +114,7 @@ const AttendanceExportDialog = ({
    */
   const [mergeExcused, setMergeExcused] = useState(true);
   const [startDate, setStartDate] = useState<Date>(termStart);
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [endDate, setEndDate] = useState<Date>(termEnd);
   const [studentQuery, setStudentQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<RosterStudent | null>(
     null,
@@ -346,7 +358,7 @@ const AttendanceExportDialog = ({
 
   const setRangeToTerm = () => {
     setStartDate(termStart);
-    setEndDate(new Date());
+    setEndDate(termEnd);
   };
 
   const setRangeToLastDays = (days: number) => {
