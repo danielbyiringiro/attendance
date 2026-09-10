@@ -329,7 +329,7 @@ const Index = () => {
       {/* Theme and TA access */}
       <div className="fixed right-4 top-4 flex items-center gap-1 opacity-70 transition-opacity hover:opacity-100">
         <AccessibilitySettings />
-          <ThemeToggle />
+        <ThemeToggle />
         <Button onClick={() => setShowTALogin(true)} variant="ghost" size="sm">
           <Settings className="h-4 w-4" />
         </Button>

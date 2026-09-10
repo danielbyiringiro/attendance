@@ -76,11 +76,24 @@ const CohortReportSettings = ({
     void load();
   }, [load]);
 
+  /*
+   * Defaults, then whatever is already there, then the change.
+   *
+   * Written out rather than as `{ instructor: "", fi: "", ...prev[cohortId] }`:
+   * that spread overwrites the two literals whenever the cohort has an entry,
+   * which is the intent but reads as a mistake — and strictNullChecks says so.
+   */
   const set = (cohortId: string, patch: Partial<Pair>) =>
-    setPairs((prev) => ({
-      ...prev,
-      [cohortId]: { instructor: "", fi: "", ...prev[cohortId], ...patch },
-    }));
+    setPairs((prev) => {
+      const current = prev[cohortId];
+      return {
+        ...prev,
+        [cohortId]: {
+          instructor: patch.instructor ?? current?.instructor ?? "",
+          fi: patch.fi ?? current?.fi ?? "",
+        },
+      };
+    });
 
   const handleSave = async () => {
     setIsSaving(true);

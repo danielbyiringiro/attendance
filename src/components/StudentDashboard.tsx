@@ -390,8 +390,16 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Check-in
           </Button>
-          <AccessibilitySettings />
-          <ThemeToggle />
+          {/* Grouped, rather than left to justify-between. QOL_2 added the
+              accessibility button by inserting it ahead of every ThemeToggle,
+              and on this page that put a third child into a justify-between
+              row: the two controls stopped being a pair and the accessibility
+              one parked itself in the middle of the header. Every other screen
+              already wraps them together. */}
+          <div className="flex items-center gap-1">
+            <AccessibilitySettings />
+            <ThemeToggle />
+          </div>
         </div>
 
         <Card className="border-2 shadow-medium">
