@@ -996,7 +996,7 @@ const TADashboard = ({
           </div>
           <div className="flex items-center gap-1">
             <AccessibilitySettings />
-          <ThemeToggle />
+            <ThemeToggle />
             <Button onClick={onLogout} variant="outline">
               Logout
             </Button>

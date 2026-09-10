@@ -56,7 +56,7 @@ const AccountPending = ({ identity, onSignOut }: AccountPendingProps) => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="w-full max-w-md space-y-4">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-1">
           <AccessibilitySettings />
           <ThemeToggle />
         </div>
