@@ -16,6 +16,20 @@
 
     /* Linting */
     "strict": false,
+    /*
+      On by itself, rather than by turning `strict` on wholesale.
+
+      Without it TypeScript treats null and undefined as members of every type,
+      so `activeClass.id` on a value that may be null is not an error — which is
+      exactly how the analytics tab shipped a white screen. Turning it on made
+      the compiler catch that class of mistake for the price of two complaints
+      about one line, because the rest of this codebase already guards its
+      nullable state.
+
+      The other `strict` flags are a separate question with a much larger
+      answer; this is the one that was costing something.
+    */
+    "strictNullChecks": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noImplicitAny": false,
