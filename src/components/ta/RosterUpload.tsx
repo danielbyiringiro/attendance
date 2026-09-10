@@ -385,6 +385,17 @@ const RosterUpload = ({
               </div>
             )}
 
+            {table.kind === "xlsx" && table.pageCount > 1 && (
+              <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <span>
+                  This workbook has {table.pageCount} sheets and only the first
+                  was read. Reading them all would merge whatever they hold into
+                  one roster.
+                </span>
+              </div>
+            )}
+
             {mapping.headerRow === null && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -530,7 +541,10 @@ const RosterUpload = ({
                 onClick={() => setShowRaw(!showRaw)}
               >
                 {showRaw ? "Hide" : "Show"} what was read from the file
-                {table.kind === "pdf" && ` (${table.pageCount} page${table.pageCount === 1 ? "" : "s"})`}
+                {table.kind === "pdf" &&
+                  ` (${table.pageCount} page${table.pageCount === 1 ? "" : "s"})`}
+                {table.kind === "xlsx" &&
+                  ` (${table.pageCount} sheet${table.pageCount === 1 ? "" : "s"})`}
               </Button>
 
               {showRaw && (

@@ -64,21 +64,51 @@ export const tableFromRows = (rows: SheetCell[][]): ExtractedTable => {
   };
 };
 
+/** One worksheet, as the library hands a workbook over: every sheet at once. */
+export interface SheetOfCells {
+  sheet: string;
+  data: SheetCell[][];
+}
+
+/**
+ * The first sheet's cells, and how many sheets there were.
+ *
+ * Separated out and exported because getting this wrong is what shipped: the
+ * library's default export returns EVERY sheet as {sheet, data} objects, not a
+ * grid of cells, so treating the result as rows gives "row.map is not a
+ * function" the moment a real file is opened. TypeScript said so —
+ * "Type 'Sheet<number>' is missing the following properties" — and the error
+ * was overridden with a cast rather than read.
+ *
+ * So the decision lives here, where a test can reach it, rather than inside
+ * the part that needs a real workbook to run at all.
+ */
+export const firstSheetOf = (
+  sheets: SheetOfCells[],
+): { rows: SheetCell[][]; sheetCount: number } => ({
+  rows: sheets[0]?.data ?? [],
+  sheetCount: sheets.length,
+});
+
 /**
  * Read a workbook the user picked.
  *
- * The library is loaded on demand — an .xlsx is a zip of XML and the reader
- * is not small, while most uploads are not spreadsheets.
+ * The library is loaded on demand — an .xlsx is a zip of XML and the reader is
+ * not small, while most uploads are not spreadsheets.
  *
- * Only the first sheet. A CAMU export has one, and quietly concatenating
- * several would merge two classes into one roster without saying so.
+ * Only the first sheet is used. Concatenating several would merge two classes
+ * into one roster, so the count comes back on the table and the dialog says so
+ * when there is more than one: taking the first silently is still a choice
+ * somebody should be told about.
  */
 export const readXlsxFile = async (file: File): Promise<ExtractedTable> => {
   // The /browser entry point specifically: the package exports no root, and
-  // the default one would pull in Node's stream handling.
-  const readXlsx = (await import("read-excel-file/browser")).default;
-  // Through unknown: the library types a row as its own Sheet type, which
-  // describes the same array of cells but will not convert directly.
-  const rows = (await readXlsx(file)) as unknown as SheetCell[][];
-  return tableFromRows(rows);
+  // the Node one would pull in its stream handling.
+  const readWorkbook = (await import("read-excel-file/browser")).default;
+
+  const { rows, sheetCount } = firstSheetOf(
+    (await readWorkbook(file)) as unknown as SheetOfCells[],
+  );
+
+  return { ...tableFromRows(rows), pageCount: sheetCount };
 };

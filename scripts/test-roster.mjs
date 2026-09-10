@@ -69,6 +69,7 @@ const {
   detectColumns,
   groupIntoLines,
   tableFromRows,
+  firstSheetOf,
 } = await import(pathToFileURL(out).href);
 
 // ---------------------------------------------------------------------------
@@ -411,6 +412,40 @@ eq("a one-cell line containing digits is not the first data row", autoMap(STRAY.
 // Where titles ARE recognised, the row after them is still the answer.
 eq("a recognised header still decides where data starts", camuMap.firstDataRow, 6);
 
+
+// ---------------------------------------------------------------------------
+// A workbook is not a grid
+//
+// read-excel-file's default export returns EVERY sheet, as {sheet, data}
+// objects. Treating that as rows gives "row.map is not a function" the moment
+// a real file is opened — which is what shipped, because the cast that hid it
+// was written to silence a type error that had diagnosed it exactly.
+//
+// The unpacking is a pure function now, so this can reach it.
+// ---------------------------------------------------------------------------
+
+const WORKBOOK = [
+  { sheet: "Enrolled Students", data: [["Register No", "Student Name"], [20260001, "Ama Serwaa"]] },
+  { sheet: "Notes", data: [["ignore me"]] },
+];
+
+eq("the first sheet's cells are taken", firstSheetOf(WORKBOOK).rows, [
+  ["Register No", "Student Name"],
+  [20260001, "Ama Serwaa"],
+]);
+
+eq("and the others are counted, not concatenated", firstSheetOf(WORKBOOK).sheetCount, 2);
+
+eq("an empty workbook is empty rather than a crash", firstSheetOf([]).rows, []);
+eq("and reports no sheets", firstSheetOf([]).sheetCount, 0);
+
+// The whole workbook, unpacked and then mapped, is what the dialog receives.
+const fromWorkbook = tableFromRows(firstSheetOf(WORKBOOK).rows);
+eq(
+  "a workbook maps through to students",
+  applyMapping(fromWorkbook, autoMap(fromWorkbook.rows)).rows,
+  [{ student_id: "20260001", name: "Ama Serwaa" }],
+);
 
 // ---------------------------------------------------------------------------
 // The CAMU spreadsheet

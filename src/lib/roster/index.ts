@@ -39,7 +39,12 @@ export { readCsvFile, tableFromCsv } from "./csvSource";
  *
  *   const { readXlsxFile } = await import("@/lib/roster/xlsxSource");
  */
-export { tableFromRows, type SheetCell } from "./xlsxSource";
+export {
+  firstSheetOf,
+  tableFromRows,
+  type SheetCell,
+  type SheetOfCells,
+} from "./xlsxSource";
 
 export {
   buildGrid,
