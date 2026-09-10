@@ -15,9 +15,19 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { CalendarPlus, Copy, Loader2, Plus, Save, X } from "lucide-react";
+import {
+  CalendarPlus,
+  Copy,
+  CopyPlus,
+  Loader2,
+  Plus,
+  Save,
+  X,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveClass } from "@/lib/classContext";
 import {
@@ -185,6 +195,82 @@ const Schedule = () => {
       cohortId,
       (slots[cohortId] ?? []).filter((s) => s.key !== key),
     );
+
+  /**
+   * Put this day's times on another day, or on every day left.
+   *
+   * The times are the tedious part, not the weekday: a cohort meeting three
+   * times a week almost always meets at the same hour each time, and setting
+   * that up meant typing the same three numbers into every row. This copies
+   * the row and changes only the day, which is what "another session like this
+   * one" actually means.
+   */
+  const duplicateSlot = (cohortId: string, key: string, toWeekday: number) => {
+    const source = (slots[cohortId] ?? []).find((s) => s.key === key);
+    if (!source) return;
+
+    update(cohortId, [
+      ...(slots[cohortId] ?? []),
+      { ...source, key: `s${nextKey++}`, weekday: toWeekday },
+    ]);
+  };
+
+  const duplicateToFreeDays = (cohortId: string, key: string) => {
+    const existing = slots[cohortId] ?? [];
+    const source = existing.find((s) => s.key === key);
+    if (!source) return;
+
+    const taken = new Set(existing.map((s) => s.weekday));
+    const free = DAYS.filter((d) => !taken.has(d.weekday));
+    if (free.length === 0) return;
+
+    update(cohortId, [
+      ...existing,
+      ...free.map((d) => ({
+        ...source,
+        key: `s${nextKey++}`,
+        weekday: d.weekday,
+      })),
+    ]);
+
+    toast({
+      title: `Added ${free.length} day${free.length === 1 ? "" : "s"}`,
+      description: `Every remaining day now meets at ${source.startTime}. Save to put it into effect.`,
+    });
+  };
+
+  /**
+   * Make every day of this cohort match one of them.
+   *
+   * The other half of the same problem: the days are already right and the
+   * times drifted, or were typed once and need changing everywhere. Driven
+   * from a row rather than from a separate set of boxes, so there is no second
+   * place to define a time and no question about which one wins.
+   */
+  const levelTimes = (cohortId: string, key: string) => {
+    const existing = slots[cohortId] ?? [];
+    const source = existing.find((s) => s.key === key);
+    if (!source || existing.length < 2) return;
+
+    update(
+      cohortId,
+      existing.map((s) =>
+        s.key === key
+          ? s
+          : {
+              ...s,
+              startTime: source.startTime,
+              duration: source.duration,
+              signup: source.signup,
+            },
+      ),
+    );
+
+    toast({
+      title: "Every day matched",
+      description: `All ${existing.length} days now start at ${source.startTime}. Save to put it into effect.`,
+    });
+  };
 
   const copyTo = (fromId: string, toId: string) => {
     update(
@@ -466,6 +552,80 @@ const Schedule = () => {
                               min
                             </span>
                           </div>
+
+                          {/*
+                            Everything about this row except the day. A cohort
+                            meeting three times a week usually meets at the
+                            same hour each time, and that was three sets of the
+                            same three numbers.
+                          */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Use these times on another day"
+                              >
+                                <CopyPlus className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                Same times, another day
+                              </DropdownMenuLabel>
+
+                              {DAYS.filter(
+                                (d) =>
+                                  !(slots[cohort.id] ?? []).some(
+                                    (s) => s.weekday === d.weekday,
+                                  ),
+                              ).map((d) => (
+                                <DropdownMenuItem
+                                  key={d.weekday}
+                                  onClick={() =>
+                                    duplicateSlot(
+                                      cohort.id,
+                                      slot.key,
+                                      d.weekday,
+                                    )
+                                  }
+                                >
+                                  {d.label}
+                                </DropdownMenuItem>
+                              ))}
+
+                              {DAYS.some(
+                                (d) =>
+                                  !(slots[cohort.id] ?? []).some(
+                                    (s) => s.weekday === d.weekday,
+                                  ),
+                              ) && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      duplicateToFreeDays(cohort.id, slot.key)
+                                    }
+                                  >
+                                    Every remaining day
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+
+                              {(slots[cohort.id] ?? []).length > 1 && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      levelTimes(cohort.id, slot.key)
+                                    }
+                                  >
+                                    Make every day match this one
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
 
                           <Button
                             size="sm"
