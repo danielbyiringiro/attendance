@@ -47,6 +47,17 @@ const SessionWindowBadge = ({
       return <Badge variant="secondary">{session.status}</Badge>;
 
     case "not_opened":
+      // Three different situations, and calling all of them "scheduled" is why
+      // this was impossible to diagnose: waiting for its turn, due right now,
+      // and too late for anything to open it but a person.
+      if (w.autoOpenMissed) {
+        return (
+          <Badge variant="secondary" className="gap-1">
+            <Clock className="h-3 w-3" />
+            Not opened
+          </Badge>
+        );
+      }
       return (
         <Badge variant="secondary" className="gap-1">
           <Clock className="h-3 w-3" />
@@ -119,11 +130,25 @@ export const SessionWindowNote = ({
           </p>
         );
       }
+      // The span is stated rather than described, because "it opens by itself"
+      // plus a session that has not opened is not something a TA can act on.
+      // Seeing 08:45 to 09:15 against the clock on the wall is.
+      if (w.autoOpenMissed) {
+        return (
+          <p className="text-xs text-muted-foreground">
+            It could have opened itself between {time(w.autoOpenFrom)} and{" "}
+            {time(w.autoOpenUntil)}, and did not. Only opening it by hand will
+            start check-in now.
+          </p>
+        );
+      }
       return (
         <p className="text-xs text-muted-foreground">
+          Opens by itself between {time(w.autoOpenFrom)} and{" "}
+          {time(w.autoOpenUntil)}.
           {w.msUntilChange === null
-            ? "Opening itself now. Open it by hand if you would rather not wait."
-            : `Opens by itself ${session.early_open_minutes} minutes before the class. Opening early does not shorten the window.`}
+            ? " That has started — it should open within a minute."
+            : " Opening early does not shorten the window."}
         </p>
       );
     case "opens_soon":

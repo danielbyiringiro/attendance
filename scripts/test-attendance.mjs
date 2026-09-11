@@ -463,6 +463,38 @@ eq(
   null,
 );
 
+// The auto-open span, which is what makes "why did this not open?" answerable.
+// Migration 031 opens a session only between starts_at - early_open and
+// starts_at + auto_close, and only while its status is still 'scheduled'. That
+// is a twenty-minute chance on the defaults, and nothing on screen said so.
+const waiting = sessionWindow(unopened, at("08:30"));
+eq(
+  "the sweep can open it from the early-open moment",
+  waiting.autoOpenFrom.toISOString(),
+  "2026-09-11T08:45:00.000Z",
+);
+eq(
+  "and stops bothering once the window would already have shut",
+  waiting.autoOpenUntil.toISOString(),
+  "2026-09-11T09:15:00.000Z",
+);
+ok("not missed while it is still ahead", waiting.autoOpenMissed === false);
+
+ok(
+  "not missed during the span either",
+  sessionWindow(unopened, at("09:00")).autoOpenMissed === false,
+);
+ok(
+  "missed once the span has passed — only a person can open it now",
+  sessionWindow(unopened, at("09:30")).autoOpenMissed === true,
+);
+
+eq(
+  "an open session has no auto-open span left to speak of",
+  sessionWindow(early, at("09:05")).autoOpenFrom,
+  null,
+);
+
 eq("countdown reads in minutes and seconds", countdown(125_000), "2m 05s");
 eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
 eq("and says now at zero", countdown(0), "now");

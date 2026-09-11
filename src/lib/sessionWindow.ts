@@ -82,13 +82,43 @@ interface WindowCommon {
   staleOpen: boolean;
 }
 
-interface NoWindow extends WindowCommon {
-  phase: "not_opened" | "done";
+interface NoTimes {
   opensAt: null;
   closesAt: null;
   lateFrom: null;
   msUntilClose: null;
   msUntilLate: null;
+}
+
+/**
+ * Scheduled, not open.
+ *
+ * Carries the span during which the sweep will open it, which is narrower than
+ * it looks and is the thing that makes "why did this not open?" answerable.
+ * Migration 031 opens a session only while
+ *
+ *   starts_at - early_open_minutes  <=  now  <=  starts_at + auto_close_minutes
+ *
+ * and only while its status is still 'scheduled'. The upper bound is not
+ * arbitrary: past it the check-in window would already have shut, so opening
+ * would mint a live PIN for a class that is over. But it does mean the chance
+ * is missable, and nothing said so.
+ */
+interface NotOpened extends WindowCommon, NoTimes {
+  phase: "not_opened";
+  /** Earliest the sweep will open it. */
+  autoOpenFrom: Date;
+  /** After this the sweep leaves it alone for good. */
+  autoOpenUntil: Date;
+  /** That span has passed and nothing opened it. Only a person can now. */
+  autoOpenMissed: boolean;
+}
+
+interface Finished extends WindowCommon, NoTimes {
+  phase: "done";
+  autoOpenFrom: null;
+  autoOpenUntil: null;
+  autoOpenMissed: false;
 }
 
 interface OpenWindow extends WindowCommon {
@@ -110,9 +140,12 @@ interface OpenWindow extends WindowCommon {
   msUntilClose: number;
   /** Milliseconds until an on-time mark becomes late. Null once past it. */
   msUntilLate: number | null;
+  autoOpenFrom: null;
+  autoOpenUntil: null;
+  autoOpenMissed: false;
 }
 
-export type SessionWindow = NoWindow | OpenWindow;
+export type SessionWindow = NotOpened | Finished | OpenWindow;
 
 export const sessionWindow = (
   s: SessionWindowInput,
@@ -130,6 +163,9 @@ export const sessionWindow = (
       msUntilChange: null,
       msUntilClose: null,
       msUntilLate: null,
+      autoOpenFrom: null,
+      autoOpenUntil: null,
+      autoOpenMissed: false,
       staleOpen: false,
     };
   }
@@ -139,6 +175,7 @@ export const sessionWindow = (
   // time from which pressing Open costs nothing.
   if (!s.opened_at) {
     const earliest = starts - minutes(s.early_open_minutes);
+    const latest = starts + minutes(s.auto_close_minutes);
     return {
       phase: "not_opened",
       opensAt: null,
@@ -147,6 +184,9 @@ export const sessionWindow = (
       msUntilChange: earliest > t ? earliest - t : null,
       msUntilClose: null,
       msUntilLate: null,
+      autoOpenFrom: new Date(earliest),
+      autoOpenUntil: new Date(latest),
+      autoOpenMissed: t > latest,
       staleOpen: false,
     };
   }
@@ -161,6 +201,9 @@ export const sessionWindow = (
     opensAt: new Date(opensAt),
     closesAt: new Date(closesAt),
     lateFrom: new Date(lateFrom),
+    autoOpenFrom: null as null,
+    autoOpenUntil: null as null,
+    autoOpenMissed: false as const,
     msUntilClose: closesAt > t ? closesAt - t : 0,
     msUntilLate: lateFrom > t ? lateFrom - t : null,
   };
