@@ -38,6 +38,8 @@ export interface SessionWindowInput {
   early_open_minutes: number;
   auto_close_minutes: number;
   late_window_minutes: number;
+  /** How long the class runs. Bounds how late the sweep will still open it. */
+  duration_minutes: number;
   status: string;
 }
 
@@ -97,12 +99,16 @@ interface NoTimes {
  * it looks and is the thing that makes "why did this not open?" answerable.
  * Migration 031 opens a session only while
  *
- *   starts_at - early_open_minutes  <=  now  <=  starts_at + auto_close_minutes
+ *   starts_at - early_open_minutes  <=  now  <=  starts_at + duration_minutes
  *
- * and only while its status is still 'scheduled'. The upper bound is not
- * arbitrary: past it the check-in window would already have shut, so opening
- * would mint a live PIN for a class that is over. But it does mean the chance
- * is missable, and nothing said so.
+ * and only while its status is still 'scheduled'. Migration 033 widened that
+ * upper bound from auto_close_minutes to the length of the class, because
+ * auto_close is the length of the CHECK-IN window and using it meant a lecture
+ * already in progress could no longer open itself. The bound still exists so a
+ * sweep after downtime cannot resurrect lectures that finished days ago.
+ *
+ * This must match 033. A card saying the chance has gone while the sweep is
+ * still willing is worse than saying nothing.
  */
 interface NotOpened extends WindowCommon, NoTimes {
   phase: "not_opened";
@@ -175,7 +181,7 @@ export const sessionWindow = (
   // time from which pressing Open costs nothing.
   if (!s.opened_at) {
     const earliest = starts - minutes(s.early_open_minutes);
-    const latest = starts + minutes(s.auto_close_minutes);
+    const latest = starts + minutes(s.duration_minutes);
     return {
       phase: "not_opened",
       opensAt: null,

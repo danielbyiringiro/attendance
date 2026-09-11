@@ -328,6 +328,7 @@ const base = {
   early_open_minutes: 15,
   auto_close_minutes: 15,
   late_window_minutes: 10,
+  duration_minutes: 60,
   status: "open",
 };
 const at = (hhmm) => new Date(`2026-09-11T${hhmm}:00Z`);
@@ -473,10 +474,14 @@ eq(
   waiting.autoOpenFrom.toISOString(),
   "2026-09-11T08:45:00.000Z",
 );
+// Migration 033: to the end of the class, not to the end of the check-in
+// window. auto_close is 15 minutes and the class is an hour, and using the
+// former meant a lecture already running could no longer open itself — which
+// is what "auto-open does not work" turned out to be.
 eq(
-  "and stops bothering once the window would already have shut",
+  "and keeps trying until the class is over",
   waiting.autoOpenUntil.toISOString(),
-  "2026-09-11T09:15:00.000Z",
+  "2026-09-11T10:00:00.000Z",
 );
 ok("not missed while it is still ahead", waiting.autoOpenMissed === false);
 
@@ -485,8 +490,16 @@ ok(
   sessionWindow(unopened, at("09:00")).autoOpenMissed === false,
 );
 ok(
-  "missed once the span has passed — only a person can open it now",
-  sessionWindow(unopened, at("09:30")).autoOpenMissed === true,
+  "a lecture 30 minutes in has NOT missed its chance",
+  sessionWindow(unopened, at("09:30")).autoOpenMissed === false,
+);
+ok(
+  "nor one 59 minutes in",
+  sessionWindow(unopened, at("09:59")).autoOpenMissed === false,
+);
+ok(
+  "missed once the class is over — only a person can open it now",
+  sessionWindow(unopened, at("10:30")).autoOpenMissed === true,
 );
 
 eq(

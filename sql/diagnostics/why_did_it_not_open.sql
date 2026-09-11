@@ -8,12 +8,12 @@
 --
 --   status = 'scheduled'
 --   now() >= starts_at - early_open_minutes
---   now() <= starts_at + auto_close_minutes
+--   now() <= starts_at + duration_minutes   (migration 033; was auto_close)
 --
 -- Each row below says which of those is false, so "auto-open is broken" becomes
 -- a specific reason. The commonest answers are that the session was cancelled
--- or already closed, or that the chance has simply passed — on the defaults it
--- is about a twenty-minute span around the start time.
+-- or already closed, or that the chance has simply passed, which now means the
+-- class itself is over.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -45,7 +45,7 @@ SELECT
   s.auto_close_minutes                     AS auto_close,
   s.starts_at - make_interval(mins => COALESCE(s.early_open_minutes, 0))
                                            AS auto_open_from,
-  s.starts_at + make_interval(mins => COALESCE(s.auto_close_minutes, 0))
+  s.starts_at + make_interval(mins => COALESCE(s.duration_minutes, 60))
                                            AS auto_open_until,
   CASE
     WHEN s.status = 'cancelled'
@@ -56,7 +56,7 @@ SELECT
       THEN 'already open'
     WHEN now() < s.starts_at - make_interval(mins => COALESCE(s.early_open_minutes, 0))
       THEN 'not yet — too early, waiting for the early-open moment'
-    WHEN now() > s.starts_at + make_interval(mins => COALESCE(s.auto_close_minutes, 0))
+    WHEN now() > s.starts_at + make_interval(mins => COALESCE(s.duration_minutes, 60))
       THEN 'no — the chance has passed, only opening it by hand will work now'
     ELSE 'YES — this should open on the next sweep, within a minute'
   END                                      AS would_open_now
@@ -77,7 +77,7 @@ SELECT s.id, s.starts_at, s.status, s.early_open_minutes, s.auto_close_minutes
 FROM public.class_sessions s
 WHERE s.status = 'scheduled'
   AND now() >= s.starts_at - make_interval(mins => COALESCE(s.early_open_minutes, 0))
-  AND now() <= s.starts_at + make_interval(mins => COALESCE(s.auto_close_minutes, 0))
+  AND now() <= s.starts_at + make_interval(mins => COALESCE(s.duration_minutes, 60))
 ORDER BY s.starts_at;
 
 -- ----------------------------------------------------------------------------
