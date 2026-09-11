@@ -40,6 +40,7 @@ import {
   UserCheck,
   UserX,
   Timer,
+  RefreshCw,
   Shield,
   History,
   CheckCircle2,
@@ -1333,12 +1334,32 @@ const TADashboard = ({
                     <Timer className="h-5 w-5" />
                     Today
                   </CardTitle>
-                  <LiveIndicator
-                    lastLoadedAt={lastLoadedAt}
-                    now={now}
-                    isLoading={isTodayLoading}
-                    onRefresh={() => void loadToday()}
-                  />
+                  {/*
+                    Both. The indicator answers "is this still live", which a
+                    button cannot, and the button is what to reach for when the
+                    answer is no — or when you have changed something in another
+                    tab and do not want to wait out the poll. Replacing one with
+                    the other lost that.
+                  */}
+                  <div className="flex items-center gap-1">
+                    <LiveIndicator
+                      lastLoadedAt={lastLoadedAt}
+                      now={now}
+                      isLoading={isTodayLoading}
+                      onRefresh={() => void loadToday()}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void loadToday()}
+                      disabled={isTodayLoading}
+                      title="Refresh now"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 ${isTodayLoading ? "animate-spin" : ""}`}
+                      />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {/*
