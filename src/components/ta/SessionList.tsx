@@ -245,8 +245,8 @@ const SessionList = ({
         title: "Class cancelled",
         description:
           removed === 0
-            ? "Only this cohort's session was affected."
-            : `${removed} absence${removed === 1 ? "" : "s"} removed, so it cannot count against anyone. Only this cohort's session was affected.`,
+            ? "Nothing was recorded against it. Only this cohort's session was affected."
+            : `${removed} attendance record${removed === 1 ? "" : "s"} removed, check-ins included — a class that did not happen has no attendance. Only this cohort's session was affected.`,
       });
       setCancelling(null);
       setReason("");
@@ -596,6 +596,13 @@ const SessionList = ({
                   {dateOf(cancelling.session_date)}, cohort{" "}
                   {cohortLabel.get(cancelling.cohort_id)}. Only this cohort is
                   affected — every other cohort keeps its session that day.
+                  {" "}
+                  <strong className="text-foreground">
+                    Every attendance record against it is deleted, including
+                    anyone who already checked in.
+                  </strong>{" "}
+                  A class that did not happen has no attendance, and
+                  uncancelling does not bring the check-ins back.
                 </>
               )}
             </DialogDescription>

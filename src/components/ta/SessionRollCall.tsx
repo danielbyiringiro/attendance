@@ -66,6 +66,22 @@ const CALLS: {
     key: "E",
     className: "bg-primary text-primary-foreground hover:bg-primary/90",
   },
+  /*
+   * Late was reachable by PIN and by nothing else.
+   *
+   * mark_attendance has recorded it since 006 — anyone checking in after the
+   * late window is stored as `late`, and every rate in the app already counts
+   * it as attendance. But a TA taking the register by hand had three buttons,
+   * so the student who walked in ten minutes down had to be called present or
+   * absent, and neither is true. The state existed and the only way to reach
+   * it was to not be in the room when the register was taken.
+   */
+  {
+    state: "late",
+    label: "Late",
+    key: "L",
+    className: "bg-warning text-warning-foreground hover:bg-warning/90",
+  },
 ];
 
 /**
@@ -491,6 +507,7 @@ const SessionRollCall = ({
               {!query.trim() && total > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {done.filter((a) => a.state === "present").length} present ·{" "}
+                  {done.filter((a) => a.state === "late").length} late ·{" "}
                   {done.filter((a) => a.state === "unexcused").length} absent ·{" "}
                   {done.filter((a) => a.state === "excused").length} excused
                 </p>
