@@ -92,6 +92,39 @@ export const openSession = async (
  * This is the moment absence becomes a stored fact rather than something the
  * browser recomputes.
  */
+/**
+ * Open anything whose early-open moment has arrived, close anything past its
+ * window, and report how many of each.
+ *
+ * The schedule already says when a class meets and how long the check-in window
+ * runs; until migration 031 nothing acted on it, so a session stayed 'scheduled'
+ * until a TA pressed Open and stayed 'open' forever afterwards. Closing matters
+ * most: close writes the explicit unexcused row for everyone who did not mark,
+ * so a session nobody closed is one where the absences were never recorded.
+ *
+ * pg_cron runs the same sweep every minute in production. This call exists so
+ * the dashboard is immediate rather than up to a minute stale, and so the
+ * feature still works on a project where the extension is not enabled. Calling
+ * both is harmless — the sweep is idempotent and the second caller finds
+ * nothing left to do.
+ *
+ * Failures are swallowed on purpose. This runs on a timer behind a screen the
+ * TA is already using; a transient error here should not put a red toast over
+ * the roster they are reading.
+ */
+export const syncSessions = async (): Promise<{
+  opened: number;
+  closed: number;
+}> => {
+  const { data, error } = await supabase.rpc("sync_sessions");
+  if (error) {
+    console.warn("Could not sync session states:", error.message);
+    return { opened: 0, closed: 0 };
+  }
+  const result = (data ?? {}) as { opened?: number; closed?: number };
+  return { opened: result.opened ?? 0, closed: result.closed ?? 0 };
+};
+
 export const closeSession = async (sessionId: string): Promise<number> => {
   const { data, error } = await supabase.rpc("close_session", {
     p_session_id: sessionId,

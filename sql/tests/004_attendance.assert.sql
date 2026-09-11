@@ -196,7 +196,22 @@ BEGIN
   END IF;
 
   -- --------------------------------------------------------------------------
-  -- cancel_session clears absences but keeps the fact people attended
+  -- cancel_session clears the session entirely
+  --
+  -- This file used to assert the opposite: that the absences went and the
+  -- check-ins stayed, on the reasoning that somebody did turn up and erasing
+  -- that would be a lie about the past.
+  --
+  -- Migration 032 reversed it, because the reasoning was the wrong way round.
+  -- If the class was cancelled it did not happen, and "present at a class that
+  -- did not happen" is not a fact about a student. The rate already ignored
+  -- cancelled sessions, so the row changed no percentage — it sat in the
+  -- student's own history claiming they attended something that was called off,
+  -- which is what a TA noticed.
+  --
+  -- The old rule also listed the states to delete and had quietly missed two:
+  -- a student who arrived late, or was exempted, kept their record. Deleting by
+  -- session rather than by a list of states is the form that cannot rot.
   -- --------------------------------------------------------------------------
   INSERT INTO public.class_sessions (cohort_id, starts_at, session_date)
   VALUES (v_cohort_a, TIMESTAMPTZ '2026-05-27 09:00:00+00', DATE '1970-01-01')
@@ -212,23 +227,21 @@ BEGIN
     RAISE EXCEPTION 'expected 3 unexcused before cancelling, found %', n;
   END IF;
 
+  -- Four: the three absences close_session wrote, plus S001's check-in.
   SELECT public.cancel_session(v_later, 'Lecturer unwell') INTO n;
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'cancel_session should have removed 3 absences, removed %', n;
+  IF n <> 4 THEN
+    RAISE EXCEPTION
+      'cancel_session should have removed 4 records (3 absences + 1 check-in), removed %', n;
   END IF;
 
-  -- A cancelled class must not drag anyone's percentage down...
+  -- Nothing at all is left against it. Asserted on the whole session rather
+  -- than state by state, so a state added later cannot slip through the way
+  -- 'late' and 'exempted' did.
   SELECT count(*) INTO n
-  FROM public.attendance_records WHERE session_id = v_later AND state = 'unexcused';
+  FROM public.attendance_records WHERE session_id = v_later;
   IF n <> 0 THEN
-    RAISE EXCEPTION 'unexcused records survived a cancellation';
-  END IF;
-
-  -- ...but somebody did turn up, and erasing that would be a lie about the past.
-  SELECT count(*) INTO n
-  FROM public.attendance_records WHERE session_id = v_later AND state = 'present';
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'cancelling deleted a present record';
+    RAISE EXCEPTION
+      '% attendance row(s) survived a cancellation — the class did not happen', n;
   END IF;
 
   -- Closing a cancelled session is refused rather than silently re-absenting.

@@ -296,5 +296,137 @@ eq(
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The check-in window
+//
+// sessionWindow restates migration 028's rule in TypeScript so the dashboard
+// can count down without refetching. Two implementations of one rule is how
+// they drift, so these are 028's OWN worked examples, copied from its header:
+//
+//   opens  at  max(opened_at, starts_at - early_open_minutes)
+//   closes at  max(opened_at, starts_at) + auto_close_minutes
+//
+// If the database rule changes and this file still passes, the mismatch is
+// here.
+// ---------------------------------------------------------------------------
+
+const windowOut = join(mkdtempSync(join(tmpdir(), "win-")), "window.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/sessionWindow.ts")],
+  outfile: windowOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { sessionWindow, countdown } = await import(pathToFileURL(windowOut).href);
+
+// A 09:00 class with a 15 minute auto-close and a 10 minute late window.
+const CLASS_AT = "2026-09-11T09:00:00Z";
+const base = {
+  starts_at: CLASS_AT,
+  early_open_minutes: 15,
+  auto_close_minutes: 15,
+  late_window_minutes: 10,
+  status: "open",
+};
+const at = (hhmm) => new Date(`2026-09-11T${hhmm}:00Z`);
+
+// 028: "Opened EARLY, 09:00 class, 15 minute window, opened 08:45"
+const early = { ...base, opened_at: "2026-09-11T08:45:00Z" };
+eq(
+  "opened early — opens at the click, not before",
+  sessionWindow(early, at("08:50")).opensAt.toISOString(),
+  "2026-09-11T08:45:00.000Z",
+);
+eq(
+  "opened early — the window still counts from the class, not the click",
+  sessionWindow(early, at("08:50")).closesAt.toISOString(),
+  "2026-09-11T09:15:00.000Z",
+);
+eq(
+  "opened early — a student arriving at 08:50 is on time",
+  sessionWindow(early, at("08:50")).phase,
+  "live",
+);
+
+// 028: "Opened LATE, same class, opened 09:10 — opens 09:10, closes 09:25"
+const late = { ...base, opened_at: "2026-09-11T09:10:00Z" };
+eq(
+  "opened late — a full window from opening",
+  sessionWindow(late, at("09:12")).closesAt.toISOString(),
+  "2026-09-11T09:25:00.000Z",
+);
+
+// 028: "Opened EARLIER than early_open allows, opened 08:00 with early_open 15
+//       — opens 08:45, the setting is a permission"
+const tooEarly = { ...base, opened_at: "2026-09-11T08:00:00Z" };
+eq(
+  "opened before the allowance — the allowance wins",
+  sessionWindow(tooEarly, at("08:30")).opensAt.toISOString(),
+  "2026-09-11T08:45:00.000Z",
+);
+eq(
+  "and before that it is not yet accepting marks",
+  sessionWindow(tooEarly, at("08:30")).phase,
+  "opens_soon",
+);
+
+// The late window, measured from the class starting.
+eq(
+  "at 09:09 a mark is still on time",
+  sessionWindow(early, at("09:09")).phase,
+  "live",
+);
+eq(
+  "at 09:11 it is late",
+  sessionWindow(early, at("09:11")).phase,
+  "live_late",
+);
+
+// The bug this was written for: status says open long after the window passed.
+const stale = sessionWindow(early, at("11:00"));
+eq("a window that has passed reads as expired", stale.phase, "expired");
+ok(
+  "and is flagged stale, because the row still says 'open'",
+  stale.staleOpen === true,
+);
+ok(
+  "a live session is not flagged stale",
+  sessionWindow(early, at("09:05")).staleOpen === false,
+);
+
+// Never opened: there is no window, only a time from which opening is free.
+const unopened = { ...base, opened_at: null, status: "scheduled" };
+eq(
+  "an unopened session has no window at all",
+  sessionWindow(unopened, at("08:00")).opensAt,
+  null,
+);
+eq(
+  "it is not live, whatever the clock says",
+  sessionWindow(unopened, at("09:05")).phase,
+  "not_opened",
+);
+ok(
+  "nothing opens it by itself — early_open is a permission, not a trigger",
+  sessionWindow(unopened, at("08:50")).phase === "not_opened",
+);
+
+eq(
+  "a closed session is done regardless of the clock",
+  sessionWindow({ ...early, status: "closed" }, at("09:05")).phase,
+  "done",
+);
+eq(
+  "so is a cancelled one",
+  sessionWindow({ ...early, status: "cancelled" }, at("09:05")).phase,
+  "done",
+);
+
+eq("countdown reads in minutes and seconds", countdown(125_000), "2m 05s");
+eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
+eq("and says now at zero", countdown(0), "now");
+
 console.log(`\n${checks - failures}/${checks} passed`);
 if (failures > 0) process.exit(1);

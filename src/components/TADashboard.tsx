@@ -3,6 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import SessionWindowBadge, {
+  SessionWindowNote,
+} from "@/components/ta/SessionWindowBadge";
+import { useNow } from "@/lib/useNow";
+import { sessionWindow } from "@/lib/sessionWindow";
+import { useLiveClass } from "@/lib/useLiveClass";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -82,7 +88,7 @@ import {
   setAttendanceState,
   type AttendanceLog,
 } from "@/lib/api/attendance";
-import { listTodaySessions } from "@/lib/api/sessions";
+import { listTodaySessions, syncSessions } from "@/lib/api/sessions";
 import type { SessionRow } from "@/lib/api/types";
 import {
   addDays,
@@ -144,6 +150,15 @@ interface FlaggedRecord {
   session_id: string | null;
 }
 
+/**
+ * Above this many cohorts, the cohort filter goes back to a dropdown.
+ *
+ * Eight fits on one line at the width the card gets on a laptop and still wraps
+ * to two rows on a phone without pushing the card title around. A class with
+ * more sections than that is rare enough that the menu is the better trade.
+ */
+const COHORT_PICKER_MAX = 8;
+
 const TADashboard = ({
   activeSection = "attendance",
   onLogout,
@@ -179,6 +194,11 @@ const TADashboard = ({
       return;
     }
     try {
+      // Open what is due and close what has expired, then read. Doing it in
+      // this order means the list the TA sees is the state after the sweep
+      // rather than one refresh behind it.
+      await syncSessions();
+
       const sessions = await listTodaySessions(activeClassId);
       setTodaySessions(sessions);
 
@@ -235,6 +255,47 @@ const TADashboard = ({
   useEffect(() => {
     void loadRoster();
   }, [loadRoster]);
+
+  /*
+   * Always on, once a second.
+   *
+   * Not conditional: see the note on somethingIsCounting below. A countdown is
+   * displayed to the second, and this is also the heartbeat that lets the page
+   * notice a class has come into range, so switching it off is what broke
+   * auto-open the first time.
+   */
+  const now = useNow(true, 1000);
+
+  /*
+   * Is anything live, or close enough to be worth polling hard for?
+   *
+   * Read off `now` rather than a fresh Date, so it is recomputed on every tick.
+   * The first version of this gated BOTH the clock and the poll on this value,
+   * which could not work: with both switched off nothing re-rendered, so
+   * nothing re-evaluated the condition, so it never became true. A dashboard
+   * opened an hour before class sat inert until somebody touched it, and the
+   * sweep that opens sessions never ran. The thing meant to wake it up was the
+   * thing it had turned off.
+   */
+  const somethingIsCounting = todaySessions.some((sn) => {
+    const w = sessionWindow(sn, now);
+    return w.phase !== "done" && w.phase !== "not_opened"
+      ? true
+      : w.msUntilChange !== null && w.msUntilChange < 60 * 60 * 1000;
+  });
+
+  /*
+   * Check-ins arrive while the TA watches, so the screen has to move by itself.
+   *
+   * Realtime carries the check-ins. The poll is the backstop, and it is also
+   * what runs the open/close sweep, so it can never be off entirely — a session
+   * that is due to open cannot open itself on a screen that has stopped asking.
+   * Two minutes when nothing is happening, twenty seconds when it is.
+   */
+  useLiveClass(activeClassId, loadToday, {
+    active: true,
+    pollMs: somethingIsCounting ? 20_000 : 120_000,
+  });
 
   const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
@@ -1273,20 +1334,16 @@ const TADashboard = ({
                         <div
                           key={sn.id}
                           className={`space-y-2 rounded-lg p-3 transition-colors ${
-                            sn.status === "open"
-                              ? "border-2 border-success/40 bg-success/5 shadow-soft"
-                              : "border bg-card"
+                            sessionWindow(sn, now).staleOpen
+                              ? "border-2 border-destructive/40 bg-destructive/5"
+                              : sn.status === "open"
+                                ? "border-2 border-success/40 bg-success/5 shadow-soft"
+                                : "border bg-card"
                           }`}
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge variant="outline">Cohort {label}</Badge>
-                            <Badge
-                              variant={
-                                sn.status === "open" ? "default" : "secondary"
-                              }
-                            >
-                              {sn.status}
-                            </Badge>
+                            <SessionWindowBadge session={sn} now={now} />
                             <button
                               type="button"
                               className="ml-auto rounded px-1.5 py-0.5 text-sm tabular-nums text-muted-foreground underline-offset-2 hover:bg-muted hover:underline"
@@ -1302,11 +1359,16 @@ const TADashboard = ({
                               <p className="rounded-lg bg-gradient-primary py-2 text-center font-mono text-3xl font-bold tracking-[0.3em] text-primary-foreground shadow-soft">
                                 {sn.pin}
                               </p>
-                              <p className="text-center text-xs text-muted-foreground">
-                                Check-in closes {sn.auto_close_minutes} minutes
-                                after it opened.
-                              </p>
+                              <SessionWindowNote session={sn} now={now} />
                             </>
+                          )}
+
+                          {sn.status === "open" && !sn.pin && (
+                            <SessionWindowNote session={sn} now={now} />
+                          )}
+
+                          {sn.status === "scheduled" && (
+                            <SessionWindowNote session={sn} now={now} />
                           )}
 
                           {sn.status === "closed" && (
@@ -1366,22 +1428,67 @@ const TADashboard = ({
                         <Users className="h-5 w-5" />
                         Student Status
                       </CardTitle>
-                      <Select
-                        value={selectedCohort}
-                        onValueChange={setSelectedCohort}
-                      >
-                        <SelectTrigger className="w-32">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Cohorts</SelectItem>
+                      {/*
+                        Buttons while there are few cohorts, a dropdown once
+                        there are many.
+
+                        Switching cohort mid-class was two clicks and a menu
+                        that covered the list underneath it, to choose between
+                        three things. Most classes have two or three cohorts,
+                        and at that size a dropdown hides the options and adds
+                        a step for nothing. Past COHORT_PICKER_MAX the row
+                        would wrap into something worse than the menu, so the
+                        menu comes back.
+                      */}
+                      {cohorts.length <= COHORT_PICKER_MAX ? (
+                        <div
+                          className="flex flex-wrap items-center gap-1"
+                          role="group"
+                          aria-label="Filter by cohort"
+                        >
+                          <Button
+                            size="sm"
+                            variant={
+                              selectedCohort === "all" ? "default" : "outline"
+                            }
+                            onClick={() => setSelectedCohort("all")}
+                          >
+                            All
+                          </Button>
                           {cohorts.map((co) => (
-                            <SelectItem key={co.id} value={co.label}>
-                              Cohort {co.label}
-                            </SelectItem>
+                            <Button
+                              key={co.id}
+                              size="sm"
+                              variant={
+                                selectedCohort === co.label
+                                  ? "default"
+                                  : "outline"
+                              }
+                              onClick={() => setSelectedCohort(co.label)}
+                              aria-pressed={selectedCohort === co.label}
+                            >
+                              {co.label}
+                            </Button>
                           ))}
-                        </SelectContent>
-                      </Select>
+                        </div>
+                      ) : (
+                        <Select
+                          value={selectedCohort}
+                          onValueChange={setSelectedCohort}
+                        >
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Cohorts</SelectItem>
+                            {cohorts.map((co) => (
+                              <SelectItem key={co.id} value={co.label}>
+                                Cohort {co.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                   </CardHeader>
                   <CardContent>
