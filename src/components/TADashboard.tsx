@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import SessionWindowBadge, {
   SessionWindowNote,
 } from "@/components/ta/SessionWindowBadge";
+import LiveIndicator from "@/components/ta/LiveIndicator";
 import { useNow } from "@/lib/useNow";
 import { sessionWindow } from "@/lib/sessionWindow";
 import { useLiveClass } from "@/lib/useLiveClass";
@@ -38,7 +39,6 @@ import {
   Users,
   UserCheck,
   UserX,
-  RefreshCw,
   Timer,
   Shield,
   History,
@@ -186,6 +186,15 @@ const TADashboard = ({
   const [rosterFor, setRosterFor] = useState<SessionRow | null>(null);
   const [rollCallFor, setRollCallFor] = useState<SessionRow | null>(null);
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
+  /*
+   * When today's data was last read, and whether a read is in flight.
+   *
+   * Shown rather than kept internal: a screen that updates itself is
+   * indistinguishable from one that has quietly stopped, and the TA has no
+   * other way to tell. An age that ticks up is the evidence.
+   */
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const [isTodayLoading, setIsTodayLoading] = useState(false);
 
   const loadToday = useCallback(async () => {
     if (!activeClassId) {
@@ -193,6 +202,7 @@ const TADashboard = ({
       setPresentStudents([]);
       return;
     }
+    setIsTodayLoading(true);
     try {
       // Open what is due and close what has expired, then read. Doing it in
       // this order means the list the TA sees is the state after the sweep
@@ -213,10 +223,13 @@ const TADashboard = ({
             timestamp: m.marked_at ? new Date(m.marked_at) : new Date(),
           })),
       );
+      setLastLoadedAt(new Date());
     } catch (e) {
       console.error("Could not load today's sessions:", e);
       setTodaySessions([]);
       setPresentStudents([]);
+    } finally {
+      setIsTodayLoading(false);
     }
   }, [activeClassId]);
 
@@ -1309,9 +1322,12 @@ const TADashboard = ({
                     <Timer className="h-5 w-5" />
                     Today
                   </CardTitle>
-                  <Button variant="ghost" size="sm" onClick={loadToday}>
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
+                  <LiveIndicator
+                    lastLoadedAt={lastLoadedAt}
+                    now={now}
+                    isLoading={isTodayLoading}
+                    onRefresh={() => void loadToday()}
+                  />
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {todaySessions.length === 0 ? (
