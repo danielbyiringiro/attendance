@@ -115,14 +115,34 @@ export const openSession = async (
 export const syncSessions = async (): Promise<{
   opened: number;
   closed: number;
+  /**
+   * False when the database has no sync_sessions — i.e. migration 031 has not
+   * been applied to this project.
+   *
+   * Worth returning rather than swallowing. Without the sweep nothing opens or
+   * closes by itself, and a screen that says "opening itself now" while no such
+   * thing is happening is worse than one that admits it: the TA waits for
+   * something that is never going to arrive. PostgREST answers a missing
+   * function with PGRST202, so this is a specific check and not a catch-all
+   * that would also hide a network blip as a missing migration.
+   */
+  available: boolean;
 }> => {
   const { data, error } = await supabase.rpc("sync_sessions");
   if (error) {
-    console.warn("Could not sync session states:", error.message);
-    return { opened: 0, closed: 0 };
+    const missing =
+      error.code === "PGRST202" || /sync_sessions/.test(error.message ?? "");
+    if (!missing) {
+      console.warn("Could not sync session states:", error.message);
+    }
+    return { opened: 0, closed: 0, available: !missing };
   }
   const result = (data ?? {}) as { opened?: number; closed?: number };
-  return { opened: result.opened ?? 0, closed: result.closed ?? 0 };
+  return {
+    opened: result.opened ?? 0,
+    closed: result.closed ?? 0,
+    available: true,
+  };
 };
 
 export const closeSession = async (sessionId: string): Promise<number> => {

@@ -21,9 +21,12 @@ const time = (d: Date) =>
 const SessionWindowBadge = ({
   session,
   now,
+  canSweep = true,
 }: {
   session: SessionWindowInput;
   now: Date;
+  /** See SessionWindowNote — false until migration 031 is applied. */
+  canSweep?: boolean;
 }) => {
   const w = sessionWindow(session, now);
 
@@ -47,9 +50,11 @@ const SessionWindowBadge = ({
       return (
         <Badge variant="secondary" className="gap-1">
           <Clock className="h-3 w-3" />
-          {w.msUntilChange === null
-            ? "Opening"
-            : `Opens in ${countdown(w.msUntilChange)}`}
+          {w.msUntilChange !== null
+            ? `Opens in ${countdown(w.msUntilChange)}`
+            : canSweep
+              ? "Opening"
+              : "Not open"}
         </Badge>
       );
 
@@ -90,14 +95,30 @@ const SessionWindowBadge = ({
 export const SessionWindowNote = ({
   session,
   now,
+  canSweep = true,
 }: {
   session: SessionWindowInput;
   now: Date;
+  /**
+   * Whether this database opens and closes sessions by itself — false until
+   * migration 031 is applied. Promising a TA that a session is "opening itself
+   * now" when nothing is going to open it is how somebody ends up standing in
+   * front of a class waiting for a PIN that never appears.
+   */
+  canSweep?: boolean;
 }) => {
   const w = sessionWindow(session, now);
 
   switch (w.phase) {
     case "not_opened":
+      if (!canSweep) {
+        return (
+          <p className="text-xs text-muted-foreground">
+            Open it to start check-in. This database does not open sessions
+            automatically.
+          </p>
+        );
+      }
       return (
         <p className="text-xs text-muted-foreground">
           {w.msUntilChange === null

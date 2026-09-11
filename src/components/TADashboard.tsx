@@ -195,6 +195,16 @@ const TADashboard = ({
    */
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [isTodayLoading, setIsTodayLoading] = useState(false);
+  /*
+   * Whether this database can open and close sessions by itself.
+   *
+   * False until migration 031 is applied. The distinction has to reach the
+   * screen: with the sweep, "not opened yet" is a matter of seconds and the TA
+   * should wait; without it, nothing is ever going to happen and they need to
+   * press the button. Telling them the first while the second is true is how
+   * somebody stands in front of a class waiting for a PIN.
+   */
+  const [canSweep, setCanSweep] = useState(true);
 
   const loadToday = useCallback(async () => {
     if (!activeClassId) {
@@ -207,7 +217,8 @@ const TADashboard = ({
       // Open what is due and close what has expired, then read. Doing it in
       // this order means the list the TA sees is the state after the sweep
       // rather than one refresh behind it.
-      await syncSessions();
+      const sweep = await syncSessions();
+      setCanSweep(sweep.available);
 
       const sessions = await listTodaySessions(activeClassId);
       setTodaySessions(sessions);
@@ -1330,6 +1341,20 @@ const TADashboard = ({
                   />
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {/*
+                    Said once, at the top, rather than repeated on every card.
+                    Without migration 031 nothing opens or closes by itself, and
+                    the symptom — sessions sitting at "not open" through the
+                    whole class — looks like a bug in the app rather than a
+                    migration that has not been run.
+                  */}
+                  {!canSweep && (
+                    <p className="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+                      Sessions are not opening or closing on their own. Run
+                      migration 031 on this database to turn that on.
+                    </p>
+                  )}
+
                   {todaySessions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No session today for this class. Schedule sets which days
@@ -1359,7 +1384,23 @@ const TADashboard = ({
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge variant="outline">Cohort {label}</Badge>
-                            <SessionWindowBadge session={sn} now={now} />
+                            {/*
+                              The time the class actually starts. The card
+                              named a cohort and a status and never once said
+                              when — which on a day with six sessions is the
+                              only thing that tells them apart.
+                            */}
+                            <span className="font-medium tabular-nums">
+                              {new Date(sn.starts_at).toLocaleTimeString(
+                                undefined,
+                                { hour: "2-digit", minute: "2-digit" },
+                              )}
+                            </span>
+                            <SessionWindowBadge
+                              session={sn}
+                              now={now}
+                              canSweep={canSweep}
+                            />
                             <button
                               type="button"
                               className="ml-auto rounded px-1.5 py-0.5 text-sm tabular-nums text-muted-foreground underline-offset-2 hover:bg-muted hover:underline"
@@ -1375,16 +1416,28 @@ const TADashboard = ({
                               <p className="rounded-lg bg-gradient-primary py-2 text-center font-mono text-3xl font-bold tracking-[0.3em] text-primary-foreground shadow-soft">
                                 {sn.pin}
                               </p>
-                              <SessionWindowNote session={sn} now={now} />
+                              <SessionWindowNote
+                                session={sn}
+                                now={now}
+                                canSweep={canSweep}
+                              />
                             </>
                           )}
 
                           {sn.status === "open" && !sn.pin && (
-                            <SessionWindowNote session={sn} now={now} />
+                            <SessionWindowNote
+                              session={sn}
+                              now={now}
+                              canSweep={canSweep}
+                            />
                           )}
 
                           {sn.status === "scheduled" && (
-                            <SessionWindowNote session={sn} now={now} />
+                            <SessionWindowNote
+                              session={sn}
+                              now={now}
+                              canSweep={canSweep}
+                            />
                           )}
 
                           {sn.status === "closed" && (
