@@ -87,6 +87,8 @@ interface NoWindow extends WindowCommon {
   opensAt: null;
   closesAt: null;
   lateFrom: null;
+  msUntilClose: null;
+  msUntilLate: null;
 }
 
 interface OpenWindow extends WindowCommon {
@@ -95,6 +97,19 @@ interface OpenWindow extends WindowCommon {
   closesAt: Date;
   /** When an on-time mark becomes a late one. */
   lateFrom: Date;
+  /**
+   * Milliseconds until check-in stops accepting marks. Always a number on this
+   * branch, which is the reason it lives here rather than on the shared part.
+   *
+   * Separate from msUntilChange on purpose. Mid-session the next *change* is
+   * the late threshold, which is worth knowing and is not what a TA is
+   * watching — the deadline is when the window shuts. A badge showing only the
+   * next change counted down to 'late', then started again from a larger
+   * number, which reads as the clock running backwards.
+   */
+  msUntilClose: number;
+  /** Milliseconds until an on-time mark becomes late. Null once past it. */
+  msUntilLate: number | null;
 }
 
 export type SessionWindow = NoWindow | OpenWindow;
@@ -113,6 +128,8 @@ export const sessionWindow = (
       closesAt: null,
       lateFrom: null,
       msUntilChange: null,
+      msUntilClose: null,
+      msUntilLate: null,
       staleOpen: false,
     };
   }
@@ -128,6 +145,8 @@ export const sessionWindow = (
       closesAt: null,
       lateFrom: null,
       msUntilChange: earliest > t ? earliest - t : null,
+      msUntilClose: null,
+      msUntilLate: null,
       staleOpen: false,
     };
   }
@@ -142,13 +161,22 @@ export const sessionWindow = (
     opensAt: new Date(opensAt),
     closesAt: new Date(closesAt),
     lateFrom: new Date(lateFrom),
+    msUntilClose: closesAt > t ? closesAt - t : 0,
+    msUntilLate: lateFrom > t ? lateFrom - t : null,
   };
 
   if (t < opensAt) {
     return { ...shape, phase: "opens_soon", msUntilChange: opensAt - t, staleOpen: false };
   }
   if (t > closesAt) {
-    return { ...shape, phase: "expired", msUntilChange: null, staleOpen: true };
+    return {
+      ...shape,
+      phase: "expired",
+      msUntilChange: null,
+      msUntilClose: 0,
+      msUntilLate: null,
+      staleOpen: true,
+    };
   }
   if (t >= lateFrom) {
     return { ...shape, phase: "live_late", msUntilChange: closesAt - t, staleOpen: false };
@@ -166,24 +194,4 @@ export const countdown = (ms: number): string => {
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
   return `${sec}s`;
-};
-
-/** What the TA should read on the badge, per phase. */
-export const phaseLabel = (w: SessionWindow): string => {
-  switch (w.phase) {
-    case "not_opened":
-      // Past the early-open moment and still shut means the sweep has not run
-      // yet, which is a matter of seconds — not something to press a button for.
-      return w.msUntilChange === null ? "Opening" : "Scheduled";
-    case "opens_soon":
-      return "Opens shortly";
-    case "live":
-      return "Check-in open";
-    case "live_late":
-      return "Open — marking late";
-    case "expired":
-      return "Window passed";
-    case "done":
-      return "Closed";
-  }
 };

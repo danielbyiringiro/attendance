@@ -2,7 +2,6 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Clock } from "lucide-react";
 import {
   countdown,
-  phaseLabel,
   sessionWindow,
   type SessionWindowInput,
 } from "@/lib/sessionWindow";
@@ -28,40 +27,60 @@ const SessionWindowBadge = ({
 }) => {
   const w = sessionWindow(session, now);
 
-  if (w.phase === "expired") {
-    return (
-      <Badge variant="destructive" className="gap-1">
-        <AlertTriangle className="h-3 w-3" />
-        Window passed
-      </Badge>
-    );
-  }
+  // A switch on the discriminant rather than a chain of early returns. Narrowing
+  // by elimination across two interfaces did not give TypeScript enough to know
+  // msUntilClose was a number by the time it reached the live cases; switching
+  // on `phase` directly does.
+  switch (w.phase) {
+    case "expired":
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Window passed
+        </Badge>
+      );
 
-  if (w.phase === "done") {
-    return <Badge variant="secondary">{session.status}</Badge>;
-  }
+    case "done":
+      return <Badge variant="secondary">{session.status}</Badge>;
 
-  if (w.phase === "not_opened") {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <Clock className="h-3 w-3" />
-        {w.msUntilChange === null
-          ? "Opening"
-          : `Opens in ${countdown(w.msUntilChange)}`}
-      </Badge>
-    );
-  }
+    case "not_opened":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Clock className="h-3 w-3" />
+          {w.msUntilChange === null
+            ? "Opening"
+            : `Opens in ${countdown(w.msUntilChange)}`}
+        </Badge>
+      );
 
-  return (
-    <Badge
-      variant={w.phase === "live_late" ? "outline" : "default"}
-      className={`gap-1 ${w.phase === "live_late" ? "border-warning text-warning" : ""}`}
-    >
-      <Clock className="h-3 w-3" />
-      {phaseLabel(w)}
-      {w.msUntilChange !== null && ` · ${countdown(w.msUntilChange)}`}
-    </Badge>
-  );
+    case "opens_soon":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Clock className="h-3 w-3" />
+          Opens in {countdown(w.msUntilChange ?? 0)}
+        </Badge>
+      );
+
+    // Counting to the close, not to the next phase change. Mid-session the next
+    // change is the late threshold, and a badge that counted down to that and
+    // then started again from a larger number reads as the clock going
+    // backwards. The deadline is what a TA is watching.
+    case "live":
+      return (
+        <Badge variant="default" className="gap-1">
+          <Clock className="h-3 w-3" />
+          Closes in {countdown(w.msUntilClose)}
+        </Badge>
+      );
+
+    case "live_late":
+      return (
+        <Badge variant="outline" className="gap-1 border-warning text-warning">
+          <Clock className="h-3 w-3" />
+          Late · closes in {countdown(w.msUntilClose)}
+        </Badge>
+      );
+  }
 };
 
 /**
@@ -95,15 +114,19 @@ export const SessionWindowNote = ({
     case "live":
       return (
         <p className="text-center text-xs text-muted-foreground">
-          On time until {time(w.lateFrom)}, then marks are recorded late.
-          Check-in closes {time(w.closesAt)}.
+          On time for another{" "}
+          <span className="font-medium tabular-nums text-foreground">
+            {countdown(w.msUntilLate ?? 0)}
+          </span>{" "}
+          until {time(w.lateFrom)}, then marks are recorded late. Check-in
+          closes {time(w.closesAt)}.
         </p>
       );
     case "live_late":
       return (
         <p className="text-center text-xs text-warning">
           Past {time(w.lateFrom)} — anyone checking in now is recorded late.
-          Closes {time(w.closesAt)}.
+          Check-in closes {time(w.closesAt)}.
         </p>
       );
     case "expired":

@@ -424,6 +424,45 @@ eq(
   "done",
 );
 
+// The countdown a TA actually watches is the one to the close, not to the next
+// phase change. Mid-session the next change is the late threshold, so a badge
+// driven by msUntilChange counted down to "late" and then restarted from a
+// bigger number — the clock appearing to run backwards.
+const midway = sessionWindow(early, at("09:05"));
+eq(
+  "mid-session, the close is ten minutes off",
+  midway.msUntilClose,
+  10 * 60 * 1000,
+);
+eq(
+  "while the late threshold is only five",
+  midway.msUntilLate,
+  5 * 60 * 1000,
+);
+ok(
+  "so the two are not the same number",
+  midway.msUntilClose !== midway.msUntilLate,
+);
+
+const pastLate = sessionWindow(early, at("09:12"));
+eq(
+  "once late, the close countdown keeps running",
+  pastLate.msUntilClose,
+  3 * 60 * 1000,
+);
+eq("and there is no late threshold left to reach", pastLate.msUntilLate, null);
+
+eq(
+  "an expired window has nothing left to count",
+  sessionWindow(early, at("11:00")).msUntilClose,
+  0,
+);
+eq(
+  "and an unopened one has no close to count to",
+  sessionWindow(unopened, at("08:50")).msUntilClose,
+  null,
+);
+
 eq("countdown reads in minutes and seconds", countdown(125_000), "2m 05s");
 eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
 eq("and says now at zero", countdown(0), "now");
