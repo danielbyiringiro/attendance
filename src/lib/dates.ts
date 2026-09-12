@@ -48,3 +48,27 @@ export const mondayOf = (d: Date): Date => {
 /** Monday of the week containing a YYYY-MM-DD, as YYYY-MM-DD. */
 export const weekKeyOf = (dateStr: string): string =>
   toDateStr(mondayOf(fromDateStr(dateStr)));
+
+/**
+ * Six weeks of days covering a month, starting on the Monday on or before the
+ * first — the shape a month grid needs.
+ *
+ * Always 42 days, never "as many weeks as this month needs". A grid that
+ * changes height between months makes the whole page jump every time you press
+ * next, and six weeks covers every case: the worst is a 31-day month beginning
+ * on a Sunday, which spans exactly six.
+ *
+ * Built with addDays, which steps through setDate and so follows local
+ * daylight-saving changes rather than adding fixed 24-hour blocks. Adding
+ * 86400000 milliseconds a day lands an hour out either side of a DST boundary
+ * and eventually names the wrong date.
+ *
+ * `month` is 0-based, matching Date.
+ */
+export const monthGrid = (year: number, month: number): Date[] => {
+  const first = new Date(year, month, 1);
+  // getDay is 0 on Sunday; this grid runs Monday to Sunday.
+  const offset = (first.getDay() + 6) % 7;
+  const start = addDays(first, -offset);
+  return Array.from({ length: 42 }, (_, i) => addDays(start, i));
+};

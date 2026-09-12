@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CalendarDays, List, Loader2 } from "lucide-react";
 import { useActiveClass } from "@/lib/classContext";
 import SessionList from "@/components/ta/SessionList";
 import NoClassDays from "@/components/ta/NoClassDays";
+import SessionCalendar from "@/components/ta/SessionCalendar";
 
 /**
  * The sessions of the active class — open one, close it, move it, cancel it.
@@ -13,6 +16,16 @@ import NoClassDays from "@/components/ta/NoClassDays";
  */
 const Sessions = () => {
   const { activeClass, cohorts, isLoading } = useActiveClass();
+  /*
+   * Both views, chosen rather than replaced.
+   *
+   * The list answers "what is next and what do I press", which is the daily
+   * question and the one with the buttons on it. The month answers "what does
+   * this term look like", which the list can only show a screenful at a time
+   * and the pattern editor cannot show at all. Neither is a better version of
+   * the other.
+   */
+  const [view, setView] = useState<"list" | "month">("list");
 
   if (isLoading) {
     return (
@@ -39,12 +52,39 @@ const Sessions = () => {
   return (
     <div className="space-y-6">
       <Card className="border-2">
-        <CardContent className="pt-6">
-          <SessionList
-            classId={activeClass.id}
-            cohorts={cohorts}
-            timezone={activeClass.timezone}
-          />
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant={view === "list" ? "secondary" : "ghost"}
+              onClick={() => setView("list")}
+            >
+              <List className="mr-1 h-4 w-4" />
+              List
+            </Button>
+            <Button
+              size="sm"
+              variant={view === "month" ? "secondary" : "ghost"}
+              onClick={() => setView("month")}
+            >
+              <CalendarDays className="mr-1 h-4 w-4" />
+              Month
+            </Button>
+          </div>
+
+          {view === "list" ? (
+            <SessionList
+              classId={activeClass.id}
+              cohorts={cohorts}
+              timezone={activeClass.timezone}
+            />
+          ) : (
+            <SessionCalendar
+              classId={activeClass.id}
+              cohorts={cohorts}
+              timezone={activeClass.timezone}
+            />
+          )}
         </CardContent>
       </Card>
 
