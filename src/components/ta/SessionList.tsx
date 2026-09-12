@@ -35,12 +35,15 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  cancelSession,
-  createAdHocSession,
+  createAdHocSessions,
+  describeAdd,
   listSessions,
-  updateSession,
+  untilFor,
+  type AddScope,
 } from "@/lib/api/sessions";
 import SessionActions from "@/components/ta/SessionActions";
+import SessionEditDialog from "@/components/ta/dialogs/SessionEditDialog";
+import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
 import { markAllPresent } from "@/lib/api/attendance";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
@@ -51,6 +54,8 @@ interface SessionListProps {
   cohorts: CohortRow[];
   /** The class's own timezone, so times read as the room saw them. */
   timezone: string;
+  /** Caps "for the rest of term" at the class's own end date. */
+  termEndsOn: string;
   /** Bump to force a reload — a schedule change elsewhere. */
   refreshToken?: number;
 }
@@ -103,6 +108,7 @@ const SessionList = ({
   classId,
   cohorts,
   timezone,
+  termEndsOn,
   refreshToken = 0,
 }: SessionListProps) => {
   const { toast } = useToast();
@@ -113,7 +119,6 @@ const SessionList = ({
   const [cohortFilter, setCohortFilter] = useState<string>("all");
 
   const [cancelling, setCancelling] = useState<SessionRow | null>(null);
-  const [reason, setReason] = useState("");
   const [editing, setEditing] = useState<SessionRow | null>(null);
   /*
    * A one-off date, outside the weekly pattern.
@@ -128,11 +133,19 @@ const SessionList = ({
   const [addDate, setAddDate] = useState("");
   const [addTime, setAddTime] = useState("09:00");
   const [addDuration, setAddDuration] = useState("");
+  /*
+   * How far the new session repeats.
+   *
+   * "day" is one date. "range" and "term" repeat weekly on that weekday, which
+   * is what a TA means by picking a Tuesday and saying "to the end of term" —
+   * a daily reading would quietly create sixty sessions.
+   *
+   * These stay instances rather than becoming a rule: the Schedule editor owns
+   * the weekly pattern, and anything added here is immune to it.
+   */
+  const [addScope, setAddScope] = useState<AddScope>("day");
+  const [addUntil, setAddUntil] = useState("");
 
-  const [editDate, setEditDate] = useState("");
-  const [editTime, setEditTime] = useState("");
-  const [editDuration, setEditDuration] = useState("");
-  const [editSignup, setEditSignup] = useState("");
   const [markingAll, setMarkingAll] = useState<SessionRow | null>(null);
   const [overwriteAll, setOverwriteAll] = useState(false);
 
@@ -192,45 +205,6 @@ const SessionList = ({
 
   const openCount = sessions.filter((s) => s.status === "open").length;
 
-  const startEditing = (s: SessionRow) => {
-    setEditing(s);
-    setEditDate(s.session_date);
-    // Read back in the class's timezone, because that is the clock the server
-    // resolves the value against when it is sent. Formatting in the viewer's
-    // zone would show a TA abroad a time the room never met at, and saving it
-    // unchanged would then move the session.
-    setEditTime(timeIn(s.starts_at, timezone, false));
-    setEditDuration(String(s.duration_minutes));
-    setEditSignup(String(s.auto_close_minutes));
-  };
-
-  const handleEdit = async () => {
-    if (!editing) return;
-    setBusyId(editing.id);
-    try {
-      await updateSession(editing.id, {
-        date: editDate || undefined,
-        startTime: editTime || undefined,
-        durationMinutes: editDuration ? Number(editDuration) : undefined,
-        autoCloseMinutes: editSignup ? Number(editSignup) : undefined,
-      });
-      toast({
-        title: "Session moved",
-        description: "Only this one session changed.",
-      });
-      setEditing(null);
-      await load();
-    } catch (e) {
-      toast({
-        title: "Could not change the session",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   // The register went round on paper, or the PIN never went up.
   const handleMarkAll = async () => {
     if (!markingAll) return;
@@ -275,50 +249,20 @@ const SessionList = ({
 
     setBusyId("adding");
     try {
-      const result = await createAdHocSession(
-        addCohort,
-        addDate,
-        addTime,
-        addDuration.trim() ? Number(addDuration) : undefined,
-      );
+      const result = await createAdHocSessions(addCohort, addDate, addTime, {
+        to: untilFor(addScope, addDate, addUntil, termEndsOn),
+        durationMinutes: addDuration.trim() ? Number(addDuration) : undefined,
+      });
 
       toast({
-        title: "Session added",
-        description: result.outside_term
-          ? `Cohort ${result.cohort} on ${dateOf(result.session_date)}. This is outside the term, so it will not appear in term-wide figures.`
-          : `Cohort ${result.cohort} on ${dateOf(result.session_date)}. A schedule change will not move or remove it.`,
+        title: result.created === 1 ? "Session added" : "Sessions added",
+        description: describeAdd(result),
       });
       setAdding(false);
       await load();
     } catch (e) {
       toast({
         title: "Could not add the session",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const handleCancel = async () => {
-    if (!cancelling) return;
-    setBusyId(cancelling.id);
-    try {
-      const removed = await cancelSession(cancelling.id, reason.trim() || undefined);
-      toast({
-        title: "Class cancelled",
-        description:
-          removed === 0
-            ? "Nothing was recorded against it. Only this cohort's session was affected."
-            : `${removed} attendance record${removed === 1 ? "" : "s"} removed, check-ins included — a class that did not happen has no attendance. Only this cohort's session was affected.`,
-      });
-      setCancelling(null);
-      setReason("");
-      await load();
-    } catch (e) {
-      toast({
-        title: "Could not cancel",
         description: e instanceof Error ? e.message : "Unexpected error.",
         variant: "destructive",
       });
@@ -383,6 +327,8 @@ const SessionList = ({
               setAddDate(todayStr());
               setAddTime("09:00");
               setAddDuration("");
+              setAddScope("day");
+              setAddUntil("");
             }}
           >
             <CalendarPlus className="mr-1 h-4 w-4" />
@@ -492,7 +438,7 @@ const SessionList = ({
                     variant="ghost"
                     title="Change the day or time"
                     disabled={busyId === s.id}
-                    onClick={() => startEditing(s)}
+                    onClick={() => setEditing(s)}
                   >
                     <PencilLine className="h-4 w-4" />
                   </Button>
@@ -517,10 +463,7 @@ const SessionList = ({
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-destructive"
-                        onClick={() => {
-                          setCancelling(s);
-                          setReason("");
-                        }}
+                        onClick={() => setCancelling(s)}
                       >
                         <Ban className="mr-2 h-4 w-4" />
                         Cancel class…
@@ -584,6 +527,51 @@ const SessionList = ({
                   onChange={(e) => setAddTime(e.target.value)}
                 />
               </div>
+            </div>
+
+            {/*
+              How far it repeats. Three named choices rather than a date field
+              that might be blank: "to the end of term" is the common case and
+              reading it off the class saves the TA finding the date.
+            */}
+            <div className="space-y-2">
+              <Label>Repeat</Label>
+              <div className="grid gap-1">
+                {(
+                  [
+                    ["day", "Just this date"],
+                    ["range", "Weekly, until a date I choose"],
+                    ["term", "Weekly, to the end of term"],
+                  ] as Array<[AddScope, string]>
+                ).map(([value, text]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setAddScope(value)}
+                    className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                      addScope === value
+                        ? "border-primary bg-primary/5"
+                        : "hover:border-primary/40"
+                    }`}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+              {addScope === "range" && (
+                <Input
+                  type="date"
+                  value={addUntil}
+                  min={addDate}
+                  onChange={(e) => setAddUntil(e.target.value)}
+                />
+              )}
+              {addScope !== "day" && (
+                <p className="text-xs text-muted-foreground">
+                  Repeats weekly on the same weekday, not every day. Dates
+                  already taken, or declared off, are skipped and reported.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -692,137 +680,23 @@ const SessionList = ({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Move this session</DialogTitle>
-            <DialogDescription>
-              {editing && (
-                <>
-                  {dateOf(editing.session_date)}, cohort{" "}
-                  {cohortLabel.get(editing.cohort_id)}. Changes this session only
-                  — the weekly pattern is left alone.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
+      <SessionEditDialog
+        session={editing}
+        timezone={timezone}
+        cohortLabel={editing ? (cohortLabel.get(editing.cohort_id) ?? "?") : ""}
+        onClose={() => setEditing(null)}
+        onSaved={load}
+      />
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 py-2">
-            <div className="space-y-1">
-              <Label htmlFor="edit-date">Date</Label>
-              <Input
-                id="edit-date"
-                type="date"
-                value={editDate}
-                onChange={(e) => setEditDate(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="edit-time">Start</Label>
-              <Input
-                id="edit-time"
-                type="time"
-                value={editTime}
-                onChange={(e) => setEditTime(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="edit-duration">Class runs (min)</Label>
-              <Input
-                id="edit-duration"
-                type="number"
-                min={1}
-                value={editDuration}
-                onChange={(e) => setEditDuration(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="edit-signup">Sign-up open (min)</Label>
-              <Input
-                id="edit-signup"
-                type="number"
-                min={1}
-                value={editSignup}
-                onChange={(e) => setEditSignup(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                How long check-in stays open once you open it.
-              </p>
-            </div>
-          </div>
+      <SessionCancelDialog
+        session={cancelling}
+        cohortLabel={
+          cancelling ? (cohortLabel.get(cancelling.cohort_id) ?? "?") : ""
+        }
+        onClose={() => setCancelling(null)}
+        onCancelled={load}
+      />
 
-          <p className="text-xs text-muted-foreground">
-            A session that has already run cannot be moved: attendance is
-            recorded against it, and moving it would put those marks on a
-            different day.
-          </p>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>
-              Cancel
-            </Button>
-            <Button onClick={handleEdit} disabled={busyId !== null}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={cancelling !== null}
-        onOpenChange={(o) => !o && setCancelling(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Cancel this class</DialogTitle>
-            <DialogDescription>
-              {cancelling && (
-                <>
-                  {dateOf(cancelling.session_date)}, cohort{" "}
-                  {cohortLabel.get(cancelling.cohort_id)}. Only this cohort is
-                  affected — every other cohort keeps its session that day.
-                  {" "}
-                  <strong className="text-foreground">
-                    Every attendance record against it is deleted, including
-                    anyone who already checked in.
-                  </strong>{" "}
-                  A class that did not happen has no attendance, and
-                  uncancelling does not bring the check-ins back.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2 py-2">
-            <Label htmlFor="cancel-reason">Reason (optional)</Label>
-            <Input
-              id="cancel-reason"
-              value={reason}
-              placeholder="Public holiday"
-              onChange={(e) => setReason(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Absences already recorded for this session are removed, so a class
-              that did not run cannot count against anyone. Anyone who marked
-              before it was called off keeps their record.
-            </p>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelling(null)}>
-              Keep it
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleCancel}
-              disabled={busyId !== null}
-            >
-              <Ban className="mr-2 h-4 w-4" />
-              Cancel the class
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

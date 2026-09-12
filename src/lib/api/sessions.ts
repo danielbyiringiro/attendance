@@ -158,48 +158,125 @@ export const closeSession = async (sessionId: string): Promise<number> => {
  * percentage down, and keeps the records of anyone who marked before it was
  * called off. Returns how many absences were removed.
  */
-/**
- * One session on one date, outside the weekly pattern.
- *
- * A catch-up class, a lecture moved to a Saturday, an extra lab. Until
- * migration 035 every session in the database came from generate_sessions or
- * apply_schedule_to_future, so there was no way to record one.
- *
- * The session is flagged `moved_manually`, which is what makes it stick: the
- * pattern does not want that day, and step 2 of apply_schedule_to_future
- * deletes exactly the sessions the pattern does not want. Flagged ones are
- * skipped, so a later schedule change neither moves it nor removes it.
- *
- * Not bound to the term. A make-up class in the week after teaching ends is a
- * normal reason to want one, so `outside_term` comes back as a fact for the
- * screen to mention rather than a reason to refuse.
- */
-export const createAdHocSession = async (
-  cohortId: string,
-  date: string,
-  startTime: string,
-  durationMinutes?: number,
-): Promise<{
-  session_id: string;
-  starts_at: string;
-  session_date: string;
+/** How far a hand-added session should repeat. */
+export type AddScope =
+  /** That date only. */
+  | "day"
+  /** Weekly on that weekday, up to a date you choose. */
+  | "range"
+  /** Weekly on that weekday, to the end of term. */
+  | "term";
+
+export interface AddSessionsResult {
+  /** The first one created, or null if everything was skipped. */
+  session_id: string | null;
   cohort: string;
+  from: string;
+  to: string;
+  weekday: string;
+  /** Dates considered. */
+  candidates: number;
+  created: number;
+  /** Skipped because the date is declared off. */
+  skipped_days_off: number;
+  /** Skipped because this cohort already meets at that time. */
+  skipped_existing: number;
   outside_term: boolean;
-}> => {
-  const { data, error } = await supabase.rpc("create_ad_hoc_session", {
+}
+
+/**
+ * Sessions on one date, or weekly on that weekday through to an end date.
+ *
+ * Until migration 035 there was no way to record a session outside the weekly
+ * pattern at all; 039 added the end date, because wanting the same slot every
+ * Tuesday for the rest of term otherwise meant opening the dialog eleven times.
+ *
+ * Weekly on the weekday of `from`, never daily. A TA picking Tuesday and "to
+ * the end of term" means Tuesdays, and a daily reading would quietly create
+ * sixty sessions.
+ *
+ * INSTANCES, NOT A RULE. Everything it creates is flagged `moved_manually` with
+ * no schedule_id, which is the line between the two screens: the Schedule
+ * editor owns the weekly rule and every future session follows it, while the
+ * calendar owns instances that a later pattern change will not touch. Somebody
+ * who wants a managed weekly slot should add it to the pattern instead.
+ *
+ * Two things reduce the count and both are correct: a declared day off, and a
+ * date where the cohort already meets at that time. They come back counted
+ * separately, because "created 9 of 11" without a reason reads as a bug.
+ */
+export const createAdHocSessions = async (
+  cohortId: string,
+  from: string,
+  startTime: string,
+  opts: { to?: string; durationMinutes?: number } = {},
+): Promise<AddSessionsResult> => {
+  const { data, error } = await supabase.rpc("create_ad_hoc_sessions", {
     p_cohort_id: cohortId,
-    p_date: date,
+    p_from: from,
     p_start_time: startTime,
-    p_duration_minutes: durationMinutes ?? null,
+    p_to: opts.to ?? null,
+    p_duration_minutes: opts.durationMinutes ?? null,
   });
-  if (error) fail("Could not add the session", error);
-  return data as {
-    session_id: string;
-    starts_at: string;
-    session_date: string;
-    cohort: string;
-    outside_term: boolean;
-  };
+  if (error) fail("Could not add the sessions", error);
+  return data as AddSessionsResult;
+};
+
+/**
+ * The end date a scope implies, or undefined for a single day.
+ *
+ * Shared so both screens agree. "term" is capped at the class's own end date
+ * rather than a guess, and a range with no date chosen falls back to the single
+ * day rather than silently running to the end of term — the safer of the two
+ * wrong answers, since one extra session is easier to undo than eleven.
+ */
+export const untilFor = (
+  scope: AddScope,
+  from: string,
+  until: string,
+  termEndsOn: string,
+): string | undefined => {
+  if (scope === "day") return undefined;
+  if (scope === "term") return termEndsOn;
+  return until.trim() ? until : undefined;
+};
+
+/**
+ * One sentence describing what an add actually did.
+ *
+ * Shared because both screens offer this and both need to explain the same
+ * three-way outcome: some created, some skipped because the day is off, some
+ * skipped because the cohort already meets then. Two copies of this wording is
+ * two chances to describe the same result differently.
+ */
+export const describeAdd = (r: AddSessionsResult): string => {
+  const bits: string[] = [];
+
+  if (r.created > 0) {
+    bits.push(
+      r.candidates === 1
+        ? `Cohort ${r.cohort}.`
+        : `${r.created} session${r.created === 1 ? "" : "s"} for cohort ${r.cohort}, weekly on ${r.weekday.trim()}s.`,
+    );
+  }
+  if (r.skipped_days_off > 0) {
+    bits.push(
+      `${r.skipped_days_off} skipped as ${r.skipped_days_off === 1 ? "a day" : "days"} off.`,
+    );
+  }
+  if (r.skipped_existing > 0) {
+    bits.push(
+      `${r.skipped_existing} skipped — already a session at that time.`,
+    );
+  }
+  if (r.outside_term) {
+    bits.push("Some fall outside the term, so they will not appear in term-wide figures.");
+  }
+  if (r.created > 0) {
+    bits.push("A schedule change will not move or remove them.");
+  }
+
+  return bits.join(" ");
 };
 
 /** What a no-class day does to the percentage. Two actions, not a toggle. */

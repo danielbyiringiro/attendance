@@ -594,4 +594,87 @@ ok(
   sessionWasHeld(heldLog, "nope") === false,
 );
 
+
+// ---------------------------------------------------------------------------
+// monthGrid — the shape behind the month view
+//
+// Month boundaries are where date code goes wrong, so this is pinned rather
+// than eyeballed. The cases are the ones that break a naive implementation: a
+// month starting on a Monday (offset zero), one starting on a Sunday (the
+// widest case), February in a leap year, and a December that has to roll the
+// year forward.
+// ---------------------------------------------------------------------------
+
+const gridOut = join(mkdtempSync(join(tmpdir(), "dates-")), "dates.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/dates.ts")],
+  outfile: gridOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { monthGrid, toDateStr } = await import(pathToFileURL(gridOut).href);
+
+console.log("\nmonthGrid");
+
+const iso = (year, month) => monthGrid(year, month).map(toDateStr);
+
+// Always six weeks. A grid that changes height makes the page jump on every
+// press of "next".
+ok(
+  "always 42 days, whatever the month",
+  [
+    iso(2026, 0),
+    iso(2026, 1),
+    iso(2026, 10),
+    iso(2024, 1),
+  ].every((g) => g.length === 42),
+);
+
+ok(
+  "always starts on a Monday",
+  [iso(2026, 0), iso(2026, 5), iso(2026, 10)].every(
+    (g) => new Date(`${g[0]}T00:00:00`).getDay() === 1,
+  ),
+);
+
+// June 2026 begins on a Monday, so there is no leading spill at all.
+eq("a month starting on Monday starts there", iso(2026, 5)[0], "2026-06-01");
+
+// November 2026 begins on a Sunday — the widest case, six days of spill.
+eq("a month starting on Sunday spills six days", iso(2026, 10)[0], "2026-10-26");
+
+// The whole month has to be inside the grid, or days silently vanish.
+const march = iso(2026, 2);
+ok(
+  "every day of the month is in the grid",
+  march.includes("2026-03-01") && march.includes("2026-03-31"),
+);
+
+// Leap year, and the day after it.
+const feb2024 = iso(2024, 1);
+ok("a leap day is present", feb2024.includes("2024-02-29"));
+
+// December has to roll the year.
+const dec = iso(2026, 11);
+ok(
+  "December reaches into January",
+  dec.some((d) => d.startsWith("2027-01")),
+);
+
+// Consecutive, with no repeats or gaps. This is what a fixed 86400000ms step
+// gets wrong either side of a daylight-saving change.
+const consecutive = iso(2026, 9);
+ok(
+  "the 42 days are consecutive and distinct",
+  new Set(consecutive).size === 42 &&
+    consecutive.every((d, i) => {
+      if (i === 0) return true;
+      const prev = new Date(`${consecutive[i - 1]}T00:00:00`);
+      prev.setDate(prev.getDate() + 1);
+      return toDateStr(prev) === d;
+    }),
+);
+
 if (failures > 0) process.exit(1);
