@@ -67,15 +67,28 @@ BEGIN
   v_result := public.set_no_class_day(
     t.class_id, t.holiday, 'exempt', 'Public holiday');
 
-  -- Both cohorts, because the declaration was class-wide.
-  IF (v_result ->> 'sessions')::integer <> 2 THEN
+  -- Cohort A's session had a check-in, so it is kept and marked. Cohort B's
+  -- had nothing at all, so 037 removes it rather than leaving a closed session
+  -- with a full register of exemptions on a date in the future.
+  IF (v_result ->> 'sessions')::integer <> 1 THEN
     RAISE EXCEPTION
-      '036: a class-wide holiday touched % session(s), expected both cohorts',
+      '036: kept % session(s), expected the one that had a check-in against it',
       v_result ->> 'sessions';
   END IF;
 
+  IF (v_result ->> 'removed')::integer <> 1 THEN
+    RAISE EXCEPTION
+      '037: removed % session(s), expected the untouched one — a placeholder on a holiday should simply not exist',
+      v_result ->> 'removed';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.class_sessions WHERE id = v_b) THEN
+    RAISE EXCEPTION
+      '037: a scheduled session with nothing recorded against it survived a holiday';
+  END IF;
+
   SELECT array_agg(DISTINCT state::text) INTO v_states
-  FROM public.attendance_records WHERE session_id IN (v_a, v_b);
+  FROM public.attendance_records WHERE session_id = v_a;
 
   IF v_states <> ARRAY['exempted'] THEN
     RAISE EXCEPTION
@@ -88,7 +101,7 @@ BEGIN
     RAISE EXCEPTION '036: the session was left % rather than closed', v_status;
   END IF;
 
-  RAISE NOTICE '036 ok: exempt covered both cohorts and replaced the register';
+  RAISE NOTICE '036 ok: the marked session was exempted, the untouched one removed';
 END;
 $exempt$;
 
@@ -176,6 +189,15 @@ BEGIN
     RAISE EXCEPTION
       '036: a present day stored %, expected present for everyone',
       array_to_string(v_states, ', ');
+  END IF;
+
+  -- The session must NOT have been deleted. 037 removes empty placeholders on
+  -- a holiday, and under 'present' that would be exactly wrong: the session is
+  -- what carries the credit, so removing it leaves a day that helps nobody.
+  IF (v_result ->> 'removed')::integer <> 0 THEN
+    RAISE EXCEPTION
+      '037: a present day deleted % session(s) — there is then nothing to credit',
+      v_result ->> 'removed';
   END IF;
 
   -- Two students enrolled in that cohort, so two rows. A mode that credited

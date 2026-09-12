@@ -230,7 +230,22 @@ export const setNoClassDay = async (
   mode: NoClassMode,
   reason: string,
   cohortId?: string,
-): Promise<{ date: string; mode: NoClassMode; sessions: number; students: number }> => {
+): Promise<{
+  date: string;
+  mode: NoClassMode;
+  /** Kept and marked, because something had already happened at them. */
+  sessions: number;
+  /**
+   * Deleted, because nothing had. Only ever under `exempt`: under `present` the
+   * session is what carries the credit, so removing it would leave the day
+   * meaning nothing.
+   *
+   * These do not come back when the day is cleared. They come back from
+   * generate_sessions, which is re-runnable once the date is released.
+   */
+  removed: number;
+  students: number;
+}> => {
   const { data, error } = await supabase.rpc("set_no_class_day", {
     p_class_id: classId,
     p_date: date,
@@ -243,6 +258,7 @@ export const setNoClassDay = async (
     date: string;
     mode: NoClassMode;
     sessions: number;
+    removed: number;
     students: number;
   };
 };

@@ -115,12 +115,26 @@ const NoClassDays = ({
         reason.trim(),
         scope === "all" ? undefined : scope,
       );
+      // Three outcomes worth telling apart, because "nothing happened" and
+      // "four empty sessions were removed" look identical otherwise.
+      const parts: string[] = [];
+      if (result.removed > 0) {
+        parts.push(
+          `${result.removed} empty session${result.removed === 1 ? "" : "s"} removed`,
+        );
+      }
+      if (result.sessions > 0) {
+        parts.push(
+          `${result.sessions} session${result.sessions === 1 ? "" : "s"} marked, ${result.students} student record${result.students === 1 ? "" : "s"}`,
+        );
+      }
+
       toast({
         title: mode === "exempt" ? "Day off recorded" : "Day credited",
         description:
-          result.sessions === 0
-            ? "No sessions existed on that date, and none will be created there now."
-            : `${result.sessions} session${result.sessions === 1 ? "" : "s"}, ${result.students} student record${result.students === 1 ? "" : "s"}.`,
+          parts.length === 0
+            ? "Nothing was scheduled on that date, and nothing will be created there now."
+            : `${parts.join(". ")}. Regenerating will not put the day back.`,
       });
       setAdding(false);
       setReason("");
