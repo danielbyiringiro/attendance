@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import { listNoClassDays, listSessions } from "@/lib/api/sessions";
+import {
+  listNoClassDays,
+  listSessions,
+  type NoClassMode,
+} from "@/lib/api/sessions";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
 import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
 import CalendarDayDialog, {
@@ -34,12 +38,73 @@ import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-/** Colour by what the day actually is, not by a palette. */
-const STATUS_DOT: Record<SessionStatus, string> = {
-  scheduled: "bg-muted-foreground/40",
-  open: "bg-success",
-  closed: "bg-primary/60",
-  cancelled: "bg-destructive/60",
+/**
+ * What kind of day this is. The whole cell is styled from it, rather than a dot
+ * in a corner.
+ *
+ * A month grid is read by scanning, and a 6px dot does not survive scanning.
+ * The first version differed only by a dot and a faint tint, so a cancelled day,
+ * a holiday and an ordinary one were all the same pale square. Each kind now
+ * changes the cell ground, which makes the shape of the month legible before any
+ * text is.
+ */
+type DayKind =
+  /** Declared off, does not count. */
+  | "holiday"
+  /** Declared, and credited to everybody. */
+  | "credited"
+  /** Something is running right now. */
+  | "live"
+  /** Every session that day was called off. */
+  | "cancelled"
+  /** Sessions that have been and gone. */
+  | "done"
+  /** Sessions still to come. */
+  | "upcoming"
+  /** Nothing scheduled. */
+  | "empty";
+
+/**
+ * Diagonal hatching for a day the class does not meet.
+ *
+ * A texture rather than a seventh tint, because tints are how the other kinds
+ * are told apart and one more would be indistinguishable. Hatching reads as
+ * struck out at any size, including the small cell a phone gets.
+ */
+const HATCH: CSSProperties = {
+  backgroundImage:
+    "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.14) 0 3px, transparent 3px 8px)",
+};
+
+const KIND_CELL: Record<DayKind, string> = {
+  holiday: "bg-muted/60",
+  credited: "bg-primary/10",
+  live: "bg-success/15 ring-1 ring-inset ring-success/50",
+  cancelled: "bg-destructive/5",
+  done: "bg-card",
+  upcoming: "bg-card",
+  empty: "bg-card",
+};
+
+const kindOf = (
+  sessions: SessionRow[],
+  off: { mode: NoClassMode } | null | undefined,
+  today: string,
+  date: string,
+): DayKind => {
+  if (off) return off.mode === "exempt" ? "holiday" : "credited";
+  if (sessions.length === 0) return "empty";
+  if (sessions.some((s) => s.status === "open")) return "live";
+  if (sessions.every((s) => s.status === "cancelled")) return "cancelled";
+  return date < today ? "done" : "upcoming";
+};
+
+/** How one session reads inside a cell. */
+const CHIP: Record<SessionStatus, string> = {
+  scheduled: "bg-muted text-foreground/80",
+  open: "bg-success text-success-foreground font-medium",
+  closed: "bg-primary/15 text-foreground/70",
+  cancelled: "bg-destructive/10 text-destructive line-through",
 };
 
 const SessionCalendar = ({
@@ -193,54 +258,73 @@ const SessionCalendar = ({
           const off = offByDate.get(key);
           const onDay = byDate.get(key) ?? [];
 
+          const kind = kindOf(onDay, off, today, key);
+          // Three at most. A cell listing six sessions in 4px type is not
+          // showing you six sessions.
+          const shown = onDay.slice(0, 3);
+          const hidden = onDay.length - shown.length;
+
           return (
             <button
               type="button"
               key={key}
               onClick={() => setOpenDay(key)}
-              className={`min-h-[4.5rem] cursor-pointer bg-card p-1 text-left transition-colors hover:bg-muted/60 sm:min-h-[6rem] ${
-                inMonth ? "" : "opacity-40"
-              } ${off ? "bg-muted/40" : ""}`}
+              style={kind === "holiday" ? HATCH : undefined}
+              className={`min-h-[4.5rem] cursor-pointer p-1 text-left transition-colors hover:brightness-95 sm:min-h-[6rem] ${
+                KIND_CELL[kind]
+              } ${inMonth ? "" : "opacity-40"} ${
+                isToday ? "ring-2 ring-inset ring-primary" : ""
+              }`}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-baseline justify-between gap-1">
                 <span
                   className={`text-xs tabular-nums ${
                     isToday
-                      ? "rounded bg-primary px-1.5 py-0.5 font-semibold text-primary-foreground"
-                      : "text-muted-foreground"
+                      ? "font-bold text-primary"
+                      : kind === "empty"
+                        ? "text-muted-foreground/60"
+                        : "font-medium text-foreground"
                   }`}
                 >
                   {d.getDate()}
                 </span>
+                {/* The count, so a dense day still reads as dense where the
+                    chips below are cut off. */}
+                {onDay.length > 1 && (
+                  <span className="text-[0.6rem] tabular-nums text-muted-foreground">
+                    {onDay.length}
+                  </span>
+                )}
               </div>
 
               {off && (
                 <p
-                  className="mt-0.5 truncate text-[0.65rem] leading-tight text-muted-foreground"
+                  className={`mt-0.5 truncate text-[0.65rem] font-medium leading-tight ${
+                    off.mode === "exempt"
+                      ? "text-muted-foreground"
+                      : "text-primary"
+                  }`}
                   title={off.reason}
                 >
-                  {off.mode === "exempt" ? "No class" : "Counted"} · {off.reason}
+                  {off.mode === "exempt" ? "No class" : "Counted"}
                 </p>
               )}
 
               <div className="mt-0.5 space-y-0.5">
-                {onDay.map((s) => (
+                {shown.map((s) => (
                   <div
                     key={s.id}
-                    className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-[0.65rem] leading-tight hover:bg-muted"
+                    className={`truncate rounded px-1 py-px text-[0.65rem] leading-tight ${CHIP[s.status]}`}
                     title={`Cohort ${cohortLabel.get(s.cohort_id) ?? "?"} · ${timeOf(s.starts_at)} · ${s.status}`}
                   >
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[s.status]}`}
-                    />
-                    <span className="truncate">
-                      {cohortLabel.get(s.cohort_id) ?? "?"}{" "}
-                      <span className="text-muted-foreground">
-                        {timeOf(s.starts_at)}
-                      </span>
-                    </span>
+                    {cohortLabel.get(s.cohort_id) ?? "?"} {timeOf(s.starts_at)}
                   </div>
                 ))}
+                {hidden > 0 && (
+                  <p className="px-1 text-[0.6rem] text-muted-foreground">
+                    +{hidden} more
+                  </p>
+                )}
               </div>
             </button>
           );
@@ -284,23 +368,30 @@ const SessionCalendar = ({
         onCancelled={load}
       />
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+      {/*
+        The legend shows the actual cell treatments, not a parallel set of dots.
+        A key that does not look like the thing it explains is one more thing to
+        decode.
+      */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
         {(
           [
-            ["scheduled", "Scheduled"],
-            ["open", "Open"],
-            ["closed", "Closed"],
+            ["upcoming", "Scheduled"],
+            ["live", "Open now"],
+            ["done", "Been and gone"],
             ["cancelled", "Cancelled"],
-          ] as Array<[SessionStatus, string]>
-        ).map(([status, label]) => (
-          <span key={status} className="flex items-center gap-1">
-            <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
+            ["holiday", "No class"],
+            ["credited", "Counted"],
+          ] as Array<[DayKind, string]>
+        ).map(([kind, label]) => (
+          <span key={kind} className="flex items-center gap-1.5">
+            <span
+              style={kind === "holiday" ? HATCH : undefined}
+              className={`h-4 w-6 shrink-0 rounded border ${KIND_CELL[kind]}`}
+            />
             {label}
           </span>
         ))}
-        <Badge variant="outline" className="text-[0.65rem]">
-          shaded = day off
-        </Badge>
       </div>
     </div>
   );
