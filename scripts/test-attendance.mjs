@@ -77,6 +77,7 @@ const {
   stateLabel,
   tallyStates,
   sessionStatesFor,
+  sessionWasHeld,
 } = mod;
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,8 @@ const sessions = [
   { id: "s4", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-12-01", starts_at: "2026-12-01T09:00:00Z", status: "scheduled", cancellation_reason: null },
   // Scheduled and untouched. Must stay out of the log entirely.
   { id: "s5", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-12-08", starts_at: "2026-12-08T09:00:00Z", status: "scheduled", cancellation_reason: null },
+  // A day declared off: closed, with every enrolled student exempted.
+  { id: "s6", class_id: CLASS, cohort_id: "coh-b", session_date: "2026-05-26", starts_at: "2026-05-26T14:00:00Z", status: "closed",    cancellation_reason: null },
   // A different class entirely. Nothing below should ever see it.
   { id: "x1", class_id: "class-2", cohort_id: "coh-z", session_date: "2026-05-19", starts_at: "2026-05-19T09:00:00Z", status: "closed", cancellation_reason: null },
 ];
@@ -109,6 +112,8 @@ const records = [
   // database and then filtered out of every read, so it existed and could not
   // be seen anywhere in the app.
   { session_id: "s4", class_id: CLASS, student_id: "stu-1", state: "present",   marked_at: "2026-11-30T09:00:00Z" },
+  { session_id: "s6", class_id: CLASS, student_id: "stu-5", state: "exempted",  marked_at: null },
+  { session_id: "s6", class_id: CLASS, student_id: "stu-6", state: "exempted",  marked_at: null },
   { session_id: "x1", class_id: "class-2", student_id: "stu-1", state: "unexcused", marked_at: null },
 ];
 
@@ -142,7 +147,7 @@ const log = await attendanceLog(CLASS);
 eq(
   "a scheduled session counts once somebody has marked it",
   log.sessions.map((s) => s.session_id).sort(),
-  ["s1", "s2", "s3", "s4"],
+  ["s1", "s2", "s3", "s4", "s6"],
 );
 
 ok(
@@ -163,7 +168,18 @@ eq("cohort labels are resolved", log.sessionById.get("s3").cohort_label, "B");
 eq(
   "marks exclude the other class, and include a register taken early",
   log.marks.map((m) => `${m.session_id}:${m.student_id}`).sort(),
-  ["s1:stu-1", "s1:stu-2", "s1:stu-3", "s2:stu-1", "s3:stu-4", "s4:stu-1"],
+  [
+    "s1:stu-1",
+    "s1:stu-2",
+    "s1:stu-3",
+    "s2:stu-1",
+    "s3:stu-4",
+    "s4:stu-1",
+    // The declared day off. Its records are real and belong in the log; what
+    // they must not do is make the day look like a session nobody attended.
+    "s6:stu-5",
+    "s6:stu-6",
+  ],
 );
 
 eq(
@@ -539,4 +555,43 @@ eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
 eq("and says now at zero", countdown(0), "now");
 
 console.log(`\n${checks - failures}/${checks} passed`);
+
+// ---------------------------------------------------------------------------
+// sessionWasHeld — a day declared off is not a session nobody attended
+//
+// Migration 036 records a holiday by closing the session and marking every
+// enrolled student exempted, which keeps the date visible as one that formally
+// did not count. Analytics counted "held" as anything not cancelled, so the
+// same screen would say the day did not count AND that attendance was zero.
+// ---------------------------------------------------------------------------
+
+console.log("\nsessionWasHeld");
+
+const heldLog = await attendanceLog(CLASS);
+
+ok(
+  "an ordinary closed session was held",
+  sessionWasHeld(heldLog, "s1") === true,
+);
+ok(
+  "a cancelled one was not",
+  sessionWasHeld(heldLog, "s2") === false,
+);
+ok(
+  "a whole register of exempted means the day did not happen",
+  sessionWasHeld(heldLog, "s6") === false,
+);
+ok(
+  "one exempted student among a normal register changes nothing",
+  sessionWasHeld(heldLog, "s1") === true,
+);
+ok(
+  "a session with no records yet is held — it may just not be closed",
+  sessionWasHeld(heldLog, "s3") === true,
+);
+ok(
+  "an unknown session id is not held rather than throwing",
+  sessionWasHeld(heldLog, "nope") === false,
+);
+
 if (failures > 0) process.exit(1);

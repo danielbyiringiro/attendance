@@ -17,6 +17,7 @@ import {
   attendanceLog,
   isAbsentState,
   isPresentState,
+  sessionWasHeld,
   tallyStates,
   type AttendanceLog,
 } from "@/lib/api/attendance";
@@ -116,7 +117,11 @@ const AnalyticsOverview = ({
     // "held" here means exactly that. Cancelled ones come back labelled and
     // are counted separately: a cancelled Wednesday is not a day anybody
     // missed.
-    const held = log.sessions.filter((s) => s.status !== "cancelled");
+    // Not just "not cancelled". A day declared off (migration 036) is closed
+    // with every student exempted, so it would otherwise read as a session
+    // nobody attended — on the same screen that correctly leaves it out of the
+    // rate. sessionWasHeld is the one place that decides.
+    const held = log.sessions.filter((s) => sessionWasHeld(log, s.session_id));
     const cancelled = log.sessions.length - held.length;
     const heldIds = new Set(held.map((s) => s.session_id));
     const marks = log.marks.filter((m) => heldIds.has(m.session_id));
