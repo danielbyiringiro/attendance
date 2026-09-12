@@ -212,7 +212,7 @@ const AnalyticsOverview = ({
 
             <Input
               type="date"
-              className="h-9 w-[10.5rem]"
+              className="h-9 w-[10.5rem] max-w-[calc(100vw-8rem)]"
               value={scope.date}
               min={termStartsOn}
               max={termEndsOn}

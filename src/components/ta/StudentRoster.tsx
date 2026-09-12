@@ -247,7 +247,7 @@ const StudentRoster = ({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[16rem] flex-1">
+        <div className="relative w-full flex-1 sm:w-auto sm:min-w-[16rem]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             className="pl-8"
