@@ -2,9 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import { listNoClassDays, listSessions, type NoClassMode } from "@/lib/api/sessions";
+import { listNoClassDays, listSessions } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
 import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
+import CalendarDayDialog, {
+  type DayOff,
+} from "@/components/ta/dialogs/CalendarDayDialog";
+import SessionEditDialog from "@/components/ta/dialogs/SessionEditDialog";
+import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
 
 /**
  * A month of sessions.
@@ -14,14 +19,17 @@ import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
  * which is the question the pattern editor cannot show and the list only shows
  * one screenful at a time.
  *
- * DELIBERATELY READ-MOSTLY
+ * EDITABLE BY CLICKING A DAY, NOT BY DRAGGING
  *
- * Nothing here drags. A calendar is instance-shaped and the schedule is
- * pattern-shaped, so dragging a session has two defensible meanings — move this
- * one, or change the pattern from here on — and picking wrong silently rewrites
- * a term. That question is far easier to answer against a view that exists than
- * in the abstract, so this ships without it and clicking a day hands off to the
- * dialogs that already know how to act on a session.
+ * Dragging a session has two defensible meanings — move this one, or change the
+ * pattern from here on — and picking wrong silently rewrites a term. Clicking a
+ * day has no such ambiguity: you get that day, and the actions that apply to it.
+ *
+ * So every day opens a dialog with the sessions on it, their open/close/edit/
+ * cancel actions, and the two things you can add: a session, or a declared day
+ * off. None of that is new behaviour — it is the same components and the same
+ * two RPCs the list and the days-off panel use. The calendar is another way in,
+ * not a second implementation.
  */
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -49,10 +57,14 @@ const SessionCalendar = ({
     return { year: d.getFullYear(), month: d.getMonth() };
   });
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [daysOff, setDaysOff] = useState<
-    Array<{ on_date: string; mode: NoClassMode; reason: string; cohort_id: string | null }>
-  >([]);
+  const [daysOff, setDaysOff] = useState<DayOff[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  // Edit and cancel are rendered here rather than inside the day dialog: a
+  // dialog nested in a dialog traps focus in the wrong one and closes both when
+  // either is dismissed.
+  const [editing, setEditing] = useState<SessionRow | null>(null);
+  const [cancelling, setCancelling] = useState<SessionRow | null>(null);
 
   const days = useMemo(
     () => monthGrid(cursor.year, cursor.month),
@@ -179,9 +191,11 @@ const SessionCalendar = ({
           const onDay = byDate.get(key) ?? [];
 
           return (
-            <div
+            <button
+              type="button"
               key={key}
-              className={`min-h-[4.5rem] bg-card p-1 sm:min-h-[6rem] ${
+              onClick={() => setOpenDay(key)}
+              className={`min-h-[4.5rem] cursor-pointer bg-card p-1 text-left transition-colors hover:bg-muted/60 sm:min-h-[6rem] ${
                 inMonth ? "" : "opacity-40"
               } ${off ? "bg-muted/40" : ""}`}
             >
@@ -225,10 +239,46 @@ const SessionCalendar = ({
                   </div>
                 ))}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      <CalendarDayDialog
+        date={openDay}
+        classId={classId}
+        cohorts={cohorts}
+        sessions={openDay ? (byDate.get(openDay) ?? []) : []}
+        dayOff={openDay ? (offByDate.get(openDay) ?? null) : null}
+        timezone={timezone}
+        onClose={() => setOpenDay(null)}
+        onChanged={load}
+        onEdit={(s) => {
+          setOpenDay(null);
+          setEditing(s);
+        }}
+        onCancelSession={(s) => {
+          setOpenDay(null);
+          setCancelling(s);
+        }}
+      />
+
+      <SessionEditDialog
+        session={editing}
+        timezone={timezone}
+        cohortLabel={editing ? (cohortLabel.get(editing.cohort_id) ?? "?") : ""}
+        onClose={() => setEditing(null)}
+        onSaved={load}
+      />
+
+      <SessionCancelDialog
+        session={cancelling}
+        cohortLabel={
+          cancelling ? (cohortLabel.get(cancelling.cohort_id) ?? "?") : ""
+        }
+        onClose={() => setCancelling(null)}
+        onCancelled={load}
+      />
 
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {(
