@@ -135,6 +135,27 @@
 
   body {
     @apply bg-background text-foreground;
+    /* Nothing scrolls the page sideways.
+     *
+     * A backstop, not a substitute for laying things out properly: the sources
+     * of horizontal overflow are fixed where they are, and this is here because
+     * on a phone one un-shrinkable control anywhere drags the WHOLE page
+     * sideways, and every other screen then looks broken too. The symptom is
+     * global while the cause is local, which makes it miserable to track down
+     * from a screenshot.
+     *
+     * Safe here because nothing in this app uses position: sticky, which an
+     * overflow rule on an ancestor would silently disable. If sticky is ever
+     * introduced, this is the line that broke it. */
+    overflow-x: hidden;
+  }
+
+  /* Identifiers, emails and class codes are single unbroken tokens, and a long
+     one in a narrow column pushes its container wider rather than wrapping.
+     Applied at the root so it holds everywhere, including text this app does
+     not control, like a student's name from an uploaded roster. */
+  * {
+    overflow-wrap: break-word;
   }
 
   /* The theme swap changes a lot of surfaces at once; easing it stops the

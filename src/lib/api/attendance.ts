@@ -292,7 +292,12 @@ export const attendanceLog = async (
         "student_id, state, marked_at, session_id, class_sessions!inner(session_date, starts_at, status, cohort_id, cancellation_reason, cohorts(label))",
       )
       .eq("class_id", classId)
-      .neq("class_sessions.status", "scheduled")
+      // No status filter here, deliberately. A record exists because somebody
+      // recorded it, and the session it belongs to is therefore relevant
+      // whatever its status says. Filtering scheduled sessions out here meant a
+      // register taken by hand before a session was opened — which the
+      // dashboard offers, on exactly those sessions — was written to the
+      // database and then invisible on every screen that reads it.
       .range(offset, offset + PAGE - 1);
 
     if (opts.cohortId) q = q.eq("class_sessions.cohort_id", opts.cohortId);
@@ -318,6 +323,35 @@ export const attendanceLog = async (
       marked_at: r.marked_at,
     }))
     .sort((a, b) => b.session_date.localeCompare(a.session_date));
+
+  /*
+   * A scheduled session that somebody has marked has happened.
+   *
+   * The session query above excludes 'scheduled' on purpose: a class next
+   * Tuesday is not a session anyone missed, and counting it would make every
+   * future date an absence. But "not opened yet" and "never happened" are not
+   * the same thing, and taking the register before opening check-in is an
+   * ordinary thing to do.
+   *
+   * These are recovered from the marks rather than by a second query: the join
+   * above already selects every field a session entry needs, so the row is
+   * there for the taking.
+   */
+  const known = new Set(sessions.map((s) => s.session_id));
+  markRows.forEach((r) => {
+    if (r.class_sessions === null || known.has(r.session_id)) return;
+    known.add(r.session_id);
+    sessions.push({
+      session_id: r.session_id,
+      session_date: r.class_sessions.session_date,
+      starts_at: r.class_sessions.starts_at,
+      cohort_id: r.class_sessions.cohort_id,
+      cohort_label: r.class_sessions.cohorts?.label ?? "",
+      status: r.class_sessions.status,
+      cancellation_reason: r.class_sessions.cancellation_reason,
+    });
+  });
+  sessions.sort((a, b) => b.session_date.localeCompare(a.session_date));
 
   const byStudent = new Map<string, LoggedMark[]>();
   const byDate = new Map<string, LoggedMark[]>();

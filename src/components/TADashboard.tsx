@@ -1064,15 +1064,28 @@ const TADashboard = ({
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-gradient-to-r from-primary to-accent rounded-lg">
+        {/*
+          Header.
+
+          pl-12 below md: the sidebar collapses to a sheet at that width and its
+          trigger is positioned against the viewport, so without the padding the
+          button sits directly on top of this row's icon.
+
+          flex-wrap and min-w-0 because the title, the class name and three
+          controls do not fit on one line on a phone. Without min-w-0 a flex
+          child refuses to shrink below its content and pushes the controls off
+          the screen instead of truncating.
+        */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pl-12 md:pl-0">
+          <div className="flex min-w-0 items-center space-x-3">
+            <div className="shrink-0 p-2 bg-gradient-to-r from-primary to-accent rounded-lg">
               <Shield className="h-6 w-6 text-primary-foreground" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">{sectionTitle}</h1>
-              <p className="text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-bold sm:text-2xl">
+                {sectionTitle}
+              </h1>
+              <p className="text-sm text-muted-foreground sm:text-base">
                 {sectionDescription}
                 {activeClass && (
                   <span className="ml-2 opacity-70">· {activeClass.name}</span>
@@ -1080,7 +1093,7 @@ const TADashboard = ({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <AccessibilitySettings />
             <ThemeToggle />
             <Button onClick={onLogout} variant="outline">

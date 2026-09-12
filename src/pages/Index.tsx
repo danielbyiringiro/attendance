@@ -37,6 +37,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 interface Student {
@@ -81,6 +82,51 @@ const TA_TABS: ReadonlyArray<{
 // TA authentication is handled by Supabase Auth; we only persist which tab the
 // TA last viewed so a reload returns them to the same section.
 const TA_TAB_KEY = "ta_active_tab";
+
+/**
+ * The navigation list, as its own component so it can reach the sidebar.
+ *
+ * On a phone the sidebar is a sheet laid over the page. Choosing a section
+ * changed the section underneath and left the sheet sitting on top of it, so
+ * the tap appeared to do nothing and you had to dismiss the sheet yourself to
+ * see what you had chosen. On a desktop the sidebar sits beside the content and
+ * should stay put, which is why this closes only the mobile one.
+ *
+ * useSidebar reads a context SidebarProvider creates, so this cannot live in
+ * Index — Index renders the provider and is therefore outside it.
+ */
+const TANav = ({
+  tabs,
+  active,
+  onSelect,
+}: {
+  tabs: typeof TA_TABS;
+  active: TATab;
+  onSelect: (tab: TATab) => void;
+}) => {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  return (
+    <SidebarMenu>
+      {tabs.map(({ id, label, icon: Icon }) => (
+        <SidebarMenuItem key={id}>
+          <SidebarMenuButton asChild isActive={active === id} tooltip={label}>
+            <button
+              type="button"
+              onClick={() => {
+                onSelect(id);
+                if (isMobile) setOpenMobile(false);
+              }}
+            >
+              <Icon />
+              <span>{label}</span>
+            </button>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ))}
+    </SidebarMenu>
+  );
+};
 
 const Index = () => {
   // Informational only — see the effect below.
@@ -270,24 +316,13 @@ const Index = () => {
             <SidebarGroup>
               <SidebarGroupLabel>Navigation</SidebarGroupLabel>
               <SidebarGroupContent>
-                <SidebarMenu>
-                  {TA_TABS.filter(
+                <TANav
+                  tabs={TA_TABS.filter(
                     (t) => !t.adminOnly || identity?.is_admin,
-                  ).map(({ id, label, icon: Icon }) => (
-                    <SidebarMenuItem key={id}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={taTab === id}
-                        tooltip={label}
-                      >
-                        <button type="button" onClick={() => handleSetTaTab(id)}>
-                          <Icon />
-                          <span>{label}</span>
-                        </button>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
+                  )}
+                  active={taTab}
+                  onSelect={handleSetTaTab}
+                />
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>

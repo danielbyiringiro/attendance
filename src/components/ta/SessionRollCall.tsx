@@ -438,7 +438,13 @@ const SessionRollCall = ({
               </Badge>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            {/*
+              Two by two on a phone, four across once there is room. Adding
+              Late to a three-column grid left it stranded on its own row at
+              full width, which reads as the important one rather than the
+              fourth of four.
+            */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {CALLS.map((call) => (
                 <Button
                   key={call.state}

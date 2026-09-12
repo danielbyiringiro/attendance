@@ -342,7 +342,21 @@ const SessionList = ({
           {rows.map((s) => (
             <div
               key={s.id}
-              className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 transition-colors ${ROW_STYLE[s.status]}`}
+              /*
+                Stacked on a phone, one line above sm.
+                
+                The action block is shrink-0 and holds "Open check-in" or
+                "Close check-in" plus an edit button plus a menu — about 215px
+                that will not compress. With the 80px time column, the gaps and
+                the padding, the row could not go below roughly 380px, so on a
+                375px screen the menu button fell off the edge.
+                
+                Stacking rather than shrinking, because every part of this row
+                is already as small as it can usefully be: the time cannot
+                abbreviate, and "Open" without "check-in" stops saying what it
+                opens.
+              */
+              className={`flex flex-col gap-2 rounded-lg px-3 py-2 transition-colors sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${ROW_STYLE[s.status]}`}
             >
               <div className="flex min-w-0 items-center gap-3">
                 <div className="w-20 shrink-0 tabular-nums">
@@ -388,7 +402,7 @@ const SessionList = ({
               {/* One primary action, everything else behind the menu. Three
                   buttons per row made the common case — open, then close —
                   something you had to look for. */}
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1 sm:shrink-0 sm:flex-nowrap">
                 <SessionActions session={s} onChanged={load} />
 
                 {/* Retiming one session is a frequent job, so it stays on the
@@ -522,7 +536,7 @@ const SessionList = ({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 gap-3 py-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 py-2">
             <div className="space-y-1">
               <Label htmlFor="edit-date">Date</Label>
               <Input

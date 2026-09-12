@@ -470,6 +470,7 @@ const Schedule = () => {
                       <span className="w-32">Starts</span>
                       <span className="w-[6.5rem]">Class runs</span>
                       <span className="w-[6.5rem]">Sign-up open</span>
+                      <span className="w-[6.5rem]">Opens early</span>
                     </div>
                   )}
                   {rows.length === 0 ? (
@@ -518,7 +519,11 @@ const Schedule = () => {
                             }
                           />
 
-                          <div className="flex w-[6.5rem] items-center gap-1">
+                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
+                            {/* Visible only where the column header is not. */}
+                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
+                              Class runs
+                            </span>
                             <Input
                               type="number"
                               min={1}
@@ -539,7 +544,11 @@ const Schedule = () => {
                             </span>
                           </div>
 
-                          <div className="flex w-[6.5rem] items-center gap-1">
+                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
+                            {/* Visible only where the column header is not. */}
+                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
+                              Sign-up open
+                            </span>
                             <Input
                               type="number"
                               min={1}
@@ -560,7 +569,11 @@ const Schedule = () => {
                             </span>
                           </div>
 
-                          <div className="flex w-[6.5rem] items-center gap-1">
+                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
+                            {/* Visible only where the column header is not. */}
+                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
+                              Opens early
+                            </span>
                             <Input
                               type="number"
                               min={0}

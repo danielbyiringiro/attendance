@@ -50,6 +50,16 @@ const TIMEZONES = [
   "UTC",
 ];
 
+/**
+ * What classes.min_attendance_percentage defaults to in the schema.
+ *
+ * Repeated here so the form can tell "the TA left it alone" from "the TA chose
+ * 75". create_class takes no threshold parameter, so on a new class this is
+ * only written when it differs — no point in a second round trip to set a
+ * column to the value it already has.
+ */
+const DEFAULT_THRESHOLD = 75;
+
 const today = () => toDateStr(new Date());
 
 // Sessions only exist between the term dates, so a term ending today produces
@@ -72,6 +82,14 @@ const ClassFormDialog = ({
   const [termStart, setTermStart] = useState(today());
   const [termEnd, setTermEnd] = useState(defaultTermEnd());
   const [timezone, setTimezone] = useState("Africa/Accra");
+  /*
+   * The attendance a student has to reach in this class.
+   *
+   * Held as a string, not a number, because a number input bound to a number
+   * cannot be empty mid-typing: clearing it to type "80" gives NaN, and the
+   * field either snaps back to a value or shows nothing. Validated on submit.
+   */
+  const [threshold, setThreshold] = useState(String(DEFAULT_THRESHOLD));
   const [cohortMode, setCohortMode] = useState<"count" | "labels">("count");
   const [cohortCount, setCohortCount] = useState("1");
   const [cohortLabels, setCohortLabels] = useState("");
@@ -91,6 +109,7 @@ const ClassFormDialog = ({
       setTermStart(editing.term_starts_on);
       setTermEnd(editing.term_ends_on);
       setTimezone(editing.timezone);
+      setThreshold(String(editing.min_attendance_percentage));
     } else {
       setCode("");
       setName("");
@@ -98,6 +117,7 @@ const ClassFormDialog = ({
       setTermStart(today());
       setTermEnd(today());
       setTimezone("Africa/Accra");
+      setThreshold(String(DEFAULT_THRESHOLD));
       setCohortMode("count");
       setCohortCount("1");
       setCohortLabels("");
@@ -163,6 +183,21 @@ const ClassFormDialog = ({
       return;
     }
 
+    const thresholdValue = Number(threshold);
+    if (
+      !Number.isFinite(thresholdValue) ||
+      thresholdValue < 0 ||
+      thresholdValue > 100
+    ) {
+      toast({
+        title: "Check the required attendance",
+        description:
+          "It has to be a percentage between 0 and 100. The database refuses anything else, so this catches it before the round trip.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       if (editing) {
@@ -172,6 +207,7 @@ const ClassFormDialog = ({
           termStartsOn: termStart,
           termEndsOn: termEnd,
           timezone,
+          minAttendancePercentage: thresholdValue,
         });
         toast({ title: "Class updated" });
         onSaved(editing.id);
@@ -196,6 +232,15 @@ const ClassFormDialog = ({
           cohortCount: cohortMode === "count" ? count : undefined,
           cohortLabels: cohortMode === "labels" ? parsedLabels : undefined,
         });
+        // create_class has no threshold parameter and the column defaults to
+        // 75, so this second call only happens when the TA actually chose
+        // something else.
+        if (thresholdValue !== DEFAULT_THRESHOLD) {
+          await updateClass(result.class_id, {
+            minAttendancePercentage: thresholdValue,
+          });
+        }
+
         toast({
           title: "Class created",
           description: `${result.cohorts.length} cohort${
@@ -261,7 +306,7 @@ const ClassFormDialog = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="term-start">Term starts</Label>
               <Input
@@ -295,6 +340,35 @@ const ClassFormDialog = ({
           <p className="text-xs text-muted-foreground -mt-2">
             Sessions are only generated between these dates.
           </p>
+
+          {/*
+            The threshold has driven the roster colouring, the below-threshold
+            filter and what a student sees on their own history since it was
+            added — and nothing edited it, so every class sat at 75 whatever it
+            actually required. The number was already doing work; it just could
+            not be set.
+          */}
+          <div className="space-y-2">
+            <Label htmlFor="min-attendance">Required attendance</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="min-attendance"
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                className="w-24"
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+              />
+              <span className="text-sm text-muted-foreground">%</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Students below this are flagged on the roster and told on their
+              own attendance page. Changing it re-colours the existing numbers;
+              it does not alter anybody's records.
+            </p>
+          </div>
 
           <div className="space-y-2">
             <Label>Timezone</Label>

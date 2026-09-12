@@ -521,8 +521,103 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                   </div>
                 )}
 
-                {/* History Table */}
-                <div className="rounded-md border bg-card">
+                {/*
+                  Two renderings of the same list.
+
+                  Five columns is a sensible table on a laptop and a bad one on
+                  a phone: at 375px each column gets about seventy pixels, so
+                  either it scrolls sideways — which hides the status, the only
+                  column anybody came for — or the dates wrap to three lines
+                  each. This is the screen students actually use, and almost all
+                  of them are on a phone.
+
+                  So below sm it becomes a list of cards, where each record is
+                  one block with its status where the eye lands. The table is
+                  unchanged above sm.
+                */}
+                <div className="space-y-2 sm:hidden">
+                  {shownRecords.length === 0 ? (
+                    <p className="rounded-md border bg-card py-8 text-center text-sm text-muted-foreground">
+                      No class records to display.
+                    </p>
+                  ) : (
+                    shownRecords.map((record, index) => {
+                      const buttonState = getFlagButtonState(record);
+                      const canFlag =
+                        record.status !== "Present" &&
+                        record.status !== "Late" &&
+                        record.status !== "Excused" &&
+                        record.status !== "Exempt" &&
+                        !record.wasCancelled;
+
+                      return (
+                        <div
+                          key={`m-${record.date}-${index}`}
+                          className="space-y-2 rounded-md border bg-card p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium">
+                                {format(parseISO(record.date), "EEE d MMM yyyy")}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {record.className} · {record.cohort}
+                              </p>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                record.status === "Present" ||
+                                record.status === "Late"
+                                  ? "bg-success/15 text-success"
+                                  : record.status === "Excused" ||
+                                      record.status === "Exempt"
+                                    ? "bg-primary/10 text-primary"
+                                    : record.status === "Absent"
+                                      ? "bg-destructive/10 text-destructive"
+                                      : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {record.status}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs text-muted-foreground">
+                              {record.timestamp
+                                ? `Marked ${format(new Date(record.timestamp), "h:mm a")}`
+                                : record.wasCancelled
+                                  ? "Class cancelled"
+                                  : "Not marked"}
+                              {record.flagStatus === "accepted" && " · flag accepted"}
+                              {record.flagStatus === "denied" && " · flag denied"}
+                              {record.isFlagged && " · flag pending"}
+                            </p>
+                            {canFlag && (
+                              <Button
+                                variant={buttonState.variant}
+                                size="sm"
+                                className="h-8 shrink-0 gap-1 px-2 text-xs"
+                                onClick={() =>
+                                  handleFlag(record.sessionId, record.date)
+                                }
+                                title={buttonState.title}
+                                disabled={
+                                  buttonState.disabled ||
+                                  flaggingInProgress === record.sessionId
+                                }
+                              >
+                                {buttonState.icon}
+                                <span>Flag</span>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="hidden rounded-md border bg-card sm:block">
                   <Table>
                     <TableHeader>
                       <TableRow>

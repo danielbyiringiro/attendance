@@ -34,7 +34,23 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+        /*
+         * Height cap and scroll, and a margin on small screens.
+         *
+         * Stock shadcn centres the panel with no max-height and no
+         * overflow, so a dialog taller than the viewport hangs off both
+         * ends and its buttons are simply unreachable — no scrollbar, no
+         * way down. On a phone that is most of the forms in this app, and
+         * in landscape it is nearly all of them.
+         *
+         * dvh rather than vh: mobile browsers count vh against the
+         * viewport WITHOUT their own chrome, so a vh-capped dialog is
+         * still taller than the space it actually has.
+         *
+         * w-[calc(100%-2rem)] stops the panel going edge to edge on a
+         * narrow screen, which reads as a page rather than a dialog.
+         */
+        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-4 sm:p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
         className,
       )}
       {...props}

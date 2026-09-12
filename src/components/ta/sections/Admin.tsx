@@ -518,7 +518,7 @@ const Admin = () => {
 
                   <div className="flex flex-wrap gap-2">
                     <Input
-                      className="w-64"
+                      className="w-full sm:w-64"
                       value={addEmail}
                       placeholder="Their email, to give them the class"
                       onChange={(e) => setAddEmail(e.target.value)}
