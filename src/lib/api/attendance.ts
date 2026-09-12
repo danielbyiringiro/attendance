@@ -527,6 +527,39 @@ export const tallyStates = (
  * the list. Cancelled sessions are dropped: nobody attended a class that did
  * not run, and it should not count against them.
  */
+/**
+ * Did this session actually happen?
+ *
+ * Not the same question as "is it cancelled". Migration 036 records a holiday
+ * by closing the session and marking every enrolled student `exempted`, which
+ * keeps the day visible as a scheduled date that formally did not count. That
+ * is the right record, and it leaves a session whose status is 'closed' and at
+ * which nobody was present.
+ *
+ * Counting those as held is wrong in a specific and misleading way: the day is
+ * correctly excluded from every student's rate, because exempted sits in
+ * neither half of a tally, while the class-wide figure shows a session where
+ * nobody turned up. The same screen then says the day did not count and that
+ * attendance was zero.
+ *
+ * So a session is held unless every record against it is exempted. One student
+ * exempted among a normal register is an individual exemption and changes
+ * nothing; a whole register of them is a day that did not happen.
+ *
+ * A session with no records at all is held — it may simply not be closed yet.
+ */
+export const sessionWasHeld = (
+  log: AttendanceLog,
+  sessionId: string,
+): boolean => {
+  const session = log.sessionById.get(sessionId);
+  if (!session || session.status === "cancelled") return false;
+
+  const marks = log.marks.filter((m) => m.session_id === sessionId);
+  if (marks.length === 0) return true;
+  return !marks.every((m) => m.state === "exempted");
+};
+
 export const sessionStatesFor = (
   log: AttendanceLog,
   studentId: string,

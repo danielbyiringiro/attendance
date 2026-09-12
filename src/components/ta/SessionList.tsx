@@ -19,14 +19,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Ban,
+  CalendarPlus,
   Loader2,
   MoreVertical,
   PencilLine,
   RefreshCw,
   UserCheck,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { cancelSession, listSessions, updateSession } from "@/lib/api/sessions";
+import {
+  cancelSession,
+  createAdHocSession,
+  listSessions,
+  updateSession,
+} from "@/lib/api/sessions";
 import SessionActions from "@/components/ta/SessionActions";
 import { markAllPresent } from "@/lib/api/attendance";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -102,6 +115,20 @@ const SessionList = ({
   const [cancelling, setCancelling] = useState<SessionRow | null>(null);
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState<SessionRow | null>(null);
+  /*
+   * A one-off date, outside the weekly pattern.
+   *
+   * Separate state from the edit dialog rather than reusing it: editing moves
+   * an existing session and is refused once it has run, while this creates one
+   * and has to pick a cohort as well. Sharing the fields would mean one of them
+   * carrying a cohort the other must ignore.
+   */
+  const [adding, setAdding] = useState(false);
+  const [addCohort, setAddCohort] = useState("");
+  const [addDate, setAddDate] = useState("");
+  const [addTime, setAddTime] = useState("09:00");
+  const [addDuration, setAddDuration] = useState("");
+
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
@@ -236,6 +263,44 @@ const SessionList = ({
     }
   };
 
+  const handleAdd = async () => {
+    if (!addCohort) {
+      toast({
+        title: "Pick a cohort",
+        description: "A session belongs to one cohort, not to the whole class.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setBusyId("adding");
+    try {
+      const result = await createAdHocSession(
+        addCohort,
+        addDate,
+        addTime,
+        addDuration.trim() ? Number(addDuration) : undefined,
+      );
+
+      toast({
+        title: "Session added",
+        description: result.outside_term
+          ? `Cohort ${result.cohort} on ${dateOf(result.session_date)}. This is outside the term, so it will not appear in term-wide figures.`
+          : `Cohort ${result.cohort} on ${dateOf(result.session_date)}. A schedule change will not move or remove it.`,
+      });
+      setAdding(false);
+      await load();
+    } catch (e) {
+      toast({
+        title: "Could not add the session",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleCancel = async () => {
     if (!cancelling) return;
     setBusyId(cancelling.id);
@@ -309,6 +374,20 @@ const SessionList = ({
               ))}
             </>
           )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setAdding(true);
+              setAddCohort(cohortFilter === "all" ? (cohorts[0]?.id ?? "") : cohortFilter);
+              setAddDate(todayStr());
+              setAddTime("09:00");
+              setAddDuration("");
+            }}
+          >
+            <CalendarPlus className="mr-1 h-4 w-4" />
+            Add a date
+          </Button>
           <Button variant="ghost" size="sm" onClick={load} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </Button>
@@ -454,6 +533,98 @@ const SessionList = ({
           ))}
         </div>
       )}
+
+      {/* A date outside the weekly pattern */}
+      <Dialog open={adding} onOpenChange={(o) => !o && setAdding(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add a date</DialogTitle>
+            <DialogDescription>
+              One session on one day, outside the weekly pattern — a catch-up
+              class, a moved lecture, an extra lab.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="add-cohort">Cohort</Label>
+              <Select value={addCohort} onValueChange={setAddCohort}>
+                <SelectTrigger id="add-cohort">
+                  <SelectValue placeholder="Which cohort meets?" />
+                </SelectTrigger>
+                <SelectContent>
+                  {cohorts.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      Cohort {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                A session belongs to one cohort. Add it again for another.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="add-date">Date</Label>
+                <Input
+                  id="add-date"
+                  type="date"
+                  value={addDate}
+                  onChange={(e) => setAddDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="add-time">Starts</Label>
+                <Input
+                  id="add-time"
+                  type="time"
+                  value={addTime}
+                  onChange={(e) => setAddTime(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="add-duration">Length (optional)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="add-duration"
+                  type="number"
+                  min={1}
+                  className="w-24"
+                  placeholder="60"
+                  value={addDuration}
+                  onChange={(e) => setAddDuration(e.target.value)}
+                />
+                <span className="text-sm text-muted-foreground">minutes</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Left blank, it uses the class default.
+              </p>
+            </div>
+
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Added this way, the session is yours rather than the pattern's.
+              Changing the weekly schedule later will neither move it nor remove
+              it. The date does not have to fall inside the term.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAdd} disabled={busyId === "adding"}>
+              {busyId === "adding" && (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              )}
+              Add the session
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={markingAll !== null}

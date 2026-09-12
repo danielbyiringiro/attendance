@@ -158,6 +158,159 @@ export const closeSession = async (sessionId: string): Promise<number> => {
  * percentage down, and keeps the records of anyone who marked before it was
  * called off. Returns how many absences were removed.
  */
+/**
+ * One session on one date, outside the weekly pattern.
+ *
+ * A catch-up class, a lecture moved to a Saturday, an extra lab. Until
+ * migration 035 every session in the database came from generate_sessions or
+ * apply_schedule_to_future, so there was no way to record one.
+ *
+ * The session is flagged `moved_manually`, which is what makes it stick: the
+ * pattern does not want that day, and step 2 of apply_schedule_to_future
+ * deletes exactly the sessions the pattern does not want. Flagged ones are
+ * skipped, so a later schedule change neither moves it nor removes it.
+ *
+ * Not bound to the term. A make-up class in the week after teaching ends is a
+ * normal reason to want one, so `outside_term` comes back as a fact for the
+ * screen to mention rather than a reason to refuse.
+ */
+export const createAdHocSession = async (
+  cohortId: string,
+  date: string,
+  startTime: string,
+  durationMinutes?: number,
+): Promise<{
+  session_id: string;
+  starts_at: string;
+  session_date: string;
+  cohort: string;
+  outside_term: boolean;
+}> => {
+  const { data, error } = await supabase.rpc("create_ad_hoc_session", {
+    p_cohort_id: cohortId,
+    p_date: date,
+    p_start_time: startTime,
+    p_duration_minutes: durationMinutes ?? null,
+  });
+  if (error) fail("Could not add the session", error);
+  return data as {
+    session_id: string;
+    starts_at: string;
+    session_date: string;
+    cohort: string;
+    outside_term: boolean;
+  };
+};
+
+/** What a no-class day does to the percentage. Two actions, not a toggle. */
+export type NoClassMode =
+  /** The day leaves the calculation. Everyone exempted. A holiday. */
+  | "exempt"
+  /** The day counts and everybody is credited. An online quiz, a take-home. */
+  | "present";
+
+/**
+ * Declare a date the class does not meet.
+ *
+ * Not cancel_session in a loop, for three reasons. It is a date rather than a
+ * session, so it covers every cohort including ones added later. It is
+ * remembered, so regenerating sessions does not bring the holiday back — which
+ * is the part a loop cannot do at all. And `present` has no equivalent in
+ * cancellation.
+ *
+ * Existing sessions on that date are closed and their records replaced. A
+ * check-in on a declared holiday is not evidence the class ran.
+ *
+ * Pass a cohortId to narrow it; leave it out and it applies class-wide, which
+ * is what a public holiday is.
+ */
+export const setNoClassDay = async (
+  classId: string,
+  date: string,
+  mode: NoClassMode,
+  reason: string,
+  cohortId?: string,
+): Promise<{
+  date: string;
+  mode: NoClassMode;
+  /** Kept and marked, because something had already happened at them. */
+  sessions: number;
+  /**
+   * Deleted, because nothing had. Only ever under `exempt`: under `present` the
+   * session is what carries the credit, so removing it would leave the day
+   * meaning nothing.
+   *
+   * These do not come back when the day is cleared. They come back from
+   * generate_sessions, which is re-runnable once the date is released.
+   */
+  removed: number;
+  students: number;
+}> => {
+  const { data, error } = await supabase.rpc("set_no_class_day", {
+    p_class_id: classId,
+    p_date: date,
+    p_mode: mode,
+    p_reason: reason,
+    p_cohort_id: cohortId ?? null,
+  });
+  if (error) fail("Could not set the day", error);
+  return data as {
+    date: string;
+    mode: NoClassMode;
+    sessions: number;
+    removed: number;
+    students: number;
+  };
+};
+
+/**
+ * Undo one.
+ *
+ * Puts the sessions back to scheduled and removes the exempted rows this wrote.
+ * It cannot restore check-ins that were overwritten — the same trade
+ * cancellation makes.
+ */
+export const clearNoClassDay = async (
+  classId: string,
+  date: string,
+  cohortId?: string,
+): Promise<{ date: string; removed: number; sessions: number }> => {
+  const { data, error } = await supabase.rpc("clear_no_class_day", {
+    p_class_id: classId,
+    p_date: date,
+    p_cohort_id: cohortId ?? null,
+  });
+  if (error) fail("Could not clear the day", error);
+  return data as { date: string; removed: number; sessions: number };
+};
+
+/** Every date this class has declared off, soonest first. */
+export const listNoClassDays = async (
+  classId: string,
+): Promise<
+  Array<{
+    id: string;
+    on_date: string;
+    mode: NoClassMode;
+    reason: string;
+    cohort_id: string | null;
+  }>
+> => {
+  const { data, error } = await supabase
+    .from("no_class_days")
+    .select("id, on_date, mode, reason, cohort_id")
+    .eq("class_id", classId)
+    .order("on_date", { ascending: true });
+  if (error) fail("Could not load the days off", error);
+  return (data ?? []) as Array<{
+    id: string;
+    on_date: string;
+    mode: NoClassMode;
+    reason: string;
+    cohort_id: string | null;
+  }>;
+};
+
 export const cancelSession = async (
   sessionId: string,
   reason?: string,

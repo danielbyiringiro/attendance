@@ -2,6 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { useActiveClass } from "@/lib/classContext";
 import SessionList from "@/components/ta/SessionList";
+import NoClassDays from "@/components/ta/NoClassDays";
 
 /**
  * The sessions of the active class — open one, close it, move it, cancel it.
@@ -36,15 +37,25 @@ const Sessions = () => {
   }
 
   return (
-    <Card className="border-2">
-      <CardContent className="pt-6">
-        <SessionList
-          classId={activeClass.id}
-          cohorts={cohorts}
-          timezone={activeClass.timezone}
-        />
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <SessionList
+            classId={activeClass.id}
+            cohorts={cohorts}
+            timezone={activeClass.timezone}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Below the list, not above it. Days off are set once a term; the
+          session list is the thing opened every day. */}
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <NoClassDays classId={activeClass.id} cohorts={cohorts} />
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
