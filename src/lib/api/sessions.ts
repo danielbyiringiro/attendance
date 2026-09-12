@@ -158,6 +158,50 @@ export const closeSession = async (sessionId: string): Promise<number> => {
  * percentage down, and keeps the records of anyone who marked before it was
  * called off. Returns how many absences were removed.
  */
+/**
+ * One session on one date, outside the weekly pattern.
+ *
+ * A catch-up class, a lecture moved to a Saturday, an extra lab. Until
+ * migration 035 every session in the database came from generate_sessions or
+ * apply_schedule_to_future, so there was no way to record one.
+ *
+ * The session is flagged `moved_manually`, which is what makes it stick: the
+ * pattern does not want that day, and step 2 of apply_schedule_to_future
+ * deletes exactly the sessions the pattern does not want. Flagged ones are
+ * skipped, so a later schedule change neither moves it nor removes it.
+ *
+ * Not bound to the term. A make-up class in the week after teaching ends is a
+ * normal reason to want one, so `outside_term` comes back as a fact for the
+ * screen to mention rather than a reason to refuse.
+ */
+export const createAdHocSession = async (
+  cohortId: string,
+  date: string,
+  startTime: string,
+  durationMinutes?: number,
+): Promise<{
+  session_id: string;
+  starts_at: string;
+  session_date: string;
+  cohort: string;
+  outside_term: boolean;
+}> => {
+  const { data, error } = await supabase.rpc("create_ad_hoc_session", {
+    p_cohort_id: cohortId,
+    p_date: date,
+    p_start_time: startTime,
+    p_duration_minutes: durationMinutes ?? null,
+  });
+  if (error) fail("Could not add the session", error);
+  return data as {
+    session_id: string;
+    starts_at: string;
+    session_date: string;
+    cohort: string;
+    outside_term: boolean;
+  };
+};
+
 export const cancelSession = async (
   sessionId: string,
   reason?: string,
