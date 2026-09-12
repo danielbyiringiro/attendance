@@ -323,7 +323,7 @@ const AbsenceHistoryDialog = ({
                 {rows.length} absence{rows.length === 1 ? "" : "s"}
                 {day ? ` on ${format(day, "PPP")}` : " this term"}.
               </p>
-              <div className="grid grid-cols-4 gap-2 border-b pb-2 text-sm font-semibold">
+              <div className="hidden grid-cols-4 gap-2 border-b pb-2 text-sm font-semibold sm:grid">
                 <div>Date</div>
                 <div>Student</div>
                 <div>Cohort</div>
@@ -332,7 +332,7 @@ const AbsenceHistoryDialog = ({
               {rows.map((a, i) => (
                 <div
                   key={`${a.date}-${a.student_id}-${i}`}
-                  className="grid grid-cols-4 gap-2 rounded-lg bg-muted/50 p-2 text-sm"
+                  className="grid grid-cols-2 gap-x-2 gap-y-1 rounded-lg bg-muted/50 p-2 text-sm sm:grid-cols-4"
                 >
                   <div>{format(fromDateStr(a.date), "MMM dd, yyyy")}</div>
                   <div className="min-w-0">

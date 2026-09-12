@@ -90,7 +90,10 @@ const sessions = [
   { id: "s1", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-05-19", starts_at: "2026-05-19T09:00:00Z", status: "closed",    cancellation_reason: null },
   { id: "s2", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-05-20", starts_at: "2026-05-20T09:00:00Z", status: "cancelled", cancellation_reason: "Public holiday" },
   { id: "s3", class_id: CLASS, cohort_id: "coh-b", session_date: "2026-05-19", starts_at: "2026-05-19T14:00:00Z", status: "closed",    cancellation_reason: null },
+  // Scheduled, and somebody took the register by hand before opening it.
   { id: "s4", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-12-01", starts_at: "2026-12-01T09:00:00Z", status: "scheduled", cancellation_reason: null },
+  // Scheduled and untouched. Must stay out of the log entirely.
+  { id: "s5", class_id: CLASS, cohort_id: "coh-a", session_date: "2026-12-08", starts_at: "2026-12-08T09:00:00Z", status: "scheduled", cancellation_reason: null },
   // A different class entirely. Nothing below should ever see it.
   { id: "x1", class_id: "class-2", cohort_id: "coh-z", session_date: "2026-05-19", starts_at: "2026-05-19T09:00:00Z", status: "closed", cancellation_reason: null },
 ];
@@ -102,8 +105,10 @@ const records = [
   { session_id: "s3", class_id: CLASS, student_id: "stu-4", state: "late",      marked_at: "2026-05-19T14:12:00Z" },
   // Written before the session was cancelled; cancel_session keeps these.
   { session_id: "s2", class_id: CLASS, student_id: "stu-1", state: "present",   marked_at: "2026-05-20T09:01:00Z" },
-  // A scheduled session must never contribute a mark.
-  { session_id: "s4", class_id: CLASS, student_id: "stu-1", state: "pending",   marked_at: null },
+  // Taken by hand before the session was opened. This was written to the
+  // database and then filtered out of every read, so it existed and could not
+  // be seen anywhere in the app.
+  { session_id: "s4", class_id: CLASS, student_id: "stu-1", state: "present",   marked_at: "2026-11-30T09:00:00Z" },
   { session_id: "x1", class_id: "class-2", student_id: "stu-1", state: "unexcused", marked_at: null },
 ];
 
@@ -123,10 +128,26 @@ console.log("\nattendanceLog");
 
 const log = await attendanceLog(CLASS);
 
+// This used to assert ["s1", "s2", "s3"] — no scheduled session, ever.
+//
+// That was half a rule. A class next Tuesday is not a session anybody missed,
+// and counting it would turn every future date into an absence. But "not opened
+// yet" and "never happened" are different, and the dashboard offers Mark
+// manually on a session before it is opened, so a register taken early was
+// written and then hidden from every screen that reads it — including the one
+// that took it.
+//
+// s4 is scheduled and marked, so it is in. s5 is scheduled and untouched, so it
+// is not.
 eq(
-  "only this class's sessions, and no scheduled ones",
+  "a scheduled session counts once somebody has marked it",
   log.sessions.map((s) => s.session_id).sort(),
-  ["s1", "s2", "s3"],
+  ["s1", "s2", "s3", "s4"],
+);
+
+ok(
+  "and an untouched scheduled session stays out",
+  !log.sessions.some((s) => s.session_id === "s5"),
 );
 
 ok(
@@ -140,9 +161,9 @@ ok(
 eq("cohort labels are resolved", log.sessionById.get("s3").cohort_label, "B");
 
 eq(
-  "marks exclude the other class and the scheduled session",
+  "marks exclude the other class, and include a register taken early",
   log.marks.map((m) => `${m.session_id}:${m.student_id}`).sort(),
-  ["s1:stu-1", "s1:stu-2", "s1:stu-3", "s2:stu-1", "s3:stu-4"],
+  ["s1:stu-1", "s1:stu-2", "s1:stu-3", "s2:stu-1", "s3:stu-4", "s4:stu-1"],
 );
 
 eq(
@@ -271,21 +292,26 @@ stub.__setTables({
 });
 const forRate = await attendanceLog(CLASS);
 
-// s1 closed, s2 cancelled (dropped), s4 scheduled (never in the log).
+// s1 closed and present, s2 cancelled (dropped), s4 scheduled but marked
+// present by hand, s5 scheduled and untouched (never in the log).
 eq(
   "one entry per session the cohort held, cancelled ones dropped",
   sessionStatesFor(forRate, "stu-1", "coh-a"),
-  ["present"],
+  ["present", "present"],
 );
+// Two entries now, because s4 is in the log: stu-2 has no record against it.
+// null, not 'unexcused' — the session has not closed, so nobody has decided
+// they were absent. tallyStates counts null in neither half, so taking a
+// register early cannot move anybody's rate before the session runs.
 eq(
-  "the state comes from the record when there is one",
+  "the state comes from the record when there is one, and null when there is not",
   sessionStatesFor(forRate, "stu-2", "coh-a"),
-  ["unexcused"],
+  ["unexcused", null],
 );
 eq(
   "somebody who marked nothing is null, not an empty list",
   sessionStatesFor(forRate, "never-marked", "coh-a"),
-  [null],
+  [null, null],
 );
 eq(
   "and that null does not become an absence",

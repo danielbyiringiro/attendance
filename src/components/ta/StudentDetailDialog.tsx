@@ -380,7 +380,7 @@ const StudentDetailDialog = ({
                 <div className="flex items-center gap-1">
                   <Input
                     type="date"
-                    className="h-8 w-[9.5rem]"
+                    className="h-8 w-[9.5rem] max-w-[45vw]"
                     value={onDate}
                     min={allDates[allDates.length - 1]}
                     max={allDates[0]}
