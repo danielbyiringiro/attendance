@@ -76,14 +76,51 @@ const HATCH: CSSProperties = {
     "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.14) 0 3px, transparent 3px 8px)",
 };
 
+/**
+ * A hue each, and a solid edge to carry it.
+ *
+ * The previous version left three of the seven kinds — done, upcoming and empty
+ * — all as plain card, which is most of a normal month, so the grid read as flat
+ * however carefully the other four were treated.
+ *
+ * Two signals rather than one. A tint alone washes out at 10% over a card, and
+ * the edge survives that: a solid bar of the hue whatever the ground does, still
+ * legible in the small cell a phone gets.
+ *
+ * THE EDGE IS AN INSET SHADOW, NOT A BORDER
+ *
+ * High-contrast mode sets border-color on every element in the page:
+ *
+ *   .a11y-contrast * { border-color: hsl(var(--border)); }
+ *
+ * which is right for the borders it was written for and would repaint every one
+ * of these the same grey. The whole scheme would collapse to seven 10% tints in
+ * the one mode that exists because tints are hard to see. box-shadow is not
+ * reachable by that rule.
+ *
+ * The hues are spaced round the wheel on purpose. Blue for planned, green for
+ * running, teal for finished, amber for a deliberate override, red for called
+ * off, grey for a day that is not a working day. Green and teal are the closest
+ * pair, so the live day gets a wider bar as well.
+ */
+/*
+ * Written out in full, never built from parts.
+ *
+ * Tailwind finds classes by scanning source text for complete literals. A
+ * helper returning `shadow-[inset_${px}px_...]` produces names the scanner
+ * never sees, so the CSS is simply not emitted and every cell comes out with no
+ * edge at all — silently, with no error and a clean build. The first version of
+ * this did exactly that; the classes were correct and absent.
+ */
 const KIND_CELL: Record<DayKind, string> = {
-  holiday: "bg-muted/60",
-  credited: "bg-primary/10",
-  live: "bg-success/15 ring-1 ring-inset ring-success/50",
-  cancelled: "bg-destructive/5",
-  done: "bg-card",
-  upcoming: "bg-card",
-  empty: "bg-card",
+  holiday:
+    "bg-muted/70 shadow-[inset_3px_0_0_hsl(var(--muted-foreground))]",
+  credited: "bg-warning/15 shadow-[inset_3px_0_0_hsl(var(--warning))]",
+  live: "bg-success/25 shadow-[inset_5px_0_0_hsl(var(--success))]",
+  cancelled: "bg-destructive/10 shadow-[inset_3px_0_0_hsl(var(--destructive))]",
+  done: "bg-accent/10 shadow-[inset_3px_0_0_hsl(var(--accent))]",
+  upcoming: "bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]",
+  empty: "bg-muted/25",
 };
 
 const kindOf = (
@@ -99,12 +136,18 @@ const kindOf = (
   return date < today ? "done" : "upcoming";
 };
 
-/** How one session reads inside a cell. */
+/**
+ * How one session reads inside a cell.
+ *
+ * Solid grounds rather than tints here. The chip sits ON a tinted cell, so a
+ * second tint of the same hue disappears into it — the closed chip used to be
+ * primary/15 on a card and was invisible the moment the cell gained a colour.
+ */
 const CHIP: Record<SessionStatus, string> = {
-  scheduled: "bg-muted text-foreground/80",
-  open: "bg-success text-success-foreground font-medium",
-  closed: "bg-primary/15 text-foreground/70",
-  cancelled: "bg-destructive/10 text-destructive line-through",
+  scheduled: "bg-primary/25 text-foreground",
+  open: "bg-success text-success-foreground font-semibold",
+  closed: "bg-accent/30 text-foreground",
+  cancelled: "bg-destructive/20 text-destructive line-through",
 };
 
 const SessionCalendar = ({
@@ -282,8 +325,8 @@ const SessionCalendar = ({
                     isToday
                       ? "font-bold text-primary"
                       : kind === "empty"
-                        ? "text-muted-foreground/60"
-                        : "font-medium text-foreground"
+                        ? "text-muted-foreground/50"
+                        : "font-semibold text-foreground"
                   }`}
                 >
                   {d.getDate()}
