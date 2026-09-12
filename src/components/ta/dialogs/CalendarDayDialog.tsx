@@ -22,8 +22,11 @@ import { useToast } from "@/hooks/use-toast";
 import SessionActions from "@/components/ta/SessionActions";
 import {
   clearNoClassDay,
-  createAdHocSession,
+  createAdHocSessions,
+  describeAdd,
   setNoClassDay,
+  untilFor,
+  type AddScope,
   type NoClassMode,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow } from "@/lib/api/types";
@@ -55,6 +58,7 @@ const CalendarDayDialog = ({
   sessions,
   dayOff,
   timezone,
+  termEndsOn,
   onClose,
   onChanged,
   onEdit,
@@ -68,6 +72,8 @@ const CalendarDayDialog = ({
   sessions: SessionRow[];
   dayOff: DayOff | null;
   timezone: string;
+  /** Caps "for the rest of term" at the class's own end date. */
+  termEndsOn: string;
   onClose: () => void;
   onChanged: () => void | Promise<void>;
   /** Handed up, because the edit dialog cannot sit inside this one. */
@@ -79,6 +85,8 @@ const CalendarDayDialog = ({
   const [adding, setAdding] = useState(false);
   const [addCohort, setAddCohort] = useState("");
   const [addTime, setAddTime] = useState("09:00");
+  const [addScope, setAddScope] = useState<AddScope>("day");
+  const [addUntil, setAddUntil] = useState("");
   const [declaring, setDeclaring] = useState(false);
   const [mode, setMode] = useState<NoClassMode>("exempt");
   const [reason, setReason] = useState("");
@@ -113,12 +121,12 @@ const CalendarDayDialog = ({
     }
     setBusy("add");
     try {
-      const r = await createAdHocSession(addCohort, date, addTime);
+      const r = await createAdHocSessions(addCohort, date, addTime, {
+        to: untilFor(addScope, date, addUntil, termEndsOn),
+      });
       toast({
-        title: "Session added",
-        description: r.outside_term
-          ? `Cohort ${r.cohort}. Outside the term, so it will not appear in term-wide figures.`
-          : `Cohort ${r.cohort}. A schedule change will not move or remove it.`,
+        title: r.created === 1 ? "Session added" : "Sessions added",
+        description: describeAdd(r),
       });
       setAdding(false);
       await onChanged();
@@ -312,6 +320,44 @@ const CalendarDayDialog = ({
                 />
               </div>
             </div>
+            {/* Same three choices as the list, same wording. */}
+            <div className="grid gap-1">
+              {(
+                [
+                  ["day", "Just this date"],
+                  ["range", "Weekly, until a date I choose"],
+                  ["term", "Weekly, to the end of term"],
+                ] as Array<[AddScope, string]>
+              ).map(([value, text]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setAddScope(value)}
+                  className={`rounded-md border px-3 py-1.5 text-left text-sm transition-colors ${
+                    addScope === value
+                      ? "border-primary bg-primary/5"
+                      : "hover:border-primary/40"
+                  }`}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+            {addScope === "range" && (
+              <Input
+                type="date"
+                value={addUntil}
+                min={date ?? undefined}
+                onChange={(e) => setAddUntil(e.target.value)}
+              />
+            )}
+            {addScope !== "day" && (
+              <p className="text-xs text-muted-foreground">
+                Weekly on this weekday, not every day. Dates already taken, or
+                declared off, are skipped and reported.
+              </p>
+            )}
+
             <div className="flex gap-2">
               <Button size="sm" onClick={() => void handleAdd()} disabled={busy === "add"}>
                 {busy === "add" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
@@ -382,6 +428,8 @@ const CalendarDayDialog = ({
               onClick={() => {
                 setAdding(true);
                 setAddCohort(cohorts[0]?.id ?? "");
+                setAddScope("day");
+                setAddUntil("");
               }}
             >
               <Plus className="mr-1 h-4 w-4" />

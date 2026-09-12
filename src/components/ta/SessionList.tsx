@@ -34,7 +34,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { createAdHocSession, listSessions } from "@/lib/api/sessions";
+import {
+  createAdHocSessions,
+  describeAdd,
+  listSessions,
+  untilFor,
+  type AddScope,
+} from "@/lib/api/sessions";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionEditDialog from "@/components/ta/dialogs/SessionEditDialog";
 import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
@@ -48,6 +54,8 @@ interface SessionListProps {
   cohorts: CohortRow[];
   /** The class's own timezone, so times read as the room saw them. */
   timezone: string;
+  /** Caps "for the rest of term" at the class's own end date. */
+  termEndsOn: string;
   /** Bump to force a reload — a schedule change elsewhere. */
   refreshToken?: number;
 }
@@ -100,6 +108,7 @@ const SessionList = ({
   classId,
   cohorts,
   timezone,
+  termEndsOn,
   refreshToken = 0,
 }: SessionListProps) => {
   const { toast } = useToast();
@@ -124,6 +133,18 @@ const SessionList = ({
   const [addDate, setAddDate] = useState("");
   const [addTime, setAddTime] = useState("09:00");
   const [addDuration, setAddDuration] = useState("");
+  /*
+   * How far the new session repeats.
+   *
+   * "day" is one date. "range" and "term" repeat weekly on that weekday, which
+   * is what a TA means by picking a Tuesday and saying "to the end of term" —
+   * a daily reading would quietly create sixty sessions.
+   *
+   * These stay instances rather than becoming a rule: the Schedule editor owns
+   * the weekly pattern, and anything added here is immune to it.
+   */
+  const [addScope, setAddScope] = useState<AddScope>("day");
+  const [addUntil, setAddUntil] = useState("");
 
   const [markingAll, setMarkingAll] = useState<SessionRow | null>(null);
   const [overwriteAll, setOverwriteAll] = useState(false);
@@ -228,18 +249,14 @@ const SessionList = ({
 
     setBusyId("adding");
     try {
-      const result = await createAdHocSession(
-        addCohort,
-        addDate,
-        addTime,
-        addDuration.trim() ? Number(addDuration) : undefined,
-      );
+      const result = await createAdHocSessions(addCohort, addDate, addTime, {
+        to: untilFor(addScope, addDate, addUntil, termEndsOn),
+        durationMinutes: addDuration.trim() ? Number(addDuration) : undefined,
+      });
 
       toast({
-        title: "Session added",
-        description: result.outside_term
-          ? `Cohort ${result.cohort} on ${dateOf(result.session_date)}. This is outside the term, so it will not appear in term-wide figures.`
-          : `Cohort ${result.cohort} on ${dateOf(result.session_date)}. A schedule change will not move or remove it.`,
+        title: result.created === 1 ? "Session added" : "Sessions added",
+        description: describeAdd(result),
       });
       setAdding(false);
       await load();
@@ -310,6 +327,8 @@ const SessionList = ({
               setAddDate(todayStr());
               setAddTime("09:00");
               setAddDuration("");
+              setAddScope("day");
+              setAddUntil("");
             }}
           >
             <CalendarPlus className="mr-1 h-4 w-4" />
@@ -508,6 +527,51 @@ const SessionList = ({
                   onChange={(e) => setAddTime(e.target.value)}
                 />
               </div>
+            </div>
+
+            {/*
+              How far it repeats. Three named choices rather than a date field
+              that might be blank: "to the end of term" is the common case and
+              reading it off the class saves the TA finding the date.
+            */}
+            <div className="space-y-2">
+              <Label>Repeat</Label>
+              <div className="grid gap-1">
+                {(
+                  [
+                    ["day", "Just this date"],
+                    ["range", "Weekly, until a date I choose"],
+                    ["term", "Weekly, to the end of term"],
+                  ] as Array<[AddScope, string]>
+                ).map(([value, text]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setAddScope(value)}
+                    className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                      addScope === value
+                        ? "border-primary bg-primary/5"
+                        : "hover:border-primary/40"
+                    }`}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+              {addScope === "range" && (
+                <Input
+                  type="date"
+                  value={addUntil}
+                  min={addDate}
+                  onChange={(e) => setAddUntil(e.target.value)}
+                />
+              )}
+              {addScope !== "day" && (
+                <p className="text-xs text-muted-foreground">
+                  Repeats weekly on the same weekday, not every day. Dates
+                  already taken, or declared off, are skipped and reported.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

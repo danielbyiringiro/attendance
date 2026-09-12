@@ -77,12 +77,14 @@ const Sessions = () => {
               classId={activeClass.id}
               cohorts={cohorts}
               timezone={activeClass.timezone}
+              termEndsOn={activeClass.term_ends_on}
             />
           ) : (
             <SessionCalendar
               classId={activeClass.id}
               cohorts={cohorts}
               timezone={activeClass.timezone}
+              termEndsOn={activeClass.term_ends_on}
             />
           )}
         </CardContent>

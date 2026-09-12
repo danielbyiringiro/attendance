@@ -46,10 +46,13 @@ const SessionCalendar = ({
   classId,
   cohorts,
   timezone,
+  termEndsOn,
 }: {
   classId: string;
   cohorts: CohortRow[];
   timezone: string;
+  /** Caps "for the rest of term" at the class's own end date. */
+  termEndsOn: string;
 }) => {
   const today = todayStr();
   const [cursor, setCursor] = useState(() => {
@@ -251,6 +254,7 @@ const SessionCalendar = ({
         sessions={openDay ? (byDate.get(openDay) ?? []) : []}
         dayOff={openDay ? (offByDate.get(openDay) ?? null) : null}
         timezone={timezone}
+        termEndsOn={termEndsOn}
         onClose={() => setOpenDay(null)}
         onChanged={load}
         onEdit={(s) => {
