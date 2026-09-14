@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import StudentLogin, { type MarkResult } from "@/components/StudentLogin";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -137,6 +137,15 @@ const Index = () => {
   const [isTA, setIsTA] = useState(false);
   const [identity, setIdentity] = useState<StaffIdentity | null>(null);
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
+  /*
+   * Why the account could not be checked, when it could not.
+   *
+   * Before this, a failed or hung lookup left `identity` null, and the render
+   * treats a signed-in user with no identity as still loading. So any failure
+   * of ensure_staff showed "Checking your account…" forever, with nothing on
+   * screen to say it had failed, nothing to retry and no way to sign out.
+   */
+  const [identityError, setIdentityError] = useState<string | null>(null);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
   const [taTab, setTaTab] = useState<TATab>(
@@ -147,6 +156,46 @@ const Index = () => {
   // refreshing keeps the TA logged in. Any authenticated user is a TA — TA
   // accounts are provisioned in the Supabase dashboard, there is no public
   // signup.
+  /*
+   * Who is signed in, and whether they may use the dashboard.
+   *
+   * A lookup that fails, or does not come back, now ends in an error the user
+   * can see and act on instead of an endless "Checking your account…". Fifteen
+   * seconds is far longer than ensure_staff ever takes when it works, so
+   * reaching it means something is wrong rather than slow.
+   */
+  const resolveIdentity = useCallback(async () => {
+    setIsResolvingIdentity(true);
+    setIdentityError(null);
+    try {
+      const identity = await new Promise<StaffIdentity>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("The account check did not respond.")),
+          15_000,
+        );
+        ensureStaff().then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
+      setIdentity(identity);
+    } catch (e) {
+      console.error("ensure_staff failed:", e);
+      // Still never promotes anybody: no identity means no dashboard. What
+      // changed is that the reason is shown rather than a spinner.
+      setIdentity(null);
+      setIdentityError(e instanceof Error ? e.message : "Unexpected error.");
+    } finally {
+      setIsResolvingIdentity(false);
+    }
+  }, []);
+
   useEffect(() => {
     // A staff row is what current_staff_id() resolves to, and without one an
     // account cannot create a class. The bootstrap in migration 003 only ran
@@ -156,36 +205,42 @@ const Index = () => {
     // A staff row is what current_staff_id() resolves to, and since 020 it also
     // carries the approval that decides whether the account can do anything.
     // Awaited now, unlike before: the answer determines which screen renders.
-    const resolve = async () => {
-      setIsResolvingIdentity(true);
-      try {
-        setIdentity(await ensureStaff());
-      } catch (e) {
-        console.error("ensure_staff failed:", e);
-        // Failing to resolve must not silently promote somebody: treat it as
-        // not yet approved rather than assuming the best.
-        setIdentity(null);
-      } finally {
-        setIsResolvingIdentity(false);
-      }
-    };
-
     supabase.auth.getSession().then(({ data }) => {
       setIsTA(!!data.session);
-      if (data.session) void resolve();
+      if (data.session) void resolveIdentity();
       else setIdentity(null);
     });
 
+    /*
+     * Only a real sign-in or sign-out changes who this is.
+     *
+     * The listener used to re-run the lookup on every event, including the
+     * INITIAL_SESSION that getSession above already handles — so every load
+     * fired ensure_staff twice — and TOKEN_REFRESHED, which a deployed tab
+     * with an older session hits on load and a fresh localhost session does
+     * not.
+     *
+     * And the lookup is deferred out of the callback with setTimeout. The
+     * callback runs while the auth client is still processing the change, and
+     * calling back into Supabase from inside it can wait on that same work;
+     * stepping out of the callback first removes the question entirely.
+     */
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setIsTA(!!session);
-      if (session) void resolve();
-      else setIdentity(null);
+      if (!session) {
+        setIdentity(null);
+        setIdentityError(null);
+        return;
+      }
+      if (event === "SIGNED_IN") {
+        setTimeout(() => void resolveIdentity(), 0);
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [resolveIdentity]);
 
   // Students mark attendance through a server-side RPC. The PIN is verified
   // inside the database, so the browser never needs to know it and every rule
@@ -293,6 +348,25 @@ const Index = () => {
   // must not read like one.
   if (isTA && identity && identity.status !== "approved") {
     return <AccountPending identity={identity} onSignOut={handleTALogout} />;
+  }
+
+  if (isTA && identityError && !isResolvingIdentity) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-6">
+        <div className="max-w-md space-y-3 text-center">
+          <p className="text-lg font-semibold">
+            Could not check your account
+          </p>
+          <p className="text-sm text-muted-foreground">{identityError}</p>
+          <div className="flex justify-center gap-2">
+            <Button onClick={() => void resolveIdentity()}>Try again</Button>
+            <Button variant="outline" onClick={handleTALogout}>
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isTA && (isResolvingIdentity || !identity)) {
