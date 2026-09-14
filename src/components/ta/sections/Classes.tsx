@@ -19,7 +19,6 @@ import ClassFormDialog from "@/components/ta/dialogs/ClassFormDialog";
 import DeleteClassDialog from "@/components/ta/dialogs/DeleteClassDialog";
 import ClassMembers from "@/components/ta/ClassMembers";
 import CohortReportSettings from "@/components/ta/CohortReportSettings";
-import WeeklyAbsenceThreshold from "@/components/ta/WeeklyAbsenceThreshold";
 import type { ClassWithCohorts } from "@/lib/api/types";
 
 /**
@@ -272,12 +271,6 @@ const Classes = () => {
         {expanded === c.id && !isArchived && (
           <>
             <ClassMembers classId={c.id} className="mt-4 border-t pt-4" />
-            <WeeklyAbsenceThreshold
-              classId={c.id}
-              threshold={c.weekly_absence_threshold}
-              onSaved={refresh}
-              className="mt-4 border-t pt-4"
-            />
             <CohortReportSettings
               classId={c.id}
               cohorts={c.cohorts}

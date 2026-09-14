@@ -15,15 +15,13 @@ interface WeeklyAbsenceThresholdProps {
   classId: string;
   /** What is stored for the class now. */
   threshold: number;
-  /** Re-read the classes, so the Weekly Absences report picks the change up. */
+  /** Re-read the classes, so the report picks the saved number up. */
   onSaved: () => Promise<void> | void;
   /**
-   * The number being typed while it is valid, null while it is not, so a
-   * report on the same screen can follow it before it is saved.
+   * The number being typed while it is valid, null while it is not, so the
+   * weeks on screen can follow it before it is saved.
    */
-  onPreview?: (threshold: number | null) => void;
-  /** One line, for the Weekly Absences dialog. The full form is for Classes. */
-  compact?: boolean;
+  onPreview: (threshold: number | null) => void;
   className?: string;
 }
 
@@ -40,23 +38,21 @@ const isValidThreshold = (raw: string): boolean => {
 /**
  * How many absences in a week put a student on the Weekly Absences report.
  *
- * One number for the whole class (migration 043); it was a fixed 2. Shown in
- * two places that share this component so they cannot disagree:
+ * One number for the whole class (migration 043); it was a fixed 2. It lives in
+ * the Weekly Absences dialog, beside the cohort filter, because that is where
+ * its effect can be seen: a typed number is a preview the weeks follow at once,
+ * and only "Save for this class" keeps it. Closing the dialog without saving
+ * leaves the class as it was.
  *
- *   Classes, beside the lecturer and FI names    set once a term
- *   the Weekly Absences dialog, compact          tried against the weeks on
- *                                                screen, then saved
- *
- * In the dialog a typed number is a preview until "Save for this class": the
- * weeks follow it at once, and closing without saving leaves the class as it
- * was.
+ * It was briefly also under Classes. Two places to set one number is one more
+ * than it needs, and the one away from the report is the one where you cannot
+ * see what the number does.
  */
 const WeeklyAbsenceThreshold = ({
   classId,
   threshold,
   onSaved,
   onPreview,
-  compact = false,
   className,
 }: WeeklyAbsenceThresholdProps) => {
   const { toast } = useToast();
@@ -74,7 +70,7 @@ const WeeklyAbsenceThreshold = ({
 
   const handleChange = (raw: string) => {
     setValue(raw);
-    onPreview?.(isValidThreshold(raw) ? Number(raw) : null);
+    onPreview(isValidThreshold(raw) ? Number(raw) : null);
   };
 
   const handleSave = async () => {
@@ -98,88 +94,59 @@ const WeeklyAbsenceThreshold = ({
     }
   };
 
-  const inputId = `weekly-absence-threshold-${compact ? "dialog" : "classes"}-${classId}`;
-
-  const input = (
-    <Input
-      id={inputId}
-      type="number"
-      inputMode="numeric"
-      min={MIN_WEEKLY_ABSENCE_THRESHOLD}
-      max={MAX_WEEKLY_ABSENCE_THRESHOLD}
-      step={1}
-      value={value}
-      onChange={(e) => handleChange(e.target.value)}
-      className={compact ? "h-9 w-16" : "w-24"}
-    />
-  );
-
-  const saveButton = (label: string) => (
-    <Button
-      size="sm"
-      variant={compact ? "outline" : "default"}
-      onClick={() => void handleSave()}
-      disabled={isSaving || !changed}
-    >
-      {isSaving ? (
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-      ) : (
-        <Save className="mr-2 h-4 w-4" />
-      )}
-      {label}
-    </Button>
-  );
-
-  if (compact) {
-    return (
-      <div className={className}>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Label htmlFor={inputId} className="whitespace-nowrap">
-            Listed from
-          </Label>
-          {input}
-          <span className="whitespace-nowrap text-muted-foreground">
-            {valid && parsed === 1 ? "absence" : "absences"} a week
-          </span>
-          {/* Only when there is something to keep: a Save beside the number
-              the class already has reads as if it were unsaved. */}
-          {changed && saveButton("Save for this class")}
-        </div>
-        {!valid ? (
-          <p className="mt-1 text-xs text-destructive">
-            Enter a whole number from {MIN_WEEKLY_ABSENCE_THRESHOLD} to{" "}
-            {MAX_WEEKLY_ABSENCE_THRESHOLD}.
-          </p>
-        ) : (
-          changed && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Previewing — not saved. This class is set to {threshold}.
-            </p>
-          )
-        )}
-      </div>
-    );
-  }
+  const inputId = `weekly-absence-threshold-${classId}`;
 
   return (
     <div className={className}>
-      <h3 className="mb-2 text-sm font-medium">Weekly absence report</h3>
-
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="space-y-1">
-          <Label htmlFor={inputId}>Absences in a week to be listed</Label>
-          {input}
-        </div>
-        {saveButton("Save")}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Label htmlFor={inputId} className="whitespace-nowrap">
+          Listed from
+        </Label>
+        <Input
+          id={inputId}
+          type="number"
+          inputMode="numeric"
+          min={MIN_WEEKLY_ABSENCE_THRESHOLD}
+          max={MAX_WEEKLY_ABSENCE_THRESHOLD}
+          step={1}
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          className="h-9 w-16"
+        />
+        <span className="whitespace-nowrap text-muted-foreground">
+          {valid && parsed === 1 ? "absence" : "absences"} a week
+        </span>
+        {/* Only when there is something to keep: a Save beside the number the
+            class already has reads as if it were unsaved. */}
+        {changed && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleSave()}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Save for this class
+          </Button>
+        )}
       </div>
 
-      <p
-        className={`mt-2 text-xs ${valid ? "text-muted-foreground" : "text-destructive"}`}
-      >
-        {valid
-          ? `Students absent ${thresholdPhrase(parsed)} in a week are listed. Applies to every cohort of this class.`
-          : `Enter a whole number from ${MIN_WEEKLY_ABSENCE_THRESHOLD} to ${MAX_WEEKLY_ABSENCE_THRESHOLD}.`}
-      </p>
+      {!valid ? (
+        <p className="mt-1 text-xs text-destructive">
+          Enter a whole number from {MIN_WEEKLY_ABSENCE_THRESHOLD} to{" "}
+          {MAX_WEEKLY_ABSENCE_THRESHOLD}.
+        </p>
+      ) : (
+        changed && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Previewing — not saved. This class is set to {threshold}.
+          </p>
+        )
+      )}
     </div>
   );
 };

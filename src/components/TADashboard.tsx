@@ -938,7 +938,7 @@ const TADashboard = ({
   const yearGroupOf = (studentId: string) => studentId.slice(-4);
 
   // How many absences in a week put a student in the report. A class setting
-  // since migration 043, set under Classes or in the dialog; it was a fixed 2.
+  // since migration 043, set in the Weekly Absences dialog; it was a fixed 2.
   // A number being previewed in the dialog wins until it is saved or dropped.
   const storedWeeklyThreshold =
     activeClass?.weekly_absence_threshold ?? DEFAULT_WEEKLY_ABSENCE_THRESHOLD;
@@ -2326,7 +2326,6 @@ const TADashboard = ({
 
               {activeClass && (
                 <WeeklyAbsenceThreshold
-                  compact
                   classId={activeClass.id}
                   threshold={storedWeeklyThreshold}
                   onSaved={refresh}

@@ -6,9 +6,9 @@
 -- was written into the dashboard, so a class whose faculty wants every single
 -- absence reported, or only three or more, had no way to say so.
 --
--- It is now a setting on the class: one number for every cohort, set under
--- Classes beside the lecturer and FI names the same report uses. The default is
--- 2, so nothing changes for a class until somebody changes it.
+-- It is now a setting on the class: one number for every cohort, set in the
+-- Weekly Absences dialog itself, where its effect on the weeks can be seen.
+-- The default is 2, so nothing changes for a class until somebody changes it.
 --
 -- Set through its own function rather than a new parameter on update_class.
 -- update_class is called with named arguments from the app, and adding a
