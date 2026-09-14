@@ -914,6 +914,45 @@ stub.__setTables({
   eq("with nothing recorded, so they are there to be marked", late?.state, null);
 }
 
+// ---------------------------------------------------------------------------
+// weeklyAbsence — who the Weekly Absences report lists
+//
+// The threshold was a literal 2 in three places in the dashboard. It is a class
+// setting now (migration 043), applied here, so a 3 has to exclude a student
+// absent twice and a 1 has to include everybody absent at all.
+// ---------------------------------------------------------------------------
+
+const weeklyOut = join(mkdtempSync(join(tmpdir(), "weekly-")), "weekly.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/weeklyAbsence.ts")],
+  outfile: weeklyOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { reportableAbsences, thresholdPhrase, DEFAULT_WEEKLY_ABSENCE_THRESHOLD } =
+  await import(pathToFileURL(weeklyOut).href);
+
+console.log("\nweeklyAbsence");
+
+{
+  const week = [
+    { student_id: "once", cohort: "A", frequency: 1 },
+    { student_id: "twice", cohort: "A", frequency: 2 },
+    { student_id: "thrice", cohort: "B", frequency: 3 },
+  ];
+  const ids = (rows) => rows.map((a) => a.student_id);
+
+  eq("the default is still 2, what the report always used", DEFAULT_WEEKLY_ABSENCE_THRESHOLD, 2);
+  eq("at 2, a single absence is left out", ids(reportableAbsences(week, 2, "all")), ["twice", "thrice"]);
+  eq("at 3, twice is no longer enough", ids(reportableAbsences(week, 3, "all")), ["thrice"]);
+  eq("at 1, every absence is reported", ids(reportableAbsences(week, 1, "all")), ["once", "twice", "thrice"]);
+  eq("the cohort filter still applies", ids(reportableAbsences(week, 1, "A")), ["once", "twice"]);
+  eq("the message says the number that was used", thresholdPhrase(3), "3 times or more");
+  eq("and reads naturally for the default", thresholdPhrase(2), "twice or more");
+}
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

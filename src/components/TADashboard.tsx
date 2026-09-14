@@ -78,7 +78,13 @@ import AccessibilitySettings from "@/components/AccessibilitySettings";
 import StudentRoster from "@/components/ta/StudentRoster";
 import AnalyticsOverview from "@/components/ta/AnalyticsOverview";
 import RosterUpload from "@/components/ta/RosterUpload";
+import WeeklyAbsenceThreshold from "@/components/ta/WeeklyAbsenceThreshold";
 import { useActiveClass } from "@/lib/classContext";
+import {
+  DEFAULT_WEEKLY_ABSENCE_THRESHOLD,
+  reportableAbsences,
+  thresholdPhrase,
+} from "@/lib/weeklyAbsence";
 import {
   dropEnrolment,
   listEnrolments,
@@ -173,7 +179,7 @@ const TADashboard = ({
   // database. It used to arrive as a prop from Index.tsx, which selected the
   // whole `students` table — so every screen below showed the same people
   // regardless of which class was picked in the sidebar.
-  const { activeClass, activeClassId, cohorts } = useActiveClass();
+  const { activeClass, activeClassId, cohorts, refresh } = useActiveClass();
   const [roster, setRoster] = useState<RosterStudent[]>([]);
   const [isRosterLoading, setIsRosterLoading] = useState(false);
 
@@ -348,6 +354,20 @@ const TADashboard = ({
   const [isLoadingWeeklyAbsences, setIsLoadingWeeklyAbsences] = useState(false);
   const [weeklyAbsenceCohortFilter, setWeeklyAbsenceCohortFilter] =
     useState("all");
+
+  /*
+   * A threshold typed into the Weekly Absences dialog and not saved yet.
+   *
+   * The weeks follow it straight away, so the effect of a number is seen
+   * before it is kept. Closing the dialog drops it: an unsaved number must
+   * not quietly become what the report uses next time.
+   */
+  const [previewWeeklyThreshold, setPreviewWeeklyThreshold] = useState<
+    number | null
+  >(null);
+  useEffect(() => {
+    if (!showWeeklyAbsenceDialog) setPreviewWeeklyThreshold(null);
+  }, [showWeeklyAbsenceDialog]);
 
   // Weekly report (week-by-week, copy-paste rows for the spreadsheet)
   const [weeklyReport, setWeeklyReport] = useState<WeekReport[]>([]);
@@ -917,22 +937,29 @@ const TADashboard = ({
   // Last 4 characters of the student ID = year group.
   const yearGroupOf = (studentId: string) => studentId.slice(-4);
 
+  // How many absences in a week put a student in the report. A class setting
+  // since migration 043, set in the Weekly Absences dialog; it was a fixed 2.
+  // A number being previewed in the dialog wins until it is saved or dropped.
+  const storedWeeklyThreshold =
+    activeClass?.weekly_absence_threshold ?? DEFAULT_WEEKLY_ABSENCE_THRESHOLD;
+  const weeklyThreshold = previewWeeklyThreshold ?? storedWeeklyThreshold;
+
   // Build the tab-separated block for a week (pastes into Excel columns
-  // Student's Name → Feedback). Respects the cohort filter.
+  // Student's Name → Feedback). Respects the cohort filter and the threshold.
   const buildWeekTSV = (week: WeekReport) => {
-    const rows = week.absences.filter(
-      (a) =>
-        // Only students absent twice or thrice are reported.
-        a.frequency >= 2 &&
-        (weeklyAbsenceCohortFilter === "all" ||
-          a.cohort === weeklyAbsenceCohortFilter),
+    const rows = reportableAbsences(
+      week.absences,
+      weeklyThreshold,
+      weeklyAbsenceCohortFilter,
     );
     return rows
       .map((a) => {
         const pair = reportPairs[a.cohort] || { instructor: "", fi: "" };
-        // Feedback only for students absent twice or thrice in the week.
-        const feedback =
-          a.frequency >= 2 ? `Was absent for ${a.frequency} days` : "";
+        // Every listed student has reached the threshold, so every row gets
+        // it — including a single absence when the class reports from 1.
+        const feedback = `Was absent for ${a.frequency} ${
+          a.frequency === 1 ? "day" : "days"
+        }`;
         return [
           a.name || a.student_id,
           yearGroupOf(a.student_id),
@@ -2297,6 +2324,15 @@ const TADashboard = ({
                 </SelectContent>
               </Select>
 
+              {activeClass && (
+                <WeeklyAbsenceThreshold
+                  classId={activeClass.id}
+                  threshold={storedWeeklyThreshold}
+                  onSaved={refresh}
+                  onPreview={setPreviewWeeklyThreshold}
+                />
+              )}
+
               <p className="text-xs text-muted-foreground">
                 Lecturer and FI come from Classes → the people icon.
               </p>
@@ -2355,7 +2391,8 @@ const TADashboard = ({
                         <div className="p-3 border-t space-y-2">
                           {count === 0 ? (
                             <p className="text-sm text-muted-foreground">
-                              No absences (twice or more) this week. 🎉
+                              No absences ({thresholdPhrase(weeklyThreshold)})
+                              this week. 🎉
                             </p>
                           ) : (
                             <>
