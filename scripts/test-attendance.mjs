@@ -693,7 +693,13 @@ await build({
   platform: "node",
   logLevel: "silent",
 });
-const { checkinUrl, pinFromSearch, searchWithoutPin, MAX_PIN_LENGTH } =
+const {
+  checkinUrl,
+  pinFromSearch,
+  searchWithoutPin,
+  MAX_PIN_LENGTH,
+  isUnreachableFromPhone,
+} =
   await import(pathToFileURL(linkOut).href);
 
 console.log("\ncheckinLink");
@@ -747,6 +753,14 @@ eq(
 eq("tidying keeps other parameters", searchWithoutPin("?a=1&pin=K7M2P&b=2"), "?a=1&b=2");
 eq("tidying the only parameter leaves nothing", searchWithoutPin("?pin=K7M2P"), "");
 eq("tidying an address without a pin changes nothing", searchWithoutPin("?a=1"), "?a=1");
+
+// A QR built on localhost points a phone at itself. The presenter warns when
+// that is the case, so the helper deciding it has to be right both ways.
+ok("localhost is unreachable from a phone", isUnreachableFromPhone("localhost"));
+ok("so is 127.0.0.1", isUnreachableFromPhone("127.0.0.1"));
+ok("and IPv6 loopback", isUnreachableFromPhone("[::1]"));
+ok("a network address is reachable", !isUnreachableFromPhone("192.168.1.20"));
+ok("and so is the deployed site", !isUnreachableFromPhone("attend.example.app"));
 
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the

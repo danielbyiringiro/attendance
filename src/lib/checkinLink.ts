@@ -64,3 +64,19 @@ export const searchWithoutPin = (search: string): string => {
   const rest = params.toString();
   return rest ? `?${rest}` : "";
 };
+
+/**
+ * True when the page is open on an address only this computer can reach.
+ *
+ * The QR encodes the address the presenter view is open on. Opened as
+ * localhost — the normal way to run the app while developing — that address,
+ * scanned on a phone, means the phone itself, so the scan leads nowhere and
+ * autofill looks broken when the code is fine. Deployed, the address is the
+ * real site and this is false.
+ */
+export const isUnreachableFromPhone = (hostname: string): boolean =>
+  hostname === "localhost" ||
+  hostname.endsWith(".localhost") ||
+  hostname === "127.0.0.1" ||
+  hostname === "::1" ||
+  hostname === "[::1]";

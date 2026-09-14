@@ -3,7 +3,7 @@ import { Clock } from "lucide-react";
 import type { SessionRow } from "@/lib/api/types";
 import { countdown, sessionWindow } from "@/lib/sessionWindow";
 import { useNow } from "@/lib/useNow";
-import { checkinUrl } from "@/lib/checkinLink";
+import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
 
 /**
  * What goes up on the projector: the code, how long is left, and a way in.
@@ -113,6 +113,7 @@ const PresentView = ({
   // What is printed under the QR: the bare site, so the code is not also
   // spelled out a second time in a line of small type.
   const siteText = checkinUrl(window.location.origin);
+  const phoneCannotReach = isUnreachableFromPhone(window.location.hostname);
 
   return (
     <div
@@ -176,6 +177,19 @@ const PresentView = ({
         <p className={`${full ? "text-base" : "text-xs"} break-all font-mono`}>
           {siteText}
         </p>
+        {/*
+          Only ever seen while developing. Without it, a scan that goes nowhere
+          reads as autofill being broken, when the problem is the address.
+        */}
+        {phoneCannotReach && (
+          <p
+            className={`${full ? "text-base" : "text-xs"} max-w-xs text-warning`}
+          >
+            This page is open on localhost, which a phone cannot reach. Open the
+            dashboard using this computer&apos;s network address instead, and
+            the QR code will work.
+          </p>
+        )}
       </div>
     </div>
   );
