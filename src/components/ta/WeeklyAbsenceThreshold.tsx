@@ -17,20 +17,46 @@ interface WeeklyAbsenceThresholdProps {
   threshold: number;
   /** Re-read the classes, so the Weekly Absences report picks the change up. */
   onSaved: () => Promise<void> | void;
+  /**
+   * The number being typed while it is valid, null while it is not, so a
+   * report on the same screen can follow it before it is saved.
+   */
+  onPreview?: (threshold: number | null) => void;
+  /** One line, for the Weekly Absences dialog. The full form is for Classes. */
+  compact?: boolean;
   className?: string;
 }
+
+const isValidThreshold = (raw: string): boolean => {
+  const n = Number(raw);
+  return (
+    raw.trim() !== "" &&
+    Number.isInteger(n) &&
+    n >= MIN_WEEKLY_ABSENCE_THRESHOLD &&
+    n <= MAX_WEEKLY_ABSENCE_THRESHOLD
+  );
+};
 
 /**
  * How many absences in a week put a student on the Weekly Absences report.
  *
- * Sits under Classes beside the lecturer and FI names, the other settings that
- * report uses: something set once a term, not changed while reading the report.
- * One number for the whole class (migration 043). It was a fixed 2.
+ * One number for the whole class (migration 043); it was a fixed 2. Shown in
+ * two places that share this component so they cannot disagree:
+ *
+ *   Classes, beside the lecturer and FI names    set once a term
+ *   the Weekly Absences dialog, compact          tried against the weeks on
+ *                                                screen, then saved
+ *
+ * In the dialog a typed number is a preview until "Save for this class": the
+ * weeks follow it at once, and closing without saving leaves the class as it
+ * was.
  */
 const WeeklyAbsenceThreshold = ({
   classId,
   threshold,
   onSaved,
+  onPreview,
+  compact = false,
   className,
 }: WeeklyAbsenceThresholdProps) => {
   const { toast } = useToast();
@@ -42,12 +68,14 @@ const WeeklyAbsenceThreshold = ({
     setValue(String(threshold));
   }, [threshold]);
 
+  const valid = isValidThreshold(value);
   const parsed = Number(value);
-  const valid =
-    value.trim() !== "" &&
-    Number.isInteger(parsed) &&
-    parsed >= MIN_WEEKLY_ABSENCE_THRESHOLD &&
-    parsed <= MAX_WEEKLY_ABSENCE_THRESHOLD;
+  const changed = valid && parsed !== threshold;
+
+  const handleChange = (raw: string) => {
+    setValue(raw);
+    onPreview?.(isValidThreshold(raw) ? Number(raw) : null);
+  };
 
   const handleSave = async () => {
     if (!valid) return;
@@ -70,7 +98,68 @@ const WeeklyAbsenceThreshold = ({
     }
   };
 
-  const inputId = `weekly-absence-threshold-${classId}`;
+  const inputId = `weekly-absence-threshold-${compact ? "dialog" : "classes"}-${classId}`;
+
+  const input = (
+    <Input
+      id={inputId}
+      type="number"
+      inputMode="numeric"
+      min={MIN_WEEKLY_ABSENCE_THRESHOLD}
+      max={MAX_WEEKLY_ABSENCE_THRESHOLD}
+      step={1}
+      value={value}
+      onChange={(e) => handleChange(e.target.value)}
+      className={compact ? "h-9 w-16" : "w-24"}
+    />
+  );
+
+  const saveButton = (label: string) => (
+    <Button
+      size="sm"
+      variant={compact ? "outline" : "default"}
+      onClick={() => void handleSave()}
+      disabled={isSaving || !changed}
+    >
+      {isSaving ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <Save className="mr-2 h-4 w-4" />
+      )}
+      {label}
+    </Button>
+  );
+
+  if (compact) {
+    return (
+      <div className={className}>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Label htmlFor={inputId} className="whitespace-nowrap">
+            Listed from
+          </Label>
+          {input}
+          <span className="whitespace-nowrap text-muted-foreground">
+            {valid && parsed === 1 ? "absence" : "absences"} a week
+          </span>
+          {/* Only when there is something to keep: a Save beside the number
+              the class already has reads as if it were unsaved. */}
+          {changed && saveButton("Save for this class")}
+        </div>
+        {!valid ? (
+          <p className="mt-1 text-xs text-destructive">
+            Enter a whole number from {MIN_WEEKLY_ABSENCE_THRESHOLD} to{" "}
+            {MAX_WEEKLY_ABSENCE_THRESHOLD}.
+          </p>
+        ) : (
+          changed && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Previewing — not saved. This class is set to {threshold}.
+            </p>
+          )
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>
@@ -79,31 +168,9 @@ const WeeklyAbsenceThreshold = ({
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1">
           <Label htmlFor={inputId}>Absences in a week to be listed</Label>
-          <Input
-            id={inputId}
-            type="number"
-            inputMode="numeric"
-            min={MIN_WEEKLY_ABSENCE_THRESHOLD}
-            max={MAX_WEEKLY_ABSENCE_THRESHOLD}
-            step={1}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            className="w-24"
-          />
+          {input}
         </div>
-
-        <Button
-          size="sm"
-          onClick={() => void handleSave()}
-          disabled={isSaving || !valid || parsed === threshold}
-        >
-          {isSaving ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="mr-2 h-4 w-4" />
-          )}
-          Save
-        </Button>
+        {saveButton("Save")}
       </div>
 
       <p
