@@ -125,6 +125,23 @@ export const updateClass = async (
   return data as ClassRow;
 };
 
+/**
+ * How many absences in a week put a student on the Weekly Absences report,
+ * 1 to 10, for every cohort of the class. Its own call rather than part of
+ * updateClass — see migration 043.
+ */
+export const setWeeklyAbsenceThreshold = async (
+  classId: string,
+  threshold: number,
+): Promise<number> => {
+  const { data, error } = await supabase.rpc("set_weekly_absence_threshold", {
+    p_class_id: classId,
+    p_threshold: threshold,
+  });
+  if (error) fail("Could not save the weekly report threshold", error);
+  return data as number;
+};
+
 export const addCohort = async (
   classId: string,
   label: string,

@@ -80,6 +80,11 @@ import AnalyticsOverview from "@/components/ta/AnalyticsOverview";
 import RosterUpload from "@/components/ta/RosterUpload";
 import { useActiveClass } from "@/lib/classContext";
 import {
+  DEFAULT_WEEKLY_ABSENCE_THRESHOLD,
+  reportableAbsences,
+  thresholdPhrase,
+} from "@/lib/weeklyAbsence";
+import {
   dropEnrolment,
   listEnrolments,
   upsertEnrolments,
@@ -917,22 +922,27 @@ const TADashboard = ({
   // Last 4 characters of the student ID = year group.
   const yearGroupOf = (studentId: string) => studentId.slice(-4);
 
+  // How many absences in a week put a student in the report. A class setting
+  // since migration 043, set under Classes; it was a fixed 2.
+  const weeklyThreshold =
+    activeClass?.weekly_absence_threshold ?? DEFAULT_WEEKLY_ABSENCE_THRESHOLD;
+
   // Build the tab-separated block for a week (pastes into Excel columns
-  // Student's Name → Feedback). Respects the cohort filter.
+  // Student's Name → Feedback). Respects the cohort filter and the threshold.
   const buildWeekTSV = (week: WeekReport) => {
-    const rows = week.absences.filter(
-      (a) =>
-        // Only students absent twice or thrice are reported.
-        a.frequency >= 2 &&
-        (weeklyAbsenceCohortFilter === "all" ||
-          a.cohort === weeklyAbsenceCohortFilter),
+    const rows = reportableAbsences(
+      week.absences,
+      weeklyThreshold,
+      weeklyAbsenceCohortFilter,
     );
     return rows
       .map((a) => {
         const pair = reportPairs[a.cohort] || { instructor: "", fi: "" };
-        // Feedback only for students absent twice or thrice in the week.
-        const feedback =
-          a.frequency >= 2 ? `Was absent for ${a.frequency} days` : "";
+        // Every listed student has reached the threshold, so every row gets
+        // it — including a single absence when the class reports from 1.
+        const feedback = `Was absent for ${a.frequency} ${
+          a.frequency === 1 ? "day" : "days"
+        }`;
         return [
           a.name || a.student_id,
           yearGroupOf(a.student_id),
@@ -2355,7 +2365,8 @@ const TADashboard = ({
                         <div className="p-3 border-t space-y-2">
                           {count === 0 ? (
                             <p className="text-sm text-muted-foreground">
-                              No absences (twice or more) this week. 🎉
+                              No absences ({thresholdPhrase(weeklyThreshold)})
+                              this week. 🎉
                             </p>
                           ) : (
                             <>

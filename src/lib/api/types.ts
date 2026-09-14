@@ -39,6 +39,11 @@ export interface ClassRow {
   default_late_window_minutes: number;
   default_auto_close_minutes: number;
   default_early_open_minutes: number;
+  /**
+   * Absences in a week that put a student on the Weekly Absences report.
+   * Migration 043; 2 until somebody changes it.
+   */
+  weekly_absence_threshold: number;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
