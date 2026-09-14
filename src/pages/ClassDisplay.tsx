@@ -1,17 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Lock, Maximize, Monitor } from "lucide-react";
 import PresentView from "@/components/ta/PresentView";
+import SoundToggle from "@/components/SoundToggle";
 import { getClassDisplay, type ClassDisplayResult } from "@/lib/api/display";
 import {
   DISPLAY_CODE_LENGTH,
   normalizeDisplayCode,
   pickDisplay,
 } from "@/lib/classDisplay";
+import {
+  checkInCounts,
+  newCheckIns,
+  playCheckInBeep,
+  primeSound,
+} from "@/lib/checkInSound";
 import { useNow } from "@/lib/useNow";
+import { useSoundPreference } from "@/lib/useSoundPreference";
 
 /**
  * The class display: /display/:token.
@@ -21,9 +29,16 @@ import { useNow } from "@/lib/useNow";
  * is what lets it show anything. See migration 041.
  *
  * Built to be left up all day. It re-reads every 15 seconds and whenever the
- * tab becomes visible, and chooses what to show from what comes back: every
- * session running now, otherwise a countdown to the next one today, otherwise
- * when the class next meets. Nobody has to touch it between classes.
+ * tab becomes visible, every 5 while a session is taking check-ins, and chooses
+ * what to show from what comes back: every session running now, otherwise a
+ * countdown to the next one today, otherwise when the class next meets. Nobody
+ * has to touch it between classes.
+ *
+ * It beeps when students check in (migration 044). With no realtime for a
+ * signed-out screen, it compares each session's check-in count with the last
+ * read and beeps for the difference — so a beep can trail the scan by a few
+ * seconds, and a screen switched on mid-class does not beep for everyone who
+ * arrived before it. Muted from the button beside Full screen, remembered here.
  *
  * The code is remembered on this device, so a reload or a power cut does not
  * need somebody to come and type it again. "Lock screen" forgets it. When the
@@ -44,6 +59,8 @@ type State =
 type Source = "typed" | "stored" | "poll";
 
 const REFRESH_MS = 15_000;
+/** While check-in is running, so a beep follows a scan closely. */
+const LIVE_REFRESH_MS = 5_000;
 
 const storageKey = (token: string) => `class-display-code:${token}`;
 
@@ -86,8 +103,16 @@ const ClassDisplay = () => {
   const [state, setState] = useState<State>(
     stored ? { kind: "checking" } : { kind: "code", message: null },
   );
+  const [sound, setSound] = useSoundPreference("attendance.sound.presenter");
   // Re-evaluates which session to show as the clock moves between refreshes.
   const now = useNow(state.kind === "ready", 1000);
+
+  // Read inside `check`, which is memoised on the token alone: the beep has to
+  // follow the toggle without rebuilding the polling loop.
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  /** Each session's check-in count at the last successful read. */
+  const countsRef = useRef<Map<string, number> | null>(null);
 
   const check = useCallback(
     async (candidate: string, source: Source) => {
@@ -95,6 +120,10 @@ const ClassDisplay = () => {
         const r = await getClassDisplay(token, candidate);
 
         if (r.ok) {
+          const arrived = newCheckIns(countsRef.current, r.sessions);
+          countsRef.current = checkInCounts(r.sessions);
+          if (arrived > 0 && soundRef.current) playCheckInBeep(arrived);
+
           storeCode(token, candidate);
           setCode(candidate);
           setState({ kind: "ready", data: r });
@@ -104,6 +133,7 @@ const ClassDisplay = () => {
         // Refused: forget the code, so a reload cannot put it back.
         storeCode(token, null);
         setCode(null);
+        countsRef.current = null;
 
         if (r.reason === "locked") {
           setState({ kind: "locked" });
@@ -136,10 +166,17 @@ const ClassDisplay = () => {
     if (stored) void check(stored, "stored");
   }, [stored, check]);
 
+  const checkingInNow =
+    state.kind === "ready" &&
+    pickDisplay(state.data.sessions, now).kind === "active";
+
   useEffect(() => {
     if (state.kind !== "ready" || !code) return;
 
-    const id = setInterval(() => void check(code, "poll"), REFRESH_MS);
+    const id = setInterval(
+      () => void check(code, "poll"),
+      checkingInNow ? LIVE_REFRESH_MS : REFRESH_MS,
+    );
     const onVisible = () => {
       if (document.visibilityState === "visible") void check(code, "poll");
     };
@@ -149,10 +186,12 @@ const ClassDisplay = () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [state.kind, code, check]);
+  }, [state.kind, code, check, checkingInNow]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Typing the code is the tap that lets this screen make sound later.
+    if (sound) primeSound();
     const candidate = normalizeDisplayCode(typed);
 
     // Checked here so a typo of the wrong length does not count as one of the
@@ -177,6 +216,7 @@ const ClassDisplay = () => {
     storeCode(token, null);
     setCode(null);
     setTyped("");
+    countsRef.current = null;
     setState({ kind: "code", message: null });
   };
 
@@ -266,6 +306,11 @@ const ClassDisplay = () => {
       return (
         <div className="relative flex min-h-screen items-center justify-center bg-background p-6 pt-14 sm:p-10 sm:pt-14">
           <div className="absolute right-3 top-3 flex gap-1">
+            <SoundToggle
+              enabled={sound}
+              onChange={setSound}
+              className="text-muted-foreground"
+            />
             <Button
               variant="ghost"
               size="sm"

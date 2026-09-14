@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { isStudentCheckIn, type RecordChange } from "@/lib/checkInSound";
 
 /**
  * Re-read when somebody else changes something.
@@ -27,23 +29,44 @@ import { supabase } from "@/lib/supabase";
  *
  * Both call the same reload. Duplicate work is a wasted query; a missed event
  * is a TA telling a student they were not marked when they were.
+ *
+ * `onCheckIn` hears each student check-in as it arrives, for the beep. Realtime
+ * only: a check-in the poll catches after a dropped socket is counted on screen
+ * but not beeped for, which is the right way round — a burst of stale beeps
+ * minutes late would be worse than none.
  */
 export const useLiveClass = (
   classId: string | null,
   reload: () => void | Promise<void>,
-  opts: { active?: boolean; pollMs?: number } = {},
+  opts: {
+    active?: boolean;
+    pollMs?: number;
+    onCheckIn?: (change: RecordChange) => void;
+  } = {},
 ) => {
-  const { active = false, pollMs = 20_000 } = opts;
+  const { active = false, pollMs = 20_000, onCheckIn } = opts;
 
-  // Kept in a ref so a re-created callback does not tear down the subscription
+  // Kept in refs so a re-created callback does not tear down the subscription
   // and build a new one on every render. The channel outlives the closure.
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
+  const onCheckInRef = useRef(onCheckIn);
+  onCheckInRef.current = onCheckIn;
 
   useEffect(() => {
     if (!classId) return;
 
     const fire = () => void reloadRef.current();
+
+    const onRecord = (
+      payload: RealtimePostgresChangesPayload<Record<string, unknown>>,
+    ) => {
+      fire();
+      const change = payload as unknown as RecordChange;
+      if (onCheckInRef.current && isStudentCheckIn(change)) {
+        onCheckInRef.current(change);
+      }
+    };
 
     const channel = supabase
       .channel(`class:${classId}`)
@@ -55,7 +78,7 @@ export const useLiveClass = (
           table: "attendance_records",
           filter: `class_id=eq.${classId}`,
         },
-        fire,
+        onRecord,
       )
       .on(
         "postgres_changes",

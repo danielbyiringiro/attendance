@@ -14,7 +14,10 @@ import {
 import { CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Logo from "@/components/Logo";
+import SoundToggle from "@/components/SoundToggle";
 import { pinFromSearch, searchWithoutPin } from "@/lib/checkinLink";
+import { playCheckInBeep, primeSound } from "@/lib/checkInSound";
+import { useSoundPreference } from "@/lib/useSoundPreference";
 
 export interface MarkResult {
   success: boolean;
@@ -65,6 +68,13 @@ interface StudentLoginProps {
  * The presenter only puts a code in the QR while check-in is live, so a scan
  * that carries one was an active code when it was scanned. Nothing is sent
  * until the student enters their ID and presses the button.
+ *
+ * THE BEEP
+ *
+ * The phone beeps when a check-in is accepted, so a student in a noisy room
+ * knows it worked without reading the screen. Muted from the toggle under the
+ * form, and remembered on the phone. The submit tap is what browsers require
+ * before a page may make sound, so it is primed there, before the request.
  */
 const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
@@ -82,6 +92,7 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [pinFromQr, setPinFromQr] = useState(scanned !== null);
   const [scanOpen, setScanOpen] = useState(scanned !== null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [sound, setSound] = useSoundPreference("attendance.sound.checkin");
 
   /*
    * Take the code out of the address bar once it has been read.
@@ -115,6 +126,7 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
       // The PIN is verified server-side; we never compare it in the browser.
       const result = await onMarkAttendance(id, code);
       if (result.success) {
+        if (sound) playCheckInBeep();
         setMarked(result);
         setStudentId("");
         setPin("");
@@ -128,6 +140,8 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Inside the tap, before the request: after the await it no longer counts.
+    if (sound) primeSound();
 
     if (!studentId.trim()) {
       toast({
@@ -159,6 +173,7 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
 
   const handleScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (sound) primeSound();
     if (!scanned) return;
 
     if (!studentId.trim()) {
@@ -346,6 +361,15 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
               The code decides which class you are marking, so you can use this
               page for any of your classes.
             </p>
+
+            <div className="mt-2 flex justify-center">
+              <SoundToggle
+                enabled={sound}
+                onChange={setSound}
+                label={sound ? "Beep when marked: on" : "Beep when marked: off"}
+                className="text-xs text-muted-foreground"
+              />
+            </div>
           </CardContent>
         </Card>
       </div>
