@@ -762,6 +762,114 @@ ok("and IPv6 loopback", isUnreachableFromPhone("[::1]"));
 ok("a network address is reachable", !isUnreachableFromPhone("192.168.1.20"));
 ok("and so is the deployed site", !isUnreachableFromPhone("attend.example.app"));
 
+// ---------------------------------------------------------------------------
+// classDisplay — what a signed-out screen shows, and how its code is compared
+//
+// A screen left up all day has to move from one session to the next without
+// anybody touching it, so which session it picks is the whole behaviour. And
+// the code normalisation has a twin in get_class_display (041): if the two
+// disagree, a correctly typed code is refused and nothing on screen says why.
+// ---------------------------------------------------------------------------
+
+const displayOut = join(mkdtempSync(join(tmpdir(), "display-")), "display.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/classDisplay.ts")],
+  outfile: displayOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { pickDisplay, normalizeDisplayCode, displayUrl } = await import(
+  pathToFileURL(displayOut).href
+);
+
+console.log("\nclassDisplay");
+
+{
+  const base = {
+    opened_at: null,
+    closed_at: null,
+    early_open_minutes: 10,
+    auto_close_minutes: 30,
+    late_window_minutes: 15,
+    duration_minutes: 60,
+    status: "scheduled",
+    pin: null,
+  };
+  const at = (id, cohort, startsAt, extra = {}) => ({
+    ...base,
+    id,
+    cohort_label: cohort,
+    starts_at: startsAt,
+    ...extra,
+  });
+  const now = new Date("2026-09-14T09:05:00Z");
+
+  // 09:00, opened 08:55: on time until 09:15, open until 09:30.
+  const liveA = at("a", "A", "2026-09-14T09:00:00Z", {
+    status: "open",
+    opened_at: "2026-09-14T08:55:00Z",
+    pin: "K7M2P",
+  });
+  // 09:02, opened 08:58: also running at 09:05.
+  const liveB = at("b", "B", "2026-09-14T09:02:00Z", {
+    status: "open",
+    opened_at: "2026-09-14T08:58:00Z",
+    pin: "Q4P9R",
+  });
+  const elevenC = at("c", "C", "2026-09-14T11:00:00Z");
+  const twoD = at("d", "D", "2026-09-14T14:00:00Z");
+
+  eq(
+    "a running session holds the screen over later ones",
+    pickDisplay([twoD, liveA, elevenC], now),
+    { kind: "active", sessions: [liveA] },
+  );
+  eq(
+    "two cohorts checking in at once are both shown, earliest first",
+    pickDisplay([liveB, liveA], now).sessions.map((s) => s.id),
+    ["a", "b"],
+  );
+
+  // Opened at 09:00 for a 10:00 class that may open 10 minutes early: the
+  // window is not accepting marks until 09:50, but the code is already minted.
+  const opensSoon = at("s", "A", "2026-09-14T10:00:00Z", {
+    status: "open",
+    opened_at: "2026-09-14T09:00:00Z",
+    pin: "SOON7",
+  });
+  eq("opened and about to accept marks counts as running", pickDisplay([opensSoon], now).kind, "active");
+
+  // Still says open, but its window shut at 07:30. The sweep just has not got
+  // to it; the room needs the next class, not a dead code.
+  const staleOpen = at("x", "A", "2026-09-14T07:00:00Z", {
+    status: "open",
+    opened_at: "2026-09-14T07:00:00Z",
+    pin: "OLD12",
+  });
+  const staleThenNext = pickDisplay([twoD, staleOpen, elevenC], now);
+  eq("an open session past its window does not hold the screen", staleThenNext.kind, "upcoming");
+  eq("the screen counts down to the soonest session instead", staleThenNext.session?.id, "c");
+
+  // Started 08:30 and never opened; the class runs until 09:30, so the sweep
+  // will still open it.
+  const inProgress = at("p", "A", "2026-09-14T08:30:00Z");
+  eq("a class in progress the sweep can still open is shown", pickDisplay([inProgress, twoD], now).session?.id, "p");
+
+  // Ran 07:00 to 08:00 and was never opened. Nothing will open it now.
+  const missed = at("m", "A", "2026-09-14T07:00:00Z");
+  eq("a session nothing will open any more is not counted down to", pickDisplay([missed], now), { kind: "idle" });
+  eq("no sessions is idle", pickDisplay([], now), { kind: "idle" });
+}
+
+eq("case, spaces and dashes in a typed code are ignored", normalizeDisplayCode(" k7m-2pq "), "K7M2PQ");
+// Uppercasing first turns ß into SS, which then survives the strip. The
+// database strips first, so the two would disagree about this input.
+eq("the code is stripped before it is uppercased, as the database does", normalizeDisplayCode("ßk7m2p"), "K7M2P");
+
+eq("the display link", displayUrl("https://attend.test/", "ab12cd"), "https://attend.test/display/ab12cd");
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

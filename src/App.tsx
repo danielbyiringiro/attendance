@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Present from "./pages/Present";
+import ClassDisplay from "./pages/ClassDisplay";
 import { ThemeProvider } from "@/lib/theme";
 import { AccessibilityProvider } from "@/lib/accessibility";
 
@@ -29,6 +30,9 @@ const App = () => (
             {/* The projector view. Its own route so it can live in a tab
                 on a second screen; it checks who you are itself. */}
             <Route path="/present/:sessionId" element={<Present />} />
+            {/* The same view for a screen nobody is signed in to, behind the
+                class's display link and access code. See migration 041. */}
+            <Route path="/display/:token" element={<ClassDisplay />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
