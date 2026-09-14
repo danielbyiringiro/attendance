@@ -29,14 +29,26 @@ export interface SessionAttendee {
    * somebody who was called absent and somebody nobody has looked at yet.
    */
   marked_by_role: "student" | "staff" | "system" | null;
+  /**
+   * The day they were added to the cohort. Later than the session's date for a
+   * student added after it: still on the register, but nothing was recorded
+   * for them automatically when it closed. See migration 042.
+   */
+  enrolled_on: string;
 }
 
 /**
- * Everyone enrolled in a session's cohort, with their state.
+ * Everyone in a session's cohort, with their state.
  *
  * Driven from enrolments rather than from records, so a student with no record
  * yet appears with state null — a live roster has to show who has NOT marked,
  * which a query over attendance_records alone cannot do.
+ *
+ * Not filtered on enrolled_on. It used to be, so a student added today — which
+ * is when every roster uploaded mid-term is added — was missing from every past
+ * session and could not be marked on any of them. A person taking a register
+ * can mark anyone in the cohort; only what the system records by itself still
+ * starts from the join date (migration 042).
  */
 export const rosterForSession = async (
   sessionId: string,
@@ -51,10 +63,9 @@ export const rosterForSession = async (
 
   const { data: enrolled, error: enrolError } = await supabase
     .from("enrolments")
-    .select("student_id, students(name)")
+    .select("student_id, enrolled_on, students(name)")
     .eq("cohort_id", (session as { cohort_id: string }).cohort_id)
     .is("dropped_on", null)
-    .lte("enrolled_on", (session as { session_date: string }).session_date)
     .order("student_id");
   if (enrolError) fail("Could not load the roster", enrolError);
 
@@ -75,6 +86,7 @@ export const rosterForSession = async (
 
   return ((enrolled ?? []) as unknown as Array<{
     student_id: string;
+    enrolled_on: string;
     students: { name: string | null } | null;
   }>).map((e) => {
     const record = byStudent.get(e.student_id);
@@ -84,6 +96,7 @@ export const rosterForSession = async (
       state: record?.state ?? null,
       marked_at: record?.marked_at ?? null,
       marked_by_role: record?.marked_by_role ?? null,
+      enrolled_on: e.enrolled_on,
     };
   });
 };

@@ -870,6 +870,50 @@ eq("the code is stripped before it is uppercased, as the database does", normali
 
 eq("the display link", displayUrl("https://attend.test/", "ab12cd"), "https://attend.test/display/ab12cd");
 
+// ---------------------------------------------------------------------------
+// rosterForSession — a student added after a session is still on its register
+//
+// The register filtered enrolled_on <= session_date, and a roster uploaded
+// mid-term sets enrolled_on to the upload day, so every past session had
+// nobody on it who could be marked (migration 042). Dropped students still go.
+// ---------------------------------------------------------------------------
+
+console.log("\nrosterForSession");
+
+stub.__setTables({
+  class_sessions: [
+    { id: "past", class_id: "c42", cohort_id: "k42", session_date: "2026-09-07" },
+  ],
+  enrolments: [
+    { cohort_id: "k42", student_id: "early", enrolled_on: "2026-08-01", dropped_on: null },
+    // Added a week after the session, as a mid-term roster upload is.
+    { cohort_id: "k42", student_id: "late", enrolled_on: "2026-09-14", dropped_on: null },
+    { cohort_id: "k42", student_id: "gone", enrolled_on: "2026-08-01", dropped_on: "2026-09-01" },
+    { cohort_id: "other", student_id: "elsewhere", enrolled_on: "2026-08-01", dropped_on: null },
+  ],
+  students: [
+    { student_id: "early", name: "Early" },
+    { student_id: "late", name: "Late" },
+    { student_id: "gone", name: "Gone" },
+    { student_id: "elsewhere", name: "Elsewhere" },
+  ],
+  attendance_records: [
+    { session_id: "past", student_id: "early", state: "present", marked_at: "2026-09-07T09:01:00Z", marked_by_role: "student" },
+  ],
+});
+
+{
+  const roster = await mod.rosterForSession("past");
+  eq(
+    "a student added after the session is still on its register",
+    roster.map((a) => a.student_id),
+    ["early", "late"],
+  );
+  const late = roster.find((a) => a.student_id === "late");
+  eq("and carries the day they were added, so the register can say so", late?.enrolled_on, "2026-09-14");
+  eq("with nothing recorded, so they are there to be marked", late?.state, null);
+}
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by
