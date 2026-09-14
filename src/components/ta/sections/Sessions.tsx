@@ -52,6 +52,14 @@ const Sessions = () => {
 
   return (
     <div className="space-y-6">
+      {/* Timing for a cohort or the whole class, at the top where it is found
+          first. */}
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <SessionTimingSettings />
+        </CardContent>
+      </Card>
+
       <Card className="border-2">
         <CardContent className="space-y-4 pt-6">
           <div className="flex items-center gap-1">
@@ -88,14 +96,6 @@ const Sessions = () => {
               termEndsOn={activeClass.term_ends_on}
             />
           )}
-        </CardContent>
-      </Card>
-
-      {/* Timing for a cohort or the whole class. Below the list for the same
-          reason as days off: set rarely, while the list is used daily. */}
-      <Card className="border-2">
-        <CardContent className="pt-6">
-          <SessionTimingSettings />
         </CardContent>
       </Card>
 
