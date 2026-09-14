@@ -3,12 +3,16 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Loader2, Maximize } from "lucide-react";
 import PresentView from "@/components/ta/PresentView";
+import SoundToggle from "@/components/SoundToggle";
 import { supabase } from "@/lib/supabase";
 import { ensureStaff } from "@/lib/api/staff";
 import {
   getSessionForPresenting,
   type PresentableSession,
 } from "@/lib/api/present";
+import { useLiveClass } from "@/lib/useLiveClass";
+import { useSoundPreference } from "@/lib/useSoundPreference";
+import { playCheckInBeep } from "@/lib/checkInSound";
 
 /**
  * The presenter tab: /present/:sessionId.
@@ -19,8 +23,12 @@ import {
  * It refreshes itself. Auto-open mints the PIN at the early-open moment and the
  * sweep closes the session when the window ends, both on the server, so a tab
  * that loaded once would keep showing a code that stopped working. It re-reads
- * every 15 seconds and whenever the tab becomes visible again; the countdown in
+ * every 15 seconds and whenever the tab becomes visible again, and straight away
+ * when realtime says the session or a check-in changed; the countdown in
  * between is computed locally and ticks every second.
+ *
+ * It beeps for each student who checks in to this session, unless muted from
+ * the button beside Full screen. The setting is remembered on this computer.
  *
  * It checks who you are, the same way the dashboard does. The PIN is only
  * readable by staff on the class — row-level security enforces that regardless
@@ -42,6 +50,7 @@ const REFRESH_MS = 15_000;
 const Present = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [sound, setSound] = useSoundPreference("attendance.sound.presenter");
 
   const load = useCallback(
     async (first: boolean) => {
@@ -99,6 +108,18 @@ const Present = () => {
     };
   }, [state.kind, load]);
 
+  // Subscribed once the class is known. Polling stays with the effect above,
+  // so `active` is left off here: this adds only the realtime half.
+  useLiveClass(
+    state.kind === "ready" ? state.data.session.class_id : null,
+    () => load(false),
+    {
+      onCheckIn: (change) => {
+        if (sound && change.new?.session_id === sessionId) playCheckInBeep();
+      },
+    },
+  );
+
   const goFullscreen = () => {
     // Not every browser allows it, and a refusal is not worth an error.
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
@@ -143,15 +164,22 @@ const Present = () => {
     case "ready":
       return (
         <div className="relative flex min-h-screen items-center justify-center bg-background p-6 sm:p-10">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="absolute right-3 top-3 text-muted-foreground"
-            onClick={goFullscreen}
-          >
-            <Maximize className="mr-1 h-4 w-4" />
-            Full screen
-          </Button>
+          <div className="absolute right-3 top-3 flex gap-1">
+            <SoundToggle
+              enabled={sound}
+              onChange={setSound}
+              className="text-muted-foreground"
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={goFullscreen}
+            >
+              <Maximize className="mr-1 h-4 w-4" />
+              Full screen
+            </Button>
+          </div>
           <PresentView
             session={state.data.session}
             className={state.data.className}

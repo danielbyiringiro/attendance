@@ -953,6 +953,59 @@ console.log("\nweeklyAbsence");
   eq("and reads naturally for the default", thresholdPhrase(2), "twice or more");
 }
 
+// ---------------------------------------------------------------------------
+// checkInSound — when the check-in beep plays
+//
+// The beep is only worth having if it means "a student just checked in". A TA's
+// mark, an absence written at close, or a later edit to a check-in must not
+// beep; a check-in over an existing absence must (migration 044 stores it as
+// the student's). The display link has no realtime, so it compares counts
+// between polls — and must not beep for what was already there when it looked.
+// ---------------------------------------------------------------------------
+
+const soundOut = join(mkdtempSync(join(tmpdir(), "sound-")), "sound.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/checkInSound.ts")],
+  outfile: soundOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { isStudentCheckIn, newCheckIns, checkInCounts } = await import(
+  pathToFileURL(soundOut).href
+);
+
+console.log("\ncheckInSound");
+
+{
+  const row = (marked_by_role, state) => ({ session_id: "s1", marked_by_role, state });
+
+  ok("a student checking in beeps", isStudentCheckIn({ eventType: "INSERT", new: row("student", "present"), old: {} }));
+  ok("so does checking in late", isStudentCheckIn({ eventType: "INSERT", new: row("student", "late"), old: {} }));
+  ok("a TA marking somebody present does not", !isStudentCheckIn({ eventType: "INSERT", new: row("staff", "present"), old: {} }));
+  ok("an absence written at close does not", !isStudentCheckIn({ eventType: "INSERT", new: row("system", "unexcused"), old: {} }));
+  ok(
+    "a check-in over an existing absence beeps",
+    isStudentCheckIn({ eventType: "UPDATE", new: row("student", "present"), old: row("system", "unexcused") }),
+  );
+  ok(
+    "a later edit to a check-in does not beep again",
+    !isStudentCheckIn({ eventType: "UPDATE", new: row("student", "late"), old: row("student", "present") }),
+  );
+  ok("a deletion does not", !isStudentCheckIn({ eventType: "DELETE", new: {}, old: row("student", "present") }));
+
+  const before = checkInCounts([{ id: "a", checked_in: 2 }, { id: "b", checked_in: 0 }]);
+  eq("nothing beeps on the first look", newCheckIns(null, [{ id: "a", checked_in: 9 }]), 0);
+  eq(
+    "new check-ins across sessions add up",
+    newCheckIns(before, [{ id: "a", checked_in: 5 }, { id: "b", checked_in: 1 }]),
+    4,
+  );
+  eq("a session that just appeared does not beep for what it already has", newCheckIns(before, [{ id: "c", checked_in: 7 }]), 0);
+  eq("a count that went down is not a check-in", newCheckIns(before, [{ id: "a", checked_in: 1 }]), 0);
+}
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

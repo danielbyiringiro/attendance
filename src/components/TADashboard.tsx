@@ -10,6 +10,9 @@ import LiveIndicator from "@/components/ta/LiveIndicator";
 import { useNow } from "@/lib/useNow";
 import { sessionWindow } from "@/lib/sessionWindow";
 import { useLiveClass } from "@/lib/useLiveClass";
+import { useSoundPreference } from "@/lib/useSoundPreference";
+import { playCheckInBeep } from "@/lib/checkInSound";
+import SoundToggle from "@/components/SoundToggle";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -335,9 +338,18 @@ const TADashboard = ({
    * that is due to open cannot open itself on a screen that has stopped asking.
    * Two minutes when nothing is happening, twenty seconds when it is.
    */
+  //
+  // And heard: a beep for each student who checks in, muted from the button
+  // beside Refresh on the attendance tab and remembered on this computer.
+  const [checkInSound, setCheckInSound] = useSoundPreference(
+    "attendance.sound.dashboard",
+  );
   useLiveClass(activeClassId, loadToday, {
     active: true,
     pollMs: somethingIsCounting ? 20_000 : 120_000,
+    onCheckIn: () => {
+      if (checkInSound) playCheckInBeep();
+    },
   });
 
   const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
@@ -1400,6 +1412,10 @@ const TADashboard = ({
                       now={now}
                       isLoading={isTodayLoading}
                       onRefresh={() => void loadToday()}
+                    />
+                    <SoundToggle
+                      enabled={checkInSound}
+                      onChange={setCheckInSound}
                     />
                     <Button
                       variant="ghost"

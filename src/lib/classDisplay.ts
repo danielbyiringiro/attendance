@@ -15,6 +15,8 @@ export interface DisplaySession extends SessionWindowInput {
   cohort_label: string;
   /** Only ever set while the session is open. */
   pin: string | null;
+  /** Students who checked themselves in, for the beep. Migration 044. */
+  checked_in: number;
 }
 
 export const DISPLAY_CODE_LENGTH = 6;
