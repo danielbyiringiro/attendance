@@ -6,6 +6,7 @@ import { useActiveClass } from "@/lib/classContext";
 import SessionList from "@/components/ta/SessionList";
 import NoClassDays from "@/components/ta/NoClassDays";
 import SessionCalendar from "@/components/ta/SessionCalendar";
+import SessionTimingSettings from "@/components/ta/SessionTimingSettings";
 
 /**
  * The sessions of the active class — open one, close it, move it, cancel it.
@@ -87,6 +88,14 @@ const Sessions = () => {
               termEndsOn={activeClass.term_ends_on}
             />
           )}
+        </CardContent>
+      </Card>
+
+      {/* Timing for a cohort or the whole class. Below the list for the same
+          reason as days off: set rarely, while the list is used daily. */}
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <SessionTimingSettings />
         </CardContent>
       </Card>
 
