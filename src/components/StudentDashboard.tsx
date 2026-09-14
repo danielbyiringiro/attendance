@@ -113,7 +113,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
    * by what was recorded; picking one narrows the list to that date, where
    * an absence can be flagged.
    */
-  const [view, setView] = useState<"list" | "calendar">("list");
+  // Calendar first; picking a day moves to the list for that date.
+  const [view, setView] = useState<"list" | "calendar">("calendar");
   const [dayFilter, setDayFilter] = useState<string | null>(null);
   const [flaggingInProgress, setFlaggingInProgress] = useState<string | null>(
     null,
@@ -231,6 +232,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
     setIsLoading(true);
     setHasSearched(true);
     setDayFilter(null);
+    setView("calendar");
 
     try {
       // One server-side call returns just this student's data. The anon key has

@@ -98,11 +98,12 @@ const StudentDetailDialog = ({
    * calendar and invisible in forty rows. Clicking a day goes back to the list
    * on that date, where it can be corrected.
    */
-  const [view, setView] = useState<"list" | "calendar">("list");
+  // Calendar first: the shape of a term is what somebody opens a record to see.
+  const [view, setView] = useState<"list" | "calendar">("calendar");
 
   useEffect(() => {
     setOnDate("");
-    setView("list");
+    setView("calendar");
   }, [student?.student_id]);
 
   const marks = useMemo(() => {
