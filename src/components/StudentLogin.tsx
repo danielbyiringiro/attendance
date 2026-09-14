@@ -1,8 +1,16 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Logo from "@/components/Logo";
@@ -45,25 +53,38 @@ interface StudentLoginProps {
  * refuses with one message that distinguishes none of them, so the endpoint
  * cannot be used to find out who is enrolled in what. That makes the server
  * the only thing that can answer the question, so the browser stops guessing.
+ *
+ * ARRIVING FROM THE QR
+ *
+ * A scan opens a dialog that asks for the student ID and nothing else, with the
+ * scanned code shown above it. Filling the code into the form alone was not
+ * enough: the PIN box is a password field, so the code arrived as dots nobody
+ * typed, below an empty ID box, and a working scan was hard to tell from a
+ * broken one. The dialog makes the outcome of the scan the first thing seen.
+ *
+ * The presenter only puts a code in the QR while check-in is live, so a scan
+ * that carries one was an active code when it was scanned. Nothing is sent
+ * until the student enters their ID and presses the button.
  */
 const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
   /*
-   * Filled in from the address when the student arrived by scanning the QR on
-   * the projector, so they type only their own ID.
+   * The code from the address when the student arrived by scanning the QR on
+   * the projector.
    *
    * Read once, at first render. The address is tidied straight afterwards, so
-   * a later render or a refresh does not see it again.
+   * a later render or a refresh does not see it again. Kept apart from `pin`
+   * because the dialog submits what was scanned, whatever happens to the form
+   * behind it.
    */
-  const [pin, setPin] = useState(
-    () => pinFromSearch(window.location.search) ?? "",
-  );
-  const [pinFromQr, setPinFromQr] = useState(
-    () => pinFromSearch(window.location.search) !== null,
-  );
+  const [scanned] = useState(() => pinFromSearch(window.location.search));
+  const [pin, setPin] = useState(scanned ?? "");
+  const [pinFromQr, setPinFromQr] = useState(scanned !== null);
+  const [scanOpen, setScanOpen] = useState(scanned !== null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   /*
-   * Take the code out of the address bar once it is in the field.
+   * Take the code out of the address bar once it has been read.
    *
    * Left there, it survives a refresh and sits in browser history, so a
    * student coming back to the tab after class gets a code filled in that
@@ -83,6 +104,27 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [marked, setMarked] = useState<MarkResult | null>(null);
   const { toast } = useToast();
+
+  /*
+   * One path for both ways in, so the dialog and the form cannot disagree
+   * about what a success clears or what is shown afterwards.
+   */
+  const submit = async (id: string, code: string): Promise<MarkResult> => {
+    setIsSubmitting(true);
+    try {
+      // The PIN is verified server-side; we never compare it in the browser.
+      const result = await onMarkAttendance(id, code);
+      if (result.success) {
+        setMarked(result);
+        setStudentId("");
+        setPin("");
+        setPinFromQr(false);
+      }
+      return result;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,27 +147,35 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      // The PIN is verified server-side; we never compare it in the browser.
-      const result = await onMarkAttendance(studentId, pin);
-
-      if (!result.success) {
-        toast({
-          title: "Attendance not recorded",
-          description: result.error || "Something went wrong. Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setMarked(result);
-      setStudentId("");
-      setPin("");
-      setPinFromQr(false);
-    } finally {
-      setIsSubmitting(false);
+    const result = await submit(studentId, pin);
+    if (!result.success) {
+      toast({
+        title: "Attendance not recorded",
+        description: result.error || "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
     }
+  };
+
+  const handleScanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scanned) return;
+
+    if (!studentId.trim()) {
+      setScanError("Enter your student ID.");
+      return;
+    }
+
+    setScanError(null);
+    const result = await submit(studentId, scanned);
+    if (result.success) {
+      // The confirmation card on the page behind says which class it was.
+      setScanOpen(false);
+      return;
+    }
+    // Said inside the dialog, where the student is looking, rather than in a
+    // toast that can land behind it. The ID stays so a retry is one tap.
+    setScanError(result.error || "Something went wrong. Please try again.");
   };
 
   return (
@@ -244,9 +294,8 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
                   onChange={(e) => setStudentId(e.target.value)}
                   disabled={isSubmitting}
                   className="h-12"
-                  // Straight to the only thing left to type. Without this a
-                  // phone opens with no field selected and the student has to
-                  // find the box before the keyboard appears.
+                  // Straight to the only thing left to type — including after
+                  // the scan dialog is dismissed, which hands focus back here.
                   autoFocus={pinFromQr}
                 />
               </div>
@@ -300,6 +349,89 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
           </CardContent>
         </Card>
       </div>
+
+      {/*
+        Dismissing it is not a dead end: the scanned code is already in the form
+        behind, so "type it myself" and a tap outside both land somewhere that
+        works. It cannot be dismissed mid-request, which would hide the answer.
+      */}
+      <Dialog
+        open={scanOpen}
+        onOpenChange={(open) => {
+          if (!isSubmitting) setScanOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Check in</DialogTitle>
+            <DialogDescription>
+              You scanned the code on the screen. Enter your student ID to
+              finish.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleScanSubmit} className="space-y-4">
+            {/* Shown in full, unlike the password box: it is already on the
+                projector, and a student refused can compare the two. */}
+            <div className="rounded-md bg-muted px-3 py-2 text-center">
+              <p className="text-xs text-muted-foreground">Code from the QR</p>
+              <p className="font-mono text-2xl font-bold tracking-[0.25em]">
+                {scanned}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="scan-student-id">Student ID</Label>
+              <Input
+                id="scan-student-id"
+                type="text"
+                placeholder="Enter your student ID"
+                value={studentId}
+                onChange={(e) => setStudentId(e.target.value)}
+                disabled={isSubmitting}
+                className="h-12"
+                autoFocus
+              />
+            </div>
+
+            {scanError && (
+              <div role="alert" className="space-y-1 text-sm">
+                <p className="font-medium text-destructive">{scanError}</p>
+                <p className="text-xs text-muted-foreground">
+                  If the code on the screen has changed since you scanned, scan
+                  it again.
+                </p>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="h-12 w-full bg-gradient-to-r from-primary to-accent transition-all duration-300 hover:opacity-90"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Checking…
+                </>
+              ) : (
+                "Mark Attendance"
+              )}
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              disabled={isSubmitting}
+              onClick={() => setScanOpen(false)}
+            >
+              Type the code in myself instead
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
