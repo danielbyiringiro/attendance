@@ -7,6 +7,7 @@ import SessionList from "@/components/ta/SessionList";
 import NoClassDays from "@/components/ta/NoClassDays";
 import SessionCalendar from "@/components/ta/SessionCalendar";
 import SessionTimingSettings from "@/components/ta/SessionTimingSettings";
+import DisplayLinkPanel from "@/components/ta/DisplayLinkPanel";
 
 /**
  * The sessions of the active class — open one, close it, move it, cancel it.
@@ -104,6 +105,14 @@ const Sessions = () => {
       <Card className="border-2">
         <CardContent className="pt-6">
           <NoClassDays classId={activeClass.id} cohorts={cohorts} />
+        </CardContent>
+      </Card>
+
+      {/* Class-wide, so it lives here as well as in the presenter dialog: a
+          screen in the room can be set up before any session exists. */}
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <DisplayLinkPanel classId={activeClass.id} />
         </CardContent>
       </Card>
     </div>
