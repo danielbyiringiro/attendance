@@ -1039,6 +1039,58 @@ console.log("\nstudentTotals");
   eq("a cohort that cannot be resolved counts nothing", studentTotals(log, "stu-1", undefined), zeros);
 }
 
+// ---------------------------------------------------------------------------
+// attendanceCalendar — what colour a day is on a student's calendar
+//
+// The record dialog and the student history page both show one student's
+// sessions as a month. The colour is the whole message, so which state maps to
+// which tone, and which tone wins on a day with several sessions, are pinned.
+// ---------------------------------------------------------------------------
+
+const calOut = join(mkdtempSync(join(tmpdir(), "cal-")), "cal.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/attendanceCalendar.ts")],
+  outfile: calOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { toneOf, dayTone, entriesByDate, latestMonth } = await import(
+  pathToFileURL(calOut).href
+);
+
+console.log("\nattendanceCalendar");
+
+eq("an unexcused mark shows as absent", toneOf("unexcused"), "absent");
+eq("present stays present", toneOf("present"), "present");
+eq("late stays late", toneOf("late"), "late");
+eq("no record yet is not closed", toneOf(null), "pending");
+eq("a cancelled class is no class, whatever is stored", toneOf("present", true), "cancelled");
+
+eq("an absence in one class outweighs a check-in in another", dayTone(["present", "absent"]), "absent");
+eq("late outweighs present", dayTone(["present", "late"]), "late");
+eq("a real mark outweighs one not closed yet", dayTone(["pending", "present"]), "present");
+eq("a real mark outweighs a cancelled class", dayTone(["cancelled", "present"]), "present");
+eq("a day with nothing has no tone", dayTone([]), null);
+
+eq(
+  "entries are grouped by their date",
+  [...entriesByDate([
+    { date: "2026-09-14", tone: "present" },
+    { date: "2026-09-15", tone: "absent" },
+    { date: "2026-09-14", tone: "late" },
+  ]).entries()].map(([d, es]) => [d, es.length]),
+  [["2026-09-14", 2], ["2026-09-15", 1]],
+);
+
+eq(
+  "the calendar opens on the latest month with a session, not today's",
+  latestMonth(["2026-05-19", "2026-09-14", "2026-07-01"]),
+  { year: 2026, month: 8 },
+);
+eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2026, 0, 15)), { year: 2026, month: 0 });
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

@@ -377,7 +377,8 @@ const TADashboard = ({
   );
 
   const openStudentDetail = async (studentId: string, cohortLabel: string) => {
-    if (!activeClassId) return;
+    // One at a time: a second click while the first is loading is ignored.
+    if (!activeClassId || openingStudentId !== null) return;
     setOpeningStudentId(studentId);
     try {
       const log = await attendanceLog(activeClassId);
@@ -400,6 +401,18 @@ const TADashboard = ({
       });
     } finally {
       setOpeningStudentId(null);
+    }
+  };
+
+  /**
+   * Enter or Space on a row opens it, as a click does. Only when the row itself
+   * has focus: Enter on the Mark Present button inside it presses that button.
+   */
+  const openOnKey = (e: React.KeyboardEvent, open: () => void) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open();
     }
   };
 
@@ -1769,18 +1782,23 @@ const TADashboard = ({
                             filteredPresentStudents.map((student) => (
                               <div
                                 key={student.id}
-                                className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg"
+                                // The whole row opens the student's record.
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Open the record for ${student.id}`}
+                                aria-busy={openingStudentId === student.id}
+                                onClick={() =>
+                                  void openStudentDetail(student.id, student.cohort)
+                                }
+                                onKeyDown={(e) =>
+                                  openOnKey(e, () =>
+                                    void openStudentDetail(student.id, student.cohort),
+                                  )
+                                }
+                                className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-success/20 bg-success/10 hover:bg-success/20"
                               >
-                                {/* Left Side: ID and Name. Opens the student's record. */}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void openStudentDetail(student.id, student.cohort)
-                                  }
-                                  disabled={openingStudentId !== null}
-                                  title="Open this student's record"
-                                  className="flex min-w-0 flex-col rounded-md text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait"
-                                >
+                                {/* Left Side: ID and Name */}
+                                <div className="flex min-w-0 flex-col">
                                   <span className="flex items-center gap-2 font-medium">
                                     {student.id}
                                     {openingStudentId === student.id && (
@@ -1792,7 +1810,7 @@ const TADashboard = ({
                                       (r) => r.student_id === student.id,
                                     )?.name || "Unknown Student"}
                                   </span>
-                                </button>
+                                </div>
 
                                 {/* Right Side: Cohort and Timestamp stacked vertically */}
                                 <div className="flex flex-col items-end space-y-1 ml-4">
@@ -1827,20 +1845,23 @@ const TADashboard = ({
                               return (
                                 <div
                                   key={studentId}
-                                  className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg"
+                                  // The whole row opens the student's record;
+                                  // Mark Present stops its own click reaching it.
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-label={`Open the record for ${studentId}`}
+                                  aria-busy={openingStudentId === studentId}
+                                  onClick={() =>
+                                    void openStudentDetail(studentId, cohort)
+                                  }
+                                  onKeyDown={(e) =>
+                                    openOnKey(e, () =>
+                                      void openStudentDetail(studentId, cohort),
+                                    )
+                                  }
+                                  className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-destructive/20 bg-destructive/10 hover:bg-destructive/20"
                                 >
-                                  {/* Opens the student's record. Beside Mark
-                                      Present, not around it: a button inside a
-                                      button is not a thing a page can have. */}
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void openStudentDetail(studentId, cohort)
-                                    }
-                                    disabled={openingStudentId !== null}
-                                    title="Open this student's record"
-                                    className="flex min-w-0 flex-col rounded-md text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait"
-                                  >
+                                  <div className="flex min-w-0 flex-col">
                                     <span className="flex items-center gap-2">
                                       <span className="font-medium">
                                         {studentId}
@@ -1858,16 +1879,17 @@ const TADashboard = ({
                                     <span className="text-sm text-muted-foreground mt-1">
                                       {studentName}
                                     </span>
-                                  </button>
+                                  </div>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() =>
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       handleMarkAttendanceManually(
                                         studentId,
                                         cohort,
-                                      )
-                                    }
+                                      );
+                                    }}
                                     className="h-8 text-xs"
                                   >
                                     <CheckCircle2 className="h-3 w-3 mr-1" />
