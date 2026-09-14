@@ -1,18 +1,21 @@
 import { QRCodeSVG } from "qrcode.react";
 import { Clock } from "lucide-react";
-import type { SessionRow } from "@/lib/api/types";
-import { countdown, sessionWindow } from "@/lib/sessionWindow";
+import {
+  countdown,
+  sessionWindow,
+  type SessionWindowInput,
+} from "@/lib/sessionWindow";
 import { useNow } from "@/lib/useNow";
 import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
 
 /**
  * What goes up on the projector: the code, how long is left, and a way in.
  *
- * Shared by the dialog on the attendance tab and the standalone tab at
- * /present/:sessionId, so the two cannot drift. The dialog is for a quick look
- * on the laptop; the tab is for dragging onto a second screen and leaving
- * there, which a dialog cannot do because it closes the moment you click the
- * dashboard behind it.
+ * Shared by the dialog on the attendance tab, the standalone tab at
+ * /present/:sessionId, and the signed-out class display at /display/:token, so
+ * none of them can drift. The dialog is for a quick look on the laptop; the tab
+ * is for dragging onto a second screen and leaving there, which a dialog cannot
+ * do because it closes the moment you click the dashboard behind it.
  *
  * THE QR CARRIES THE CODE
  *
@@ -34,9 +37,14 @@ import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
  * out until a room of students are holding their phones up at it.
  */
 
+/**
+ * Only what this reads. A dashboard session row satisfies it, and so does the
+ * slimmer shape get_class_display hands a signed-out screen.
+ */
+export type PresentSessionInput = SessionWindowInput & { pin: string | null };
 
 /** The sentence that goes under the code, per phase of the window. */
-const timerFor = (session: SessionRow, now: Date) => {
+const timerFor = (session: PresentSessionInput, now: Date) => {
   const w = sessionWindow(session, now);
   switch (w.phase) {
     case "not_opened":
@@ -87,7 +95,7 @@ const PresentView = ({
   cohortLabel,
   size = "dialog",
 }: {
-  session: SessionRow;
+  session: PresentSessionInput;
   className: string;
   cohortLabel: string;
   /** "full" is the standalone tab, sized to be read from the back of a room. */
