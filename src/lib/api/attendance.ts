@@ -587,3 +587,39 @@ export const sessionStatesFor = (
     .sort((a, b) => a.session_date.localeCompare(b.session_date))
     .map((s) => byId.get(s.session_id) ?? null);
 };
+
+/** The totals a student record shows: what the Students tab lists per row. */
+export interface StudentTotals {
+  sessions: number;
+  present: number;
+  late: number;
+  excused: number;
+  absent: number;
+  rate: number;
+}
+
+/**
+ * One student's totals in the class, off the log.
+ *
+ * Shared by the Students tab and the attendance tab's lists, which both open
+ * the same student dialog, so the two can never show different numbers for the
+ * same person. Zero everywhere while the log has not loaded, and for a cohort
+ * that cannot be resolved — tallyStates of nothing is all zeros.
+ */
+export const studentTotals = (
+  log: AttendanceLog | null,
+  studentId: string,
+  cohortId: string | undefined,
+): StudentTotals => {
+  const t = tallyStates(
+    log && cohortId ? sessionStatesFor(log, studentId, cohortId) : [],
+  );
+  return {
+    sessions: t.sessions,
+    present: t.present,
+    late: t.late,
+    excused: t.excused,
+    absent: t.absent,
+    rate: t.rate,
+  };
+};

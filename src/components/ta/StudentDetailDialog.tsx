@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Check, Loader2, Pencil, X } from "lucide-react";
+import { CalendarDays, Check, List, Loader2, Pencil, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   setAttendanceState,
@@ -28,6 +28,8 @@ import type { StudentStanding } from "@/components/ta/StudentRoster";
 import { editStudent, type StudentEdit } from "@/lib/api/enrolment";
 import { fromDateStr } from "@/lib/dates";
 import { format } from "date-fns";
+import AttendanceCalendar from "@/components/AttendanceCalendar";
+import { toneOf, type CalendarEntry } from "@/lib/attendanceCalendar";
 
 interface StudentDetailDialogProps {
   student: StudentStanding | null;
@@ -90,9 +92,18 @@ const StudentDetailDialog = ({
    * task before the actual task.
    */
   const [onDate, setOnDate] = useState("");
+  /*
+   * The same sessions as a month, coloured by what was recorded. A pattern —
+   * every Monday missed, a run of lates in one week — is obvious on a
+   * calendar and invisible in forty rows. Clicking a day goes back to the list
+   * on that date, where it can be corrected.
+   */
+  // Calendar first: the shape of a term is what somebody opens a record to see.
+  const [view, setView] = useState<"list" | "calendar">("calendar");
 
   useEffect(() => {
     setOnDate("");
+    setView("calendar");
   }, [student?.student_id]);
 
   const marks = useMemo(() => {
@@ -108,6 +119,17 @@ const StudentDetailDialog = ({
     return (log.byStudent.get(student.student_id) ?? []).map(
       (m) => m.session_date,
     );
+  }, [student, log]);
+
+  const calendarEntries = useMemo<CalendarEntry[]>(() => {
+    if (!student || !log) return [];
+    return (log.byStudent.get(student.student_id) ?? []).map((m) => ({
+      date: m.session_date,
+      tone: toneOf(
+        m.state,
+        log.sessionById.get(m.session_id)?.status === "cancelled",
+      ),
+    }));
   }, [student, log]);
 
   const handleCorrect = async (sessionId: string, state: AttendanceState) => {
@@ -377,30 +399,66 @@ const StudentDetailDialog = ({
                   )}
                 </p>
 
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="date"
-                    className="h-8 w-[9.5rem] max-w-[45vw]"
-                    value={onDate}
-                    min={allDates[allDates.length - 1]}
-                    max={allDates[0]}
-                    onChange={(e) => setOnDate(e.target.value)}
-                    title="Show one date"
-                  />
-                  {onDate && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2"
-                      onClick={() => setOnDate("")}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                <div className="flex flex-wrap items-center gap-1">
+                  {view === "list" && (
+                    <>
+                      <Input
+                        type="date"
+                        className="h-8 w-[9.5rem] max-w-[45vw]"
+                        value={onDate}
+                        min={allDates[allDates.length - 1]}
+                        max={allDates[0]}
+                        onChange={(e) => setOnDate(e.target.value)}
+                        title="Show one date"
+                      />
+                      {onDate && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2"
+                          onClick={() => setOnDate("")}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </>
                   )}
+                  <div className="flex items-center rounded-md border p-0.5">
+                    <Button
+                      type="button"
+                      variant={view === "list" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2"
+                      aria-pressed={view === "list"}
+                      onClick={() => setView("list")}
+                    >
+                      <List className="mr-1 h-4 w-4" />
+                      List
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={view === "calendar" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2"
+                      aria-pressed={view === "calendar"}
+                      onClick={() => setView("calendar")}
+                    >
+                      <CalendarDays className="mr-1 h-4 w-4" />
+                      Calendar
+                    </Button>
+                  </div>
                 </div>
               </div>
 
-              {marks.length === 0 ? (
+              {view === "calendar" ? (
+                <AttendanceCalendar
+                  entries={calendarEntries}
+                  onDayClick={(date) => {
+                    setOnDate(date);
+                    setView("list");
+                  }}
+                />
+              ) : marks.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
                   {onDate
                     ? "This student's cohort held no session on that date."

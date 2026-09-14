@@ -26,6 +26,7 @@ import {
   CalendarCheck,
   Flag,
   CheckCircle2,
+  List,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -37,6 +38,8 @@ import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import ThemeToggle from "@/components/ThemeToggle";
 import AccessibilitySettings from "@/components/AccessibilitySettings";
+import AttendanceCalendar from "@/components/AttendanceCalendar";
+import { toneOf, type CalendarEntry } from "@/lib/attendanceCalendar";
 
 interface AttendanceRecord {
   /** The session this row is about — what a flag is filed against. */
@@ -47,6 +50,8 @@ interface AttendanceRecord {
   className: string;
   cohort: string;
   wasCancelled: boolean;
+  /** What was recorded, for the calendar's colour. */
+  state: AttendanceState | null;
   timestamp?: string;
   isFlagged?: boolean;
   flagStatus?: "flagged" | "accepted" | "denied" | null;
@@ -103,6 +108,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   const [selectedClass, setSelectedClass] = useState<string>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  /*
+   * The records as a list or as a month. On the calendar each day is coloured
+   * by what was recorded; picking one narrows the list to that date, where
+   * an absence can be flagged.
+   */
+  // Calendar first; picking a day moves to the list for that date.
+  const [view, setView] = useState<"list" | "calendar">("calendar");
+  const [dayFilter, setDayFilter] = useState<string | null>(null);
   const [flaggingInProgress, setFlaggingInProgress] = useState<string | null>(
     null,
   );
@@ -218,6 +231,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
     setIsLoading(true);
     setHasSearched(true);
+    setDayFilter(null);
+    setView("calendar");
 
     try {
       // One server-side call returns just this student's data. The anon key has
@@ -284,6 +299,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
           className: sn.class,
           cohort: sn.cohort,
           wasCancelled: cancelled,
+          state: (sn.state as AttendanceState | null) ?? null,
           status: cancelled ? "No class" : (label[sn.state ?? ""] ?? "No record"),
           timestamp: sn.marked_at ?? undefined,
           isFlagged: flagStatus === "flagged",
@@ -346,6 +362,19 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
     .filter((c) => selectedClass === "all" || c.classCode === selectedClass)
     .flatMap((c) => c.records)
     .sort((a, b) => b.date.localeCompare(a.date));
+
+  const visibleRecords = dayFilter
+    ? shownRecords.filter((r) => r.date === dayFilter)
+    : shownRecords;
+
+  // With several classes showing, a day can hold more than one, so each
+  // names its class rather than just its state.
+  const manyClasses = new Set(shownRecords.map((r) => r.className)).size > 1;
+  const calendarEntries: CalendarEntry[] = shownRecords.map((r) => ({
+    date: r.date,
+    tone: toneOf(r.state, r.wasCancelled),
+    label: manyClasses ? r.className : undefined,
+  }));
 
   const getFlagButtonState = (record: AttendanceRecord) => {
     if (record.flagStatus === "accepted") {
@@ -452,11 +481,12 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                             ? "border-primary shadow-medium"
                             : "border-border hover:border-primary/40"
                         }`}
-                        onClick={() =>
+                        onClick={() => {
+                          setDayFilter(null);
                           setSelectedClass(
                             selectedClass === c.classCode ? "all" : c.classCode,
-                          )
-                        }
+                          );
+                        }}
                       >
                         <CardContent className="space-y-3 p-4">
                           <div className="flex items-start justify-between gap-2">
@@ -521,6 +551,57 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                   </div>
                 )}
 
+                {/* List or month. Picking a day on the calendar shows that
+                    date in the list, where an absence can be flagged. */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center rounded-md border bg-card p-0.5">
+                    <Button
+                      type="button"
+                      variant={view === "list" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-8 px-3"
+                      aria-pressed={view === "list"}
+                      onClick={() => setView("list")}
+                    >
+                      <List className="mr-1 h-4 w-4" />
+                      List
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={view === "calendar" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-8 px-3"
+                      aria-pressed={view === "calendar"}
+                      onClick={() => setView("calendar")}
+                    >
+                      <CalendarDays className="mr-1 h-4 w-4" />
+                      Calendar
+                    </Button>
+                  </div>
+                  {view === "list" && dayFilter && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDayFilter(null)}
+                    >
+                      Showing {format(parseISO(dayFilter), "EEE d MMM")} · Show all
+                    </Button>
+                  )}
+                </div>
+
+                {view === "calendar" && (
+                  <div className="rounded-md border bg-card p-3">
+                    <AttendanceCalendar
+                      entries={calendarEntries}
+                      onDayClick={(date) => {
+                        setDayFilter(date);
+                        setView("list");
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/*
                   Two renderings of the same list.
 
@@ -535,13 +616,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                   one block with its status where the eye lands. The table is
                   unchanged above sm.
                 */}
-                <div className="space-y-2 sm:hidden">
-                  {shownRecords.length === 0 ? (
+                <div className={view === "list" ? "space-y-2 sm:hidden" : "hidden"}>
+                  {visibleRecords.length === 0 ? (
                     <p className="rounded-md border bg-card py-8 text-center text-sm text-muted-foreground">
                       No class records to display.
                     </p>
                   ) : (
-                    shownRecords.map((record, index) => {
+                    visibleRecords.map((record, index) => {
                       const buttonState = getFlagButtonState(record);
                       const canFlag =
                         record.status !== "Present" &&
@@ -617,7 +698,13 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                   )}
                 </div>
 
-                <div className="hidden rounded-md border bg-card sm:block">
+                <div
+                  className={
+                    view === "list"
+                      ? "hidden rounded-md border bg-card sm:block"
+                      : "hidden"
+                  }
+                >
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -629,8 +716,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {shownRecords.length > 0 ? (
-                        shownRecords.map((record, index) => {
+                      {visibleRecords.length > 0 ? (
+                        visibleRecords.map((record, index) => {
                           const buttonState = getFlagButtonState(record);
 
                           return (
