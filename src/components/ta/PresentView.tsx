@@ -3,6 +3,7 @@ import { Clock } from "lucide-react";
 import type { SessionRow } from "@/lib/api/types";
 import { countdown, sessionWindow } from "@/lib/sessionWindow";
 import { useNow } from "@/lib/useNow";
+import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
 
 /**
  * What goes up on the projector: the code, how long is left, and a way in.
@@ -13,13 +14,17 @@ import { useNow } from "@/lib/useNow";
  * there, which a dialog cannot do because it closes the moment you click the
  * dashboard behind it.
  *
- * THE QR POINTS AT THE SITE, NOT AT THE CODE
+ * THE QR CARRIES THE CODE
  *
- * The code being readable only in the room is the anti-sharing measure. A QR
- * that carried it would let one photograph check in everybody the photo was
- * sent to, which is exactly what reading it out loud avoids. So the QR saves
- * students typing the address, and they still have to be looking at the screen
- * to get the code.
+ * While the code is live, the QR opens the check-in page with it filled in, so
+ * a student scans and types only their own ID. Otherwise it is just the site.
+ *
+ * This replaces an earlier version that kept the code out of the QR on the
+ * grounds that a photographed QR could be forwarded. That argument did not hold:
+ * the code is on the same screen in large type and can be photographed or
+ * texted just as easily. What actually stops a code leaving the room is
+ * rotating it, which is planned; when it lands, this encodes whichever code is
+ * current and nothing else changes.
  *
  * ALWAYS BLACK ON WHITE
  *
@@ -29,7 +34,6 @@ import { useNow } from "@/lib/useNow";
  * out until a room of students are holding their phones up at it.
  */
 
-const siteUrl = () => `${window.location.origin}/`;
 
 /** The sentence that goes under the code, per phase of the window. */
 const timerFor = (session: SessionRow, now: Date) => {
@@ -93,13 +97,23 @@ const PresentView = ({
   const now = useNow(true, 1000);
   const t = timerFor(session, now);
   const full = size === "full";
-  const url = siteUrl();
 
   // The code is only meaningful while check-in could accept it. After the
   // window, showing it invites people to type something that will be refused.
   const showPin =
     Boolean(session.pin) &&
     (t.tone === "live" || t.tone === "late" || session.status === "open");
+
+  // The code goes in only while it is being shown. After the window a QR that
+  // fills in a dead code produces a refusal that looks like a wrong ID.
+  const url = checkinUrl(
+    window.location.origin,
+    showPin ? session.pin : null,
+  );
+  // What is printed under the QR: the bare site, so the code is not also
+  // spelled out a second time in a line of small type.
+  const siteText = checkinUrl(window.location.origin);
+  const phoneCannotReach = isUnreachableFromPhone(window.location.hostname);
 
   return (
     <div
@@ -158,11 +172,24 @@ const PresentView = ({
           />
         </div>
         <p className={`${full ? "text-lg" : "text-xs"} text-muted-foreground`}>
-          Scan to open check-in
+          {showPin ? "Scan to check in — the code fills itself in" : "Scan to open check-in"}
         </p>
         <p className={`${full ? "text-base" : "text-xs"} break-all font-mono`}>
-          {url}
+          {siteText}
         </p>
+        {/*
+          Only ever seen while developing. Without it, a scan that goes nowhere
+          reads as autofill being broken, when the problem is the address.
+        */}
+        {phoneCannotReach && (
+          <p
+            className={`${full ? "text-base" : "text-xs"} max-w-xs text-warning`}
+          >
+            This page is open on localhost, which a phone cannot reach. Open the
+            dashboard using this computer&apos;s network address instead, and
+            the QR code will work.
+          </p>
+        )}
       </div>
     </div>
   );
