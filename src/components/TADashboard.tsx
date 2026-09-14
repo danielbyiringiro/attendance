@@ -62,6 +62,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -78,7 +79,10 @@ import SessionRollCall from "@/components/ta/SessionRollCall";
 import PresentDialog from "@/components/ta/PresentDialog";
 import ThemeToggle from "@/components/ThemeToggle";
 import AccessibilitySettings from "@/components/AccessibilitySettings";
-import StudentRoster from "@/components/ta/StudentRoster";
+import StudentRoster, {
+  type StudentStanding,
+} from "@/components/ta/StudentRoster";
+import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
 import AnalyticsOverview from "@/components/ta/AnalyticsOverview";
 import RosterUpload from "@/components/ta/RosterUpload";
 import WeeklyAbsenceThreshold from "@/components/ta/WeeklyAbsenceThreshold";
@@ -98,6 +102,7 @@ import {
   isAbsentState,
   isPresentState,
   setAttendanceState,
+  studentTotals,
   type AttendanceLog,
 } from "@/lib/api/attendance";
 import { listTodaySessions, syncSessions } from "@/lib/api/sessions";
@@ -354,6 +359,82 @@ const TADashboard = ({
 
   const cohortIdByLabel = new Map(cohorts.map((c) => [c.label, c.id]));
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+
+  /*
+   * A student opened from today's lists on the attendance tab.
+   *
+   * The same record dialog the Students tab opens. This tab only holds today's
+   * log and the dialog shows a whole term, so the class's log is read when a
+   * student is clicked, and again after a correction so the open dialog's
+   * numbers follow it.
+   */
+  const [detailStudent, setDetailStudent] = useState<StudentStanding | null>(
+    null,
+  );
+  const [detailLog, setDetailLog] = useState<AttendanceLog | null>(null);
+  const [openingStudentId, setOpeningStudentId] = useState<string | null>(
+    null,
+  );
+
+  const openStudentDetail = async (studentId: string, cohortLabel: string) => {
+    if (!activeClassId) return;
+    setOpeningStudentId(studentId);
+    try {
+      const log = await attendanceLog(activeClassId);
+      // The roster's entry when there is one, for the name; otherwise what
+      // the row itself knew.
+      const entry = roster.find((r) => r.student_id === studentId) ?? {
+        student_id: studentId,
+        cohort: cohortLabel,
+      };
+      setDetailLog(log);
+      setDetailStudent({
+        ...entry,
+        ...studentTotals(log, entry.student_id, cohortIdByLabel.get(entry.cohort)),
+      });
+    } catch (e) {
+      toast({
+        title: "Could not open the student",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setOpeningStudentId(null);
+    }
+  };
+
+  /*
+   * After a correction or an edit in the dialog.
+   *
+   * The lists behind are re-read either way. The dialog's own numbers are
+   * updated only if it is still open on the same student: saving an edit
+   * closes the dialog straight after calling this, and a log that arrives
+   * afterwards must not reopen it on an ID that may just have changed.
+   */
+  const refreshStudentDetail = async () => {
+    void loadToday();
+    void loadRoster();
+    if (!detailStudent || !activeClassId) return;
+    const openId = detailStudent.student_id;
+    try {
+      const log = await attendanceLog(activeClassId);
+      setDetailLog(log);
+      setDetailStudent((current) =>
+        current && current.student_id === openId
+          ? {
+              ...current,
+              ...studentTotals(
+                log,
+                current.student_id,
+                cohortIdByLabel.get(current.cohort),
+              ),
+            }
+          : current,
+      );
+    } catch {
+      // The dialog keeps what it showed; the lists behind were still re-read.
+    }
+  };
   // "day" answers "who missed this session"; "student" answers "who is missing
   // too many", which is a different question and needs the whole term.
 
@@ -1690,19 +1771,28 @@ const TADashboard = ({
                                 key={student.id}
                                 className="flex items-center justify-between p-2 bg-success/10 border border-success/20 rounded-lg"
                               >
-                                {/* Left Side: ID and Name */}
-                                <div className="flex flex-col">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="font-medium">
-                                      {student.id}
-                                    </span>
-                                  </div>
+                                {/* Left Side: ID and Name. Opens the student's record. */}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void openStudentDetail(student.id, student.cohort)
+                                  }
+                                  disabled={openingStudentId !== null}
+                                  title="Open this student's record"
+                                  className="flex min-w-0 flex-col rounded-md text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait"
+                                >
+                                  <span className="flex items-center gap-2 font-medium">
+                                    {student.id}
+                                    {openingStudentId === student.id && (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    )}
+                                  </span>
                                   <span className="text-sm text-muted-foreground mt-1">
                                     {roster.find(
                                       (r) => r.student_id === student.id,
                                     )?.name || "Unknown Student"}
                                   </span>
-                                </div>
+                                </button>
 
                                 {/* Right Side: Cohort and Timestamp stacked vertically */}
                                 <div className="flex flex-col items-end space-y-1 ml-4">
@@ -1739,8 +1829,19 @@ const TADashboard = ({
                                   key={studentId}
                                   className="flex items-center justify-between p-2 bg-destructive/10 border border-destructive/20 rounded-lg"
                                 >
-                                  <div className="flex flex-col">
-                                    <div className="flex items-center space-x-2">
+                                  {/* Opens the student's record. Beside Mark
+                                      Present, not around it: a button inside a
+                                      button is not a thing a page can have. */}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void openStudentDetail(studentId, cohort)
+                                    }
+                                    disabled={openingStudentId !== null}
+                                    title="Open this student's record"
+                                    className="flex min-w-0 flex-col rounded-md text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait"
+                                  >
+                                    <span className="flex items-center gap-2">
                                       <span className="font-medium">
                                         {studentId}
                                       </span>
@@ -1750,11 +1851,14 @@ const TADashboard = ({
                                       >
                                         Cohort {cohort}
                                       </Badge>
-                                    </div>
+                                      {openingStudentId === studentId && (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      )}
+                                    </span>
                                     <span className="text-sm text-muted-foreground mt-1">
                                       {studentName}
                                     </span>
-                                  </div>
+                                  </button>
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -1791,6 +1895,20 @@ const TADashboard = ({
             cohorts.find((c) => c.id === presenting?.cohort_id)?.label ?? ""
           }
           onOpenChange={(o) => !o && setPresentId(null)}
+        />
+      )}
+
+      {activeClass && (
+        <StudentDetailDialog
+          student={detailStudent}
+          classId={activeClass.id}
+          cohorts={cohorts}
+          log={detailLog}
+          threshold={activeClass.min_attendance_percentage}
+          onOpenChange={(open) => {
+            if (!open) setDetailStudent(null);
+          }}
+          onChanged={() => void refreshStudentDetail()}
         />
       )}
 

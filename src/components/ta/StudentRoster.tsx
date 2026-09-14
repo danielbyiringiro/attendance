@@ -6,8 +6,7 @@ import { Download, Loader2, Search, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   attendanceLog,
-  sessionStatesFor,
-  tallyStates,
+  studentTotals,
   type AttendanceLog,
 } from "@/lib/api/attendance";
 import type { CohortRow } from "@/lib/api/types";
@@ -128,39 +127,19 @@ const StudentRoster = ({
     [cohorts],
   );
 
-  const standings = useMemo<StudentStanding[]>(() => {
-    if (!log) {
-      return roster.map((student) => ({
+  // Driven from the sessions their cohort held, not the records they have:
+  // a session still open shows as null and is excluded, rather than being
+  // invisible here and an absence in the exported CSV. studentTotals is
+  // shared with the attendance tab, which opens the same student dialog, so
+  // the two cannot count one student differently.
+  const standings = useMemo<StudentStanding[]>(
+    () =>
+      roster.map((student) => ({
         ...student,
-        sessions: 0,
-        present: 0,
-        late: 0,
-        excused: 0,
-        absent: 0,
-        rate: 0,
-      }));
-    }
-
-    return roster.map((student) => {
-      // Driven from the sessions their cohort held, not the records they have:
-      // a session still open shows as null and is excluded, rather than being
-      // invisible here and an absence in the exported CSV.
-      const cohortId = cohortIdOf.get(student.cohort);
-      const t = tallyStates(
-        cohortId ? sessionStatesFor(log, student.student_id, cohortId) : [],
-      );
-
-      return {
-        ...student,
-        sessions: t.sessions,
-        present: t.present,
-        late: t.late,
-        excused: t.excused,
-        absent: t.absent,
-        rate: t.rate,
-      };
-    });
-  }, [roster, log, cohortIdOf]);
+        ...studentTotals(log, student.student_id, cohortIdOf.get(student.cohort)),
+      })),
+    [roster, log, cohortIdOf],
+  );
 
   const absenceFloor = Math.max(1, Number(minAbsences) || 1);
 

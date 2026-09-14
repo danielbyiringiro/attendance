@@ -1006,6 +1006,39 @@ console.log("\ncheckInSound");
   eq("a count that went down is not a check-in", newCheckIns(before, [{ id: "a", checked_in: 1 }]), 0);
 }
 
+// ---------------------------------------------------------------------------
+// studentTotals — one count for a student, whichever tab opened them
+//
+// The Students tab and the attendance tab both open the student dialog, and it
+// heads with these numbers. They were computed inline in StudentRoster; moved
+// here so the attendance tab cannot grow its own slightly different count.
+// Uses the attendanceLog fixture built at the top of this file.
+// ---------------------------------------------------------------------------
+
+console.log("\nstudentTotals");
+
+{
+  const { studentTotals } = mod;
+  const zeros = { sessions: 0, present: 0, late: 0, excused: 0, absent: 0, rate: 0 };
+  const t = tallyStates(sessionStatesFor(log, "stu-1", "coh-a"));
+
+  eq(
+    "the totals are exactly what the Students tab counted inline",
+    studentTotals(log, "stu-1", "coh-a"),
+    {
+      sessions: t.sessions,
+      present: t.present,
+      late: t.late,
+      excused: t.excused,
+      absent: t.absent,
+      rate: t.rate,
+    },
+  );
+  ok("and are real for a student with marks", studentTotals(log, "stu-1", "coh-a").sessions > 0);
+  eq("before the log has loaded, every total is zero", studentTotals(null, "stu-1", "coh-a"), zeros);
+  eq("a cohort that cannot be resolved counts nothing", studentTotals(log, "stu-1", undefined), zeros);
+}
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by
