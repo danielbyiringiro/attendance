@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Logo from "@/components/Logo";
+import { pinFromSearch, searchWithoutPin } from "@/lib/checkinLink";
 
 export interface MarkResult {
   success: boolean;
@@ -47,7 +48,38 @@ interface StudentLoginProps {
  */
 const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
-  const [pin, setPin] = useState("");
+  /*
+   * Filled in from the address when the student arrived by scanning the QR on
+   * the projector, so they type only their own ID.
+   *
+   * Read once, at first render. The address is tidied straight afterwards, so
+   * a later render or a refresh does not see it again.
+   */
+  const [pin, setPin] = useState(
+    () => pinFromSearch(window.location.search) ?? "",
+  );
+  const [pinFromQr, setPinFromQr] = useState(
+    () => pinFromSearch(window.location.search) !== null,
+  );
+
+  /*
+   * Take the code out of the address bar once it is in the field.
+   *
+   * Left there, it survives a refresh and sits in browser history, so a
+   * student coming back to the tab after class gets a code filled in that
+   * stopped working an hour ago — and the refusal they then get looks like
+   * their ID is wrong. replaceState, not a navigation: nothing reloads, and
+   * the back button does not return to the version with the code in it.
+   */
+  useEffect(() => {
+    if (pinFromSearch(window.location.search) === null) return;
+    const { pathname, hash } = window.location;
+    window.history.replaceState(
+      window.history.state,
+      "",
+      pathname + searchWithoutPin(window.location.search) + hash,
+    );
+  }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [marked, setMarked] = useState<MarkResult | null>(null);
   const { toast } = useToast();
@@ -90,6 +122,7 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
       setMarked(result);
       setStudentId("");
       setPin("");
+      setPinFromQr(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -211,6 +244,10 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
                   onChange={(e) => setStudentId(e.target.value)}
                   disabled={isSubmitting}
                   className="h-12"
+                  // Straight to the only thing left to type. Without this a
+                  // phone opens with no field selected and the student has to
+                  // find the box before the keyboard appears.
+                  autoFocus={pinFromQr}
                 />
               </div>
 
@@ -220,10 +257,24 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
                   type="password"
                   placeholder="Enter the PIN provided by your TA"
                   value={pin}
-                  onChange={(e) => setPin(e.target.value)}
+                  onChange={(e) => {
+                    setPin(e.target.value);
+                    setPinFromQr(false);
+                  }}
                   disabled={isSubmitting}
                   className="h-12"
                 />
+                {/*
+                  Said, because the field is a password box: a student who
+                  scanned sees dots they did not type, and without this reads
+                  it as somebody else's leftover input.
+                */}
+                {pinFromQr && pin && (
+                  <p className="text-xs text-muted-foreground">
+                    Filled in from the QR code. If it is refused, the code on
+                    the screen may have changed — scan it again.
+                  </p>
+                )}
               </div>
 
               <Button

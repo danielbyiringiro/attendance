@@ -676,6 +676,78 @@ ok(
     }),
 );
 
+// ---------------------------------------------------------------------------
+// checkinLink — what the QR carries, and reading it back
+//
+// The presenter builds the link and the check-in form reads it, in different
+// files. These pin that the two ends agree, and that a value from an address bar
+// — which anybody can type — cannot put something odd in the PIN field.
+// ---------------------------------------------------------------------------
+
+const linkOut = join(mkdtempSync(join(tmpdir(), "link-")), "link.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/checkinLink.ts")],
+  outfile: linkOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { checkinUrl, pinFromSearch, searchWithoutPin, MAX_PIN_LENGTH } =
+  await import(pathToFileURL(linkOut).href);
+
+console.log("\ncheckinLink");
+
+eq(
+  "a live code goes into the link",
+  checkinUrl("https://attend.test", "K7M2P"),
+  "https://attend.test/?pin=K7M2P",
+);
+eq(
+  "a trailing slash on the origin does not double up",
+  checkinUrl("https://attend.test/", "K7M2P"),
+  "https://attend.test/?pin=K7M2P",
+);
+eq(
+  "no code gives the bare site",
+  checkinUrl("https://attend.test", null),
+  "https://attend.test/",
+);
+eq(
+  "a blank code gives the bare site, not ?pin=",
+  checkinUrl("https://attend.test", "   "),
+  "https://attend.test/",
+);
+eq(
+  "characters that mean something in a URL are encoded",
+  checkinUrl("https://attend.test", "A&B=C"),
+  "https://attend.test/?pin=A%26B%3DC",
+);
+
+// The two ends agree: whatever the presenter builds, the form reads back.
+for (const code of ["K7M2P", "ZZ9Y8", "A&B=C"]) {
+  eq(
+    `round trip: ${code}`,
+    pinFromSearch(new URL(checkinUrl("https://attend.test", code)).search),
+    code,
+  );
+}
+
+eq("a lower-case code is shown in capitals", pinFromSearch("?pin=k7m2p"), "K7M2P");
+eq("no pin parameter is null", pinFromSearch("?other=1"), null);
+eq("an empty pin is null, not an empty field", pinFromSearch("?pin="), null);
+eq("whitespace inside is refused", pinFromSearch("?pin=K7%20M2P"), null);
+eq("a control character is refused", pinFromSearch("?pin=K7%0AM2P"), null);
+eq(
+  "an absurdly long value is refused",
+  pinFromSearch(`?pin=${"A".repeat(MAX_PIN_LENGTH + 1)}`),
+  null,
+);
+
+eq("tidying keeps other parameters", searchWithoutPin("?a=1&pin=K7M2P&b=2"), "?a=1&b=2");
+eq("tidying the only parameter leaves nothing", searchWithoutPin("?pin=K7M2P"), "");
+eq("tidying an address without a pin changes nothing", searchWithoutPin("?a=1"), "?a=1");
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by
