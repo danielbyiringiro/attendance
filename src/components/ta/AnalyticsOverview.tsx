@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   CalendarRange,
+  ClipboardCheck,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -24,6 +25,7 @@ import {
 import { listSessions } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow } from "@/lib/api/types";
 import { todayStr } from "@/lib/dates";
+import SessionRollCall from "@/components/ta/SessionRollCall";
 
 interface AnalyticsOverviewProps {
   classId: string;
@@ -32,6 +34,8 @@ interface AnalyticsOverviewProps {
   roster: { student_id: string; cohort: string }[];
   termStartsOn: string;
   termEndsOn: string;
+  /** The class's own clock, so session times read as the room saw them. */
+  timezone: string;
 }
 
 type Scope = { mode: "day"; date: string } | { mode: "term" };
@@ -65,6 +69,7 @@ const AnalyticsOverview = ({
   roster,
   termStartsOn,
   termEndsOn,
+  timezone,
 }: AnalyticsOverviewProps) => {
   const { toast } = useToast();
   const [scope, setScope] = useState<Scope>({ mode: "day", date: todayStr() });
@@ -80,6 +85,15 @@ const AnalyticsOverview = ({
    */
   const [upcoming, setUpcoming] = useState<SessionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  /*
+   * Every session on the chosen day, whatever its status.
+   *
+   * `upcoming` keeps only the scheduled ones, for the cards. Taking the
+   * register needs the rest too — a closed session from last Tuesday is
+   * exactly the one somebody wants to correct after the fact.
+   */
+  const [daySessions, setDaySessions] = useState<SessionRow[]>([]);
+  const [registerFor, setRegisterFor] = useState<SessionRow | null>(null);
 
   const from = scope.mode === "day" ? scope.date : termStartsOn;
   const to = scope.mode === "day" ? scope.date : termEndsOn;
@@ -93,6 +107,7 @@ const AnalyticsOverview = ({
       ]);
       setLog(entries);
       setUpcoming(sessions.filter((s) => s.status === "scheduled"));
+      setDaySessions(sessions);
     } catch (e) {
       toast({
         title: "Could not load attendance",
@@ -101,6 +116,7 @@ const AnalyticsOverview = ({
       });
       setLog(null);
       setUpcoming([]);
+      setDaySessions([]);
     } finally {
       setIsLoading(false);
     }
@@ -176,6 +192,22 @@ const AnalyticsOverview = ({
    * zeroes would read as a class nobody attended.
    */
   const hasSessions = (stats?.held ?? 0) > 0 || upcoming.length > 0;
+
+  /*
+   * The sessions on this day that can be marked by hand.
+   *
+   * Manual marking lived only on the attendance tab, under today's sessions,
+   * so a register taken on paper last week had nowhere to go. The roll call
+   * itself never cared which day a session was on — it marks by session id —
+   * so this is a second way in, not new behaviour. Cancelled sessions are left
+   * out: a class that did not happen has no attendance to take.
+   */
+  const registerable = isDay
+    ? daySessions
+        .filter((s) => s.status !== "cancelled")
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    : [];
+  const isPast = isDay && scope.date < todayStr();
 
   return (
     <div className="space-y-4">
@@ -288,6 +320,57 @@ const AnalyticsOverview = ({
         </Card>
       )}
 
+      {registerable.length > 0 && (
+        <Card className="border-2">
+          <CardContent className="space-y-3 pt-6">
+            <div>
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <ClipboardCheck className="h-4 w-4" />
+                Take the register{isPast ? " for this day" : ""}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {isPast
+                  ? "Correcting a past day changes its record. Anyone the session closed without is listed as absent by default until you mark them."
+                  : isToday
+                    ? "For a session where the code was not used — the projector was down, or somebody's phone was flat."
+                    : "Marks taken before the day are kept, and a schedule change will not move a session once anything is recorded against it."}
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              {registerable.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                    <span className="font-medium tabular-nums">
+                      {new Date(s.starts_at).toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        timeZone: timezone,
+                      })}
+                    </span>
+                    <Badge variant="outline">
+                      Cohort {cohorts.find((c) => c.id === s.cohort_id)?.label ?? "?"}
+                    </Badge>
+                    <Badge variant="secondary">{s.status}</Badge>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setRegisterFor(s)}
+                  >
+                    <ClipboardCheck className="mr-1 h-4 w-4" />
+                    Mark manually
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {hasSessions && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
@@ -392,6 +475,15 @@ const AnalyticsOverview = ({
           not counted against anybody.
         </p>
       )}
+
+      <SessionRollCall
+        session={registerFor}
+        cohortLabel={
+          cohorts.find((c) => c.id === registerFor?.cohort_id)?.label ?? ""
+        }
+        onOpenChange={(o) => !o && setRegisterFor(null)}
+        onChanged={() => void load()}
+      />
     </div>
   );
 };

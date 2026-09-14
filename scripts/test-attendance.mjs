@@ -554,7 +554,6 @@ eq("countdown reads in minutes and seconds", countdown(125_000), "2m 05s");
 eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
 eq("and says now at zero", countdown(0), "now");
 
-console.log(`\n${checks - failures}/${checks} passed`);
 
 // ---------------------------------------------------------------------------
 // sessionWasHeld — a day declared off is not a session nobody attended
@@ -677,4 +676,9 @@ ok(
     }),
 );
 
+// Printed last, immediately before the exit. It used to sit in the middle of
+// the file, so every block appended after it ran without being counted: the
+// exit code still caught failures, but the number on screen was short by
+// everything added since, and that number is what gets quoted.
+console.log(`\n${checks - failures}/${checks} passed`);
 if (failures > 0) process.exit(1);
