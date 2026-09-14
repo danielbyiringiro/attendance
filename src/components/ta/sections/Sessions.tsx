@@ -6,6 +6,7 @@ import { useActiveClass } from "@/lib/classContext";
 import SessionList from "@/components/ta/SessionList";
 import NoClassDays from "@/components/ta/NoClassDays";
 import SessionCalendar from "@/components/ta/SessionCalendar";
+import SessionTimingSettings from "@/components/ta/SessionTimingSettings";
 
 /**
  * The sessions of the active class — open one, close it, move it, cancel it.
@@ -51,6 +52,14 @@ const Sessions = () => {
 
   return (
     <div className="space-y-6">
+      {/* Timing for a cohort or the whole class, at the top where it is found
+          first. */}
+      <Card className="border-2">
+        <CardContent className="pt-6">
+          <SessionTimingSettings />
+        </CardContent>
+      </Card>
+
       <Card className="border-2">
         <CardContent className="space-y-4 pt-6">
           <div className="flex items-center gap-1">
