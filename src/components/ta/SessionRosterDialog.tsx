@@ -111,8 +111,9 @@ const SessionRosterDialog = ({
         <DialogHeader>
           <DialogTitle>Cohort {cohortLabel}</DialogTitle>
           <DialogDescription>
-            Everyone enrolled on this day. Marking somebody here records it
-            against the session, the same as a check-in.
+            Everyone in the cohort, including anyone added after this day.
+            Marking somebody here records it against the session, the same as
+            a check-in.
           </DialogDescription>
         </DialogHeader>
 
@@ -155,6 +156,9 @@ const SessionRosterDialog = ({
                       <p className="text-xs text-muted-foreground">
                         {a.name ? `${a.student_id} · ` : ""}
                         {stateLabel(a.state)}
+                        {session && a.enrolled_on > session.session_date
+                          ? " · added after this session"
+                          : ""}
                       </p>
                     </div>
                     <Button

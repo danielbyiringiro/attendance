@@ -432,6 +432,14 @@ const SessionRollCall = ({
                       checking in — nobody has actually looked.
                     </p>
                   )}
+                {/* Said, because otherwise a late joiner with no state on a
+                    closed session looks like something went wrong. */}
+                {session && current.enrolled_on > session.session_date && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Added on {current.enrolled_on}, after this session, so
+                    nothing was recorded for them automatically.
+                  </p>
+                )}
               </div>
               <Badge variant="outline" className="shrink-0 tabular-nums">
                 {remaining.length} left
