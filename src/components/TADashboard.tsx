@@ -41,6 +41,7 @@ import {
   UserX,
   Timer,
   RefreshCw,
+  Presentation,
   Shield,
   History,
   CheckCircle2,
@@ -71,6 +72,7 @@ import Admin from "@/components/ta/sections/Admin";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import SessionRollCall from "@/components/ta/SessionRollCall";
+import PresentDialog from "@/components/ta/PresentDialog";
 import ThemeToggle from "@/components/ThemeToggle";
 import AccessibilitySettings from "@/components/AccessibilitySettings";
 import StudentRoster from "@/components/ta/StudentRoster";
@@ -186,6 +188,16 @@ const TADashboard = ({
   // mid-class, and the count alone does not answer it.
   const [rosterFor, setRosterFor] = useState<SessionRow | null>(null);
   const [rollCallFor, setRollCallFor] = useState<SessionRow | null>(null);
+  /*
+   * Which session is up on screen, by id rather than by row.
+   *
+   * todaySessions is kept live by realtime and the poll, so looking the row
+   * up on every render means the presenter dialog changes when auto-open
+   * mints a PIN or the window closes. Holding a copied row would freeze it at
+   * the moment the button was pressed.
+   */
+  const [presentId, setPresentId] = useState<string | null>(null);
+  const presenting = todaySessions.find((s) => s.id === presentId) ?? null;
   const [presentStudents, setPresentStudents] = useState<Student[]>([]);
   /*
    * When today's data was last read, and whether a read is in flight.
@@ -1268,6 +1280,7 @@ const TADashboard = ({
                 roster={roster}
                 termStartsOn={activeClass.term_starts_on}
                 termEndsOn={activeClass.term_ends_on}
+                timezone={activeClass.timezone}
               />
             )}
 
@@ -1450,6 +1463,15 @@ const TADashboard = ({
                               <p className="rounded-lg bg-gradient-primary py-2 text-center font-mono text-3xl font-bold tracking-[0.3em] text-primary-foreground shadow-soft">
                                 {sn.pin}
                               </p>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full"
+                                onClick={() => setPresentId(sn.id)}
+                              >
+                                <Presentation className="mr-1 h-4 w-4" />
+                                Show on screen
+                              </Button>
                               <SessionWindowNote
                                 session={sn}
                                 now={now}
@@ -1717,6 +1739,17 @@ const TADashboard = ({
           </div>
         )}
       </div>
+
+      {activeClass && (
+        <PresentDialog
+          session={presenting}
+          className={activeClass.name}
+          cohortLabel={
+            cohorts.find((c) => c.id === presenting?.cohort_id)?.label ?? ""
+          }
+          onOpenChange={(o) => !o && setPresentId(null)}
+        />
+      )}
 
       <SessionRollCall
         session={rollCallFor}
