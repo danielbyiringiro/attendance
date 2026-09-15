@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Ban, CalendarOff, Loader2, PencilLine, Plus, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import SessionActions from "@/components/ta/SessionActions";
 import {
   clearNoClassDay,
@@ -90,6 +91,18 @@ const CalendarDayDialog = ({
   const [declaring, setDeclaring] = useState(false);
   const [mode, setMode] = useState<NoClassMode>("exempt");
   const [reason, setReason] = useState("");
+
+  // Each day opens on the day itself, not on whichever form — adding a
+  // session, setting a day off — was left open for the last one.
+  useResetOnOpen(date, () => {
+    setAdding(false);
+    setDeclaring(false);
+    setMode("exempt");
+    setReason("");
+    setAddTime("09:00");
+    setAddScope("day");
+    setAddUntil("");
+  });
 
   const label = (id: string) => cohorts.find((c) => c.id === id)?.label ?? "?";
 

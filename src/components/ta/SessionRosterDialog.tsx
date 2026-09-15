@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Loader2, Search, UserCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import {
   rosterForSession,
   setAttendanceState,
@@ -48,6 +49,9 @@ const SessionRosterDialog = ({
   const [isLoading, setIsLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+
+  // A search typed for one session is not a search for the next one.
+  useResetOnOpen(session?.id, () => setQuery(""));
 
   const load = useCallback(async () => {
     if (!session) return;

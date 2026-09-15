@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CalendarDays, Check, List, Loader2, Pencil, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import {
   setAttendanceState,
   stateLabel,
@@ -101,10 +102,14 @@ const StudentDetailDialog = ({
   // Calendar first: the shape of a term is what somebody opens a record to see.
   const [view, setView] = useState<"list" | "calendar">("calendar");
 
-  useEffect(() => {
+  // Each student opens fresh: on the calendar, with no date picked and no
+  // edit form. An edit abandoned on the last student would otherwise still be
+  // here holding their name and ID, one Save away from this student's record.
+  useResetOnOpen(student?.student_id, () => {
     setOnDate("");
     setView("calendar");
-  }, [student?.student_id]);
+    setForm(null);
+  });
 
   const marks = useMemo(() => {
     if (!student || !log) return [];

@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -131,6 +132,18 @@ const AttendanceExportDialog = ({
   // Whether sql/add_canvas_mappings.sql has been run. Null until first checked.
   const [memoryAvailable, setMemoryAvailable] = useState<boolean | null>(null);
   const [rememberedCount, setRememberedCount] = useState(0);
+
+  // The last export's result, an uploaded Canvas file and a picked student
+  // belong to that run, not the next. Format, dates, cohort and the other
+  // options are kept: they are what somebody sets up once and reuses.
+  useResetOnOpen(open, () => {
+    setLastResult(null);
+    setCanvasSheet(null);
+    setCanvasFileName("");
+    setMatches(null);
+    setSelectedStudent(null);
+    setStudentQuery("");
+  });
 
   const resetCanvasMatching = () => {
     setMatches(null);
