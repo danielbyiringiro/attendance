@@ -70,8 +70,8 @@ import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import AbsenceHistoryDialog from "@/components/ta/AbsenceHistoryDialog";
 import Classes from "@/components/ta/sections/Classes";
-import Schedule from "@/components/ta/sections/Schedule";
-import Sessions from "@/components/ta/sections/Sessions";
+import ClassArea from "@/components/ta/sections/ClassArea";
+import type { ClassTab, TATab } from "@/lib/taNavigation";
 import Admin from "@/components/ta/sections/Admin";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
@@ -130,14 +130,11 @@ interface RosterStudent {
 }
 
 interface TADashboardProps {
-  activeSection?:
-    | "attendance"
-    | "analytics"
-    | "students"
-    | "sessions"
-    | "schedule"
-    | "classes"
-    | "admin";
+  activeSection?: TATab;
+  /** Which tab of the Class page, when activeSection is "class". */
+  classTab: ClassTab;
+  /** Go to another section, and optionally a tab of the Class page. */
+  onNavigate: (tab: TATab, classTab?: ClassTab) => void;
   onLogout: () => void;
 }
 
@@ -178,6 +175,8 @@ const COHORT_PICKER_MAX = 8;
 
 const TADashboard = ({
   activeSection = "attendance",
+  classTab,
+  onNavigate,
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
@@ -1134,7 +1133,7 @@ const TADashboard = ({
     if (!session) {
       toast({
         title: "No session today",
-        description: `Cohort ${cohort} has no session today to mark them at. Create one under Schedule, or open the right day under Class Sessions.`,
+        description: `Cohort ${cohort} has no session today to mark them at. Add one under Class → Sessions.`,
         variant: "destructive",
       });
       return;
@@ -1166,8 +1165,7 @@ const TADashboard = ({
   const isAttendanceSection = activeSection === "attendance";
   const isAnalyticsSection = activeSection === "analytics";
   const isStudentsSection = activeSection === "students";
-  const isSessionsSection = activeSection === "sessions";
-  const isScheduleSection = activeSection === "schedule";
+  const isClassSection = activeSection === "class";
   const isAdminSection = activeSection === "admin";
   const isClassesSection = activeSection === "classes";
   // A lookup rather than a five-deep ternary: adding a section to the nested
@@ -1175,16 +1173,12 @@ const TADashboard = ({
   // behind, which is exactly what happened.
   const SECTION_COPY: Record<string, { title: string; description: string }> = {
     classes: {
-      title: "Classes",
-      description: "Create a class, set its cohorts, and choose who can manage it",
+      title: "All classes",
+      description: "Create a class, or find an archived one",
     },
-    sessions: {
-      title: "Class Sessions",
-      description: "Open, close, move or cancel a session",
-    },
-    schedule: {
-      title: "Schedule",
-      description: "Set when each cohort meets",
+    class: {
+      title: "Class",
+      description: "Sessions, weekly pattern and settings",
     },
     admin: {
       title: "Admin",
@@ -1250,28 +1244,35 @@ const TADashboard = ({
         {/* Every count below is of one class's roster, so say when there isn't
             one and when it is still arriving — an empty roster otherwise reads
             as a class where everybody is absent. */}
-        {!isClassesSection && !isScheduleSection && !isSessionsSection &&
+        {!isClassesSection && !isClassSection &&
           !isAdminSection && !activeClass && (
           <Card className="border-2 border-dashed">
             <CardContent className="pt-6 text-center">
               <p className="font-medium">No class selected</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Choose one in the sidebar, or create one under Classes.
+                Choose one in the class switcher, or create one from All classes.
               </p>
             </CardContent>
           </Card>
         )}
-        {!isClassesSection && !isScheduleSection && !isSessionsSection &&
+        {!isClassesSection && !isClassSection &&
           !isAdminSection && activeClass && isRosterLoading && (
           <p className="text-sm text-muted-foreground">Loading the roster…</p>
         )}
 
-        {/* Classes and Class Sessions replace the body rather than sitting
+        {/* All classes and the Class page replace the body rather than sitting
             beside it: everything below is scoped to one class, and these are
             the screens that choose and shape that class. */}
-        {isClassesSection && <Classes />}
-        {isSessionsSection && <Sessions />}
-        {isScheduleSection && <Schedule />}
+        {isClassesSection && (
+          <Classes onOpenClass={(tab) => onNavigate("class", tab)} />
+        )}
+        {isClassSection && (
+          <ClassArea
+            tab={classTab}
+            onTabChange={(tab) => onNavigate("class", tab)}
+            onOpenAllClasses={() => onNavigate("classes")}
+          />
+        )}
         {isAdminSection && <Admin />}
 
         {/*
@@ -1541,8 +1542,8 @@ const TADashboard = ({
 
                   {todaySessions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No session today for this class. Schedule sets which days
-                      it meets; Class Sessions has every other day.
+                      No session today for this class. Its weekly pattern sets
+                      which days it meets; Class → Sessions has every other day.
                     </p>
                   ) : (
                     todaySessions.map((sn) => {
@@ -2490,7 +2491,7 @@ const TADashboard = ({
               )}
 
               <p className="text-xs text-muted-foreground">
-                Lecturer and FI come from Classes → the people icon.
+                Lecturer and FI are set under Class → Settings.
               </p>
             </div>
 

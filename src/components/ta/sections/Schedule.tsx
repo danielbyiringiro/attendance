@@ -343,7 +343,7 @@ const Schedule = () => {
             : `Saved ${dirty.length} cohort${dirty.length === 1 ? "" : "s"}`,
         description:
           changes.length === 0 && termOver
-            ? `This class's term ended on ${activeClass.term_ends_on}. Sessions only exist between the term dates, so there are no days left to create — move the end date forward under Classes.`
+            ? `This class's term ended on ${activeClass.term_ends_on}. Sessions only exist between the term dates, so there are no days left to create — move the end date forward under Class → Settings.`
             : changes.length === 0
               ? "No session from today onward needed changing."
               : `${changes.join(", ")}, from today onward. Nothing earlier changed, and sessions you cancelled or moved by hand were left alone.`,
@@ -402,7 +402,7 @@ const Schedule = () => {
         <CardContent className="pt-6 text-center">
           <p className="font-medium">No class selected</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose one in the sidebar, or create one under Classes.
+            Choose one in the class switcher, or create one from All classes.
           </p>
         </CardContent>
       </Card>
@@ -702,7 +702,7 @@ const Schedule = () => {
 
           {cohorts.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              This class has no cohorts yet. Add one under Classes.
+              This class has no cohorts yet. Add one under Class → Settings.
             </p>
           )}
 

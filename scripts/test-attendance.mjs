@@ -1091,6 +1091,36 @@ eq(
 );
 eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2026, 0, 15)), { year: 2026, month: 0 });
 
+// ---------------------------------------------------------------------------
+// taNavigation — where a remembered dashboard tab lands
+//
+// Classes, Schedule and Class Sessions became one Class page. The last tab is
+// kept in sessionStorage, so a tab left open across the change still says
+// "schedule" or "sessions", and has to land on the matching Class tab.
+// ---------------------------------------------------------------------------
+
+const navOut = join(mkdtempSync(join(tmpdir(), "nav-")), "nav.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/taNavigation.ts")],
+  outfile: navOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const { restoreNavigation } = await import(pathToFileURL(navOut).href);
+
+console.log("\ntaNavigation");
+
+eq("the old Schedule tab opens the weekly pattern", restoreNavigation("schedule", null), { tab: "class", classTab: "pattern" });
+eq("the old Class Sessions tab opens Sessions", restoreNavigation("sessions", "settings"), { tab: "class", classTab: "sessions" });
+eq("Classes kept its name and opens the list of all classes", restoreNavigation("classes", null), { tab: "classes", classTab: "sessions" });
+eq("a current tab is kept, with its class tab", restoreNavigation("class", "settings"), { tab: "class", classTab: "settings" });
+eq("so is any other tab", restoreNavigation("students", "pattern"), { tab: "students", classTab: "pattern" });
+eq("nothing remembered starts on Attendance", restoreNavigation(null, null), { tab: "attendance", classTab: "sessions" });
+eq("an unknown tab starts on Attendance", restoreNavigation("reports", null), { tab: "attendance", classTab: "sessions" });
+eq("an unknown class tab falls back to Sessions", restoreNavigation("class", "timetable"), { tab: "class", classTab: "sessions" });
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

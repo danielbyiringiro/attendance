@@ -17,10 +17,10 @@ import { setSessionWindows } from "@/lib/api/windows";
 const ALL = "all";
 
 /**
- * Check-in timing for a cohort, or every cohort, from the Sessions tab.
+ * Check-in timing for a cohort, or every cohort, from the class's Settings tab.
  *
  * The sign-up window and the early-open time were only editable a weekly slot at
- * a time on the Schedule tab, or a session at a time in the edit dialog, so
+ * a time on the Weekly pattern tab, or a session at a time in the edit dialog, so
  * changing them for a cohort meant repeating the edit across every slot and then
  * every session already generated. This is one change that reaches all of them.
  *
