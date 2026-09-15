@@ -20,6 +20,7 @@ import {
 import { CalendarIcon, Download, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import { attendanceLog, isAbsentState } from "@/lib/api/attendance";
 import { toCsv } from "@/lib/csv";
 import { downloadCsv } from "@/lib/attendanceExport";
@@ -69,6 +70,13 @@ const AbsenceHistoryDialog = ({
   const [mode, setMode] = useState<"day" | "student">("day");
   const [day, setDay] = useState<Date | undefined>(new Date());
   const [minAbsences, setMinAbsences] = useState("1");
+
+  // Opens on today, by day, every time — the question a TA almost always has.
+  // The minimum-absences number is a setting, so it is kept.
+  useResetOnOpen(open, () => {
+    setMode("day");
+    setDay(new Date());
+  });
 
   const load = useCallback(async () => {
     if (!classId) {

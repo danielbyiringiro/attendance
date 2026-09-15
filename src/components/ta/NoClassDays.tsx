@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { CalendarOff, Loader2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import {
   clearNoClassDay,
   listNoClassDays,
@@ -76,6 +77,14 @@ const NoClassDays = ({
   const [mode, setMode] = useState<NoClassMode>("exempt");
   const [reason, setReason] = useState("");
   const [scope, setScope] = useState("all");
+
+  // A new day off starts blank, not with the last one's date and reason.
+  useResetOnOpen(adding, () => {
+    setDate(todayStr());
+    setMode("exempt");
+    setReason("");
+    setScope("all");
+  });
 
   const load = useCallback(async () => {
     setIsLoading(true);
