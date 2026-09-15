@@ -10,9 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AlertTriangle, Archive, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { archiveClass, deleteClass, previewClassDeletion } from "@/lib/api/classes";
+import { deleteClass, previewClassDeletion } from "@/lib/api/classes";
 import type { ClassDeletionPreview, ClassWithCohorts } from "@/lib/api/types";
 
 interface DeleteClassDialogProps {
@@ -23,11 +23,13 @@ interface DeleteClassDialogProps {
 }
 
 /**
- * Archiving is the primary action and deletion is behind a typed confirmation.
+ * Permanent deletion, behind a preview of what goes and the typed class code.
  *
- * The user asked for delete, and delete exists — but archive is what someone
- * actually wants the second time they reach for this on live data, and a class
- * carries every attendance record ever taken for it.
+ * This used to be "Archive or delete", with archiving as its main button and
+ * deletion beneath it. People opened it meaning to delete, pressed the big
+ * button, archived the class instead, and then could not find it. Archive is
+ * now its own action beside this one on the class's Settings tab, so this
+ * dialog does exactly one thing.
  */
 const DeleteClassDialog = ({
   open,
@@ -57,28 +59,6 @@ const DeleteClassDialog = ({
       )
       .finally(() => setIsLoading(false));
   }, [open, target, toast]);
-
-  const handleArchive = async () => {
-    if (!target) return;
-    setIsWorking(true);
-    try {
-      await archiveClass(target.id, true);
-      toast({
-        title: "Class archived",
-        description: "Nothing was deleted. You can bring it back at any time.",
-      });
-      onDone();
-      onOpenChange(false);
-    } catch (e) {
-      toast({
-        title: "Could not archive",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsWorking(false);
-    }
-  };
 
   const handleDelete = async () => {
     if (!target) return;
@@ -113,9 +93,10 @@ const DeleteClassDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Archive or delete {target?.code}</DialogTitle>
+          <DialogTitle>Delete {target?.code} permanently</DialogTitle>
           <DialogDescription>
-            Archiving hides the class and keeps everything. Deleting does not.
+            This cannot be undone. To keep everything and only hide the class,
+            close this and use Archive instead.
           </DialogDescription>
         </DialogHeader>
 
@@ -129,7 +110,7 @@ const DeleteClassDialog = ({
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 space-y-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <AlertTriangle className="h-4 w-4 text-destructive" />
-                Deleting would permanently remove
+                Deleting permanently removes
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                 <span className="text-muted-foreground">Cohorts</span>
@@ -164,8 +145,7 @@ const DeleteClassDialog = ({
 
               <p className="border-t pt-2 text-xs text-muted-foreground">
                 Attendance history for this class goes with it, including the
-                record of every correction. There is no undo. To put a class out
-                of the way without destroying anything, archive it instead.
+                record of every correction. There is no undo.
               </p>
             </div>
           ) : null}
@@ -184,28 +164,22 @@ const DeleteClassDialog = ({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-between">
+        <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <div className="flex gap-2">
-            <Button onClick={handleArchive} disabled={isWorking}>
-              <Archive className="h-4 w-4 mr-2" />
-              Archive instead
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isWorking || !codeMatches}
-            >
-              {isWorking ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
-              Delete permanently
-            </Button>
-          </div>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={isWorking || !codeMatches}
+          >
+            {isWorking ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 mr-2" />
+            )}
+            Delete permanently
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -7,12 +7,15 @@ import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
 import ClassSwitcher from "@/components/ta/ClassSwitcher";
+import {
+  restoreNavigation,
+  type ClassTab,
+  type TATab,
+} from "@/lib/taNavigation";
 import { ClassProvider } from "@/lib/classContext";
 import {
   BarChart3,
-  CalendarClock,
   CalendarDays,
-  Clock,
   GraduationCap,
   History,
   ShieldCheck,
@@ -48,15 +51,6 @@ interface Student {
   sessionDate?: string; // YYYY-MM-DD
 }
 
-type TATab =
-  | "attendance"
-  | "analytics"
-  | "students"
-  | "sessions"
-  | "schedule"
-  | "classes"
-  | "admin";
-
 // One row per sidebar entry. Previously these were four hand-duplicated
 // 14-line SidebarMenuItem blocks, so adding a section meant a fifth copy-paste
 // and a fifth chance to wire the wrong tab to the wrong label.
@@ -69,9 +63,9 @@ const TA_TABS: ReadonlyArray<{
   { id: "attendance", label: "Attendance", icon: CalendarDays },
   { id: "analytics", label: "Attendance Analytics", icon: BarChart3 },
   { id: "students", label: "Students", icon: Users },
-  { id: "sessions", label: "Class Sessions", icon: Clock },
-  { id: "schedule", label: "Schedule", icon: CalendarClock },
-  { id: "classes", label: "Classes", icon: GraduationCap },
+  // Sessions, Weekly pattern and Settings for the chosen class. The list of
+  // every class is not a sidebar item: it opens from the class switcher.
+  { id: "class", label: "Class", icon: GraduationCap },
   // Only rendered for an admin — see the filter where TA_TABS is mapped.
   { id: "admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
 ];
@@ -82,6 +76,8 @@ const TA_TABS: ReadonlyArray<{
 // TA authentication is handled by Supabase Auth; we only persist which tab the
 // TA last viewed so a reload returns them to the same section.
 const TA_TAB_KEY = "ta_active_tab";
+// Which tab of the Class page, kept beside it for the same reason.
+const CLASS_TAB_KEY = "ta_class_tab";
 
 /**
  * The navigation list, as its own component so it can reach the sidebar.
@@ -148,9 +144,16 @@ const Index = () => {
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
-  const [taTab, setTaTab] = useState<TATab>(
-    () => (sessionStorage.getItem(TA_TAB_KEY) as TATab) || "attendance",
+  // Through restoreNavigation, which also moves a tab remembered from before
+  // Classes, Schedule and Class Sessions became one Class page.
+  const [restored] = useState(() =>
+    restoreNavigation(
+      sessionStorage.getItem(TA_TAB_KEY),
+      sessionStorage.getItem(CLASS_TAB_KEY),
+    ),
   );
+  const [taTab, setTaTab] = useState<TATab>(restored.tab);
+  const [classTab, setClassTab] = useState<ClassTab>(restored.classTab);
 
   // Who is signed in. Supabase persists the session across reloads, so
   // refreshing keeps the TA logged in. Any authenticated user is a TA — TA
@@ -289,9 +292,13 @@ const Index = () => {
   };
 
   // Persist tab selection so a reload returns the TA to the same section.
-  const handleSetTaTab = (tab: TATab) => {
+  const handleSetTaTab = (tab: TATab, nextClassTab?: ClassTab) => {
     setTaTab(tab);
     sessionStorage.setItem(TA_TAB_KEY, tab);
+    if (nextClassTab) {
+      setClassTab(nextClassTab);
+      sessionStorage.setItem(CLASS_TAB_KEY, nextClassTab);
+    }
   };
 
   const handleTALogin = () => {
@@ -339,6 +346,7 @@ const Index = () => {
     await supabase.auth.signOut();
     setIdentity(null);
     sessionStorage.removeItem(TA_TAB_KEY);
+    sessionStorage.removeItem(CLASS_TAB_KEY);
     // The roster and today's attendance live in TADashboard now and unmount
     // with it, so there is nothing left to clear here.
   };
@@ -384,7 +392,7 @@ const Index = () => {
         <Sidebar collapsible="offcanvas">
           <SidebarHeader>
             <div className="px-2 pt-3 pb-1 text-sm font-semibold">TA Dashboard</div>
-            <ClassSwitcher />
+            <ClassSwitcher onOpenAllClasses={() => handleSetTaTab("classes")} />
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
@@ -405,7 +413,12 @@ const Index = () => {
         <SidebarInset>
           <div className="flex flex-1 flex-col">
             <SidebarTrigger className="fixed left-4 top-10 z-50" />
-            <TADashboard activeSection={taTab} onLogout={handleTALogout} />
+            <TADashboard
+              activeSection={taTab}
+              classTab={classTab}
+              onNavigate={handleSetTaTab}
+              onLogout={handleTALogout}
+            />
           </div>
         </SidebarInset>
       </SidebarProvider>

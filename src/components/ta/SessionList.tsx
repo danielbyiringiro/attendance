@@ -359,7 +359,7 @@ const SessionList = ({
       ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           {sessions.length === 0
-            ? "This class has no sessions yet. Set a weekly pattern under Schedule."
+            ? "This class has no sessions yet. Set one on the Weekly pattern tab."
             : current.empty}
         </p>
       ) : (
