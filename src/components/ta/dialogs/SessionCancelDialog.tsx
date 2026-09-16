@@ -13,6 +13,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cancelSession } from "@/lib/api/sessions";
 import type { SessionRow } from "@/lib/api/types";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 /**
  * Call off one cohort's session.
@@ -116,13 +117,14 @@ const SessionCancelDialog = ({
           <Button variant="outline" onClick={onClose}>
             Keep it
           </Button>
-          <Button
-            variant="destructive"
-            onClick={handleCancel}
-            disabled={isSaving}
-          >
-            Cancel the class
-          </Button>
+          <ConfirmDelete
+            label="Cancel the class"
+            confirmLabel="Yes, cancel it"
+            warning="Every check-in against it is deleted"
+            isWorking={isSaving}
+            resetKey={session?.id}
+            onConfirm={handleCancel}
+          />
         </DialogFooter>
       </DialogContent>
     </Dialog>

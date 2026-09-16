@@ -116,6 +116,7 @@ import {
   weekKeyOf,
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 interface Student {
   id: string;
@@ -2222,14 +2223,15 @@ const TADashboard = ({
             >
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleRemoveStudent}
+            <ConfirmDelete
+              label="Remove student"
+              confirmLabel="Yes, remove them"
+              warning="They come off the roster; their record is kept"
+              icon={<UserMinus className="h-4 w-4 mr-2" />}
               disabled={!studentToRemove}
-            >
-              <UserMinus className="h-4 w-4 mr-2" />
-              Remove Student
-            </Button>
+              resetKey={studentToRemove?.student_id}
+              onConfirm={() => void handleRemoveStudent()}
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>

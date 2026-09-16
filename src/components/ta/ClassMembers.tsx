@@ -23,6 +23,7 @@ import {
   type AddableStaff,
   type ClassMember,
 } from "@/lib/api/staff";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 interface ClassMembersProps {
   classId: string;
@@ -206,15 +207,16 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
                 Leave
               </Button>
             ) : (
-              <Button
+              <ConfirmDelete
+                label="Remove"
+                confirmLabel="Yes, remove them"
+                warning="They lose access to this class"
                 size="sm"
-                variant="ghost"
-                disabled={isWorking}
-                title="Remove"
-                onClick={() => handleRemove(m)}
-              >
-                <UserMinus className="h-3.5 w-3.5" />
-              </Button>
+                icon={<UserMinus className="mr-1 h-3.5 w-3.5" />}
+                isWorking={isWorking}
+                resetKey={m.staff_id}
+                onConfirm={() => void handleRemove(m)}
+              />
             )}
           </div>
         ))}

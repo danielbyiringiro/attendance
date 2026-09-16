@@ -21,6 +21,7 @@ import { AlertTriangle, Loader2, Trash2, UserMinus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { clearRoster, previewRosterClearing } from "@/lib/api/enrolment";
 import type { CohortRow, RosterClearingPreview } from "@/lib/api/types";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 interface ClearRosterDialogProps {
   open: boolean;
@@ -59,19 +60,20 @@ const ClearRosterDialog = ({
 }: ClearRosterDialogProps) => {
   const { toast } = useToast();
   const [scope, setScope] = useState<string>(ALL);
-  const [mode, setMode] = useState<"keep" | "erase">("keep");
+  const [mode, setMode] = useState<"keep" | "erase">("erase");
   const [confirmText, setConfirmText] = useState("");
   const [preview, setPreview] = useState<RosterClearingPreview | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
 
-  // Opens fresh every time: on the whole class, on the safe option, with the
-  // confirmation empty. A dialog that reopened on "erase" because that is what
-  // it was left on last time is exactly the wrong thing to remember.
+  // Opens fresh every time: whole class, erasing, confirmation empty. Erasing
+  // is the default because it is what people open this for — a roster in the
+  // wrong class — and it is the option the two presses and the typed code are
+  // there to slow down. Never carried over from last time.
   useEffect(() => {
     if (!open) return;
     setScope(ALL);
-    setMode("keep");
+    setMode("erase");
     setConfirmText("");
   }, [open]);
 
@@ -321,20 +323,34 @@ const ClearRosterDialog = ({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            variant={erasing ? "destructive" : "default"}
-            onClick={handleClear}
-            disabled={isWorking || !codeMatches || isLoading}
-          >
-            {isWorking ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : erasing ? (
-              <Trash2 className="mr-2 h-4 w-4" />
-            ) : (
-              <UserMinus className="mr-2 h-4 w-4" />
-            )}
-            {erasing ? "Erase permanently" : "Take them off"}
-          </Button>
+          {erasing ? (
+            <ConfirmDelete
+              label="Erase permanently"
+              confirmLabel="Yes, erase it all"
+              warning={
+                preview
+                  ? `${preview.attendance_records} record${preview.attendance_records === 1 ? "" : "s"} destroyed, no undo`
+                  : "This cannot be undone"
+              }
+              icon={<Trash2 className="mr-2 h-4 w-4" />}
+              isWorking={isWorking}
+              disabled={!codeMatches || isLoading}
+              resetKey={`${open}-${scope}-${mode}`}
+              onConfirm={handleClear}
+            />
+          ) : (
+            <Button
+              onClick={handleClear}
+              disabled={isWorking || !codeMatches || isLoading}
+            >
+              {isWorking ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <UserMinus className="mr-2 h-4 w-4" />
+              )}
+              Take them off
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

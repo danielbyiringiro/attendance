@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/sessions";
 import type { CohortRow } from "@/lib/api/types";
 import { todayStr } from "@/lib/dates";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 const dateOf = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString(undefined, {
@@ -232,20 +233,17 @@ const NoClassDays = ({
                 </p>
               </div>
 
-              <Button
+              <ConfirmDelete
+                label="Remove"
+                confirmLabel="Yes, remove it"
+                warning="Sessions return to this date"
                 size="sm"
-                variant="ghost"
                 className="self-start sm:self-auto"
-                disabled={busy === d.id}
-                onClick={() => void handleClear(d)}
-              >
-                {busy === d.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <X className="h-4 w-4" />
-                )}
-                <span className="ml-1 sm:hidden">Remove</span>
-              </Button>
+                icon={<X className="mr-1 h-4 w-4" />}
+                isWorking={busy === d.id}
+                resetKey={d.id}
+                onConfirm={() => void handleClear(d)}
+              />
             </div>
           ))}
         </div>
