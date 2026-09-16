@@ -31,6 +31,7 @@ import {
   type NoClassMode,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow } from "@/lib/api/types";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 export interface DayOff {
   on_date: string;
@@ -238,19 +239,16 @@ const CalendarDayDialog = ({
                 {dayOff.reason}
               </p>
             </div>
-            <Button
+            <ConfirmDelete
+              label="Remove"
+              confirmLabel="Yes, remove it"
+              warning="Sessions are scheduled on this date again. Check-ins that were replaced when the day was declared off do not come back."
               size="sm"
-              variant="ghost"
-              disabled={busy === "clear"}
-              onClick={() => void handleClearDay()}
-            >
-              {busy === "clear" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <X className="mr-1 h-4 w-4" />
-              )}
-              Remove
-            </Button>
+              icon={<X className="mr-1 h-4 w-4" />}
+              isWorking={busy === "clear"}
+              resetKey={date}
+              onConfirm={() => void handleClearDay()}
+            />
           </div>
         )}
 

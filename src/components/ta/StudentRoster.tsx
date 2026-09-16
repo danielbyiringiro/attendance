@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Download, Loader2, Search, UserCheck } from "lucide-react";
+import { Download, Loader2, Search, UserCheck, UserMinus } from "lucide-react";
+import ClearRosterDialog from "@/components/ta/dialogs/ClearRosterDialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   attendanceLog,
@@ -43,6 +44,8 @@ export interface StudentStanding extends RosterEntry {
 
 interface StudentRosterProps {
   classId: string;
+  /** Typed back to confirm before a roster is cleared. */
+  classCode: string;
   cohorts: CohortRow[];
   roster: RosterEntry[];
   /** Shown as a "Mark Present" action when given. */
@@ -50,6 +53,14 @@ interface StudentRosterProps {
   presentIds?: Set<string>;
   /** What this class requires, and how (046). */
   requirement?: ClassRequirement;
+  /**
+   * Offer "Clear roster" (047).
+   *
+   * Off by default, and deliberately not on every screen this list appears on.
+   * The Analytics tab shows the same component to explain a number; emptying a
+   * class is not something to put a click away from a chart.
+   */
+  canClearRoster?: boolean;
   /**
    * Re-read the roster itself.
    *
@@ -89,11 +100,13 @@ const toStanding = (s: StudentStanding) => ({
  */
 const StudentRoster = ({
   classId,
+  classCode,
   cohorts,
   roster,
   onMarkPresent,
   presentIds,
   requirement = DEFAULT_REQUIREMENT,
+  canClearRoster = false,
   onRosterChanged,
   onVisibleChange,
 }: StudentRosterProps) => {
@@ -107,6 +120,7 @@ const StudentRoster = ({
   const [risk, setRisk] = useState<"all" | "below" | "absences">("all");
   const [minAbsences, setMinAbsences] = useState("3");
   const [openStudent, setOpenStudent] = useState<StudentStanding | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -263,6 +277,20 @@ const StudentRoster = ({
         </div>
 
         {isLoading && <Loader2 className="h-4 w-4 animate-spin opacity-60" />}
+
+        {/* Last on the row, and not a destructive colour until the dialog
+            makes clear what it would do: this empties a roster. */}
+        {canClearRoster && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto text-muted-foreground hover:text-destructive"
+            onClick={() => setIsClearing(true)}
+          >
+            <UserMinus className="mr-1 h-4 w-4" />
+            Clear roster
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -398,6 +426,20 @@ const StudentRoster = ({
           })}
         </div>
       )}
+
+      <ClearRosterDialog
+        open={canClearRoster && isClearing}
+        onOpenChange={setIsClearing}
+        classId={classId}
+        classCode={classCode}
+        cohorts={cohorts}
+        onDone={() => {
+          // Both: the enrolments changed, and so did everything counted off
+          // them. onRosterChanged owns the list, load() owns the attendance.
+          onRosterChanged?.();
+          void load();
+        }}
+      />
 
       <StudentDetailDialog
         student={openStudent}

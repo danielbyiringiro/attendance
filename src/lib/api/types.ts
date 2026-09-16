@@ -189,6 +189,37 @@ export interface ClassDeletionPreview {
   students_also_deleted: number;
 }
 
+/** What clearing a roster would remove — whole class, or one cohort (047). */
+export interface RosterClearingPreview {
+  class_id: string;
+  code: string;
+  name: string;
+  /** Which it is. The dialog says so rather than relying on the screen's filter. */
+  scope: "class" | "cohort";
+  cohort_id: string | null;
+  cohort_label: string | null;
+  /** Everybody in scope, dropped ones included. */
+  students: number;
+  /** The subset a drop would actually change. */
+  still_on_roster: number;
+  attendance_records: number;
+  flags: number;
+  /** Who would be left in no class at all, if their record is erased. */
+  students_also_deleted: number;
+}
+
+/** What clearing a roster did. `erased` says which of the two it was (047). */
+export interface RosterClearingResult {
+  cleared: boolean;
+  erased: boolean;
+  /** Enrolments dropped, or deleted when erasing. */
+  removed: number;
+  records_deleted?: number;
+  flags_deleted?: number;
+  students_deleted?: number;
+  summary: RosterClearingPreview;
+}
+
 export interface UpsertEnrolmentsResult {
   /**
    * True when nothing was written. A dry run reports exactly what a real call

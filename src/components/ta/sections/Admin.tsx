@@ -30,6 +30,7 @@ import {
   type ClassMember,
   type StaffAccount,
 } from "@/lib/api/staff";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 /**
  * Approving accounts, and repairing a class nobody can reach.
@@ -571,19 +572,20 @@ const Admin = () => {
               <Button variant="outline" onClick={() => setDeleting(null)}>
                 Keep it
               </Button>
-              <Button
-                variant="destructive"
-                disabled={busy === "delete"}
-                onClick={() =>
+              <ConfirmDelete
+                label="Delete the class"
+                confirmLabel="Yes, delete it"
+                warning="This deletes somebody else's class. Its sessions, enrolments and every attendance record go, for everybody who teaches it, and students whose only class this was are deleted too."
+                isWorking={busy === "delete"}
+                resetKey={deleting.class_id}
+                onConfirm={() =>
                   run("delete", async () => {
                     await adminDeleteClass(deleting.class_id, confirmCode.trim());
                     toast({ title: `${deleting.code} deleted` });
                     setDeleting(null);
                   })
                 }
-              >
-                Delete the class
-              </Button>
+              />
             </div>
           </CardContent>
         </Card>

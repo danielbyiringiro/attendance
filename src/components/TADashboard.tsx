@@ -116,6 +116,7 @@ import {
   weekKeyOf,
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
 
 interface Student {
   id: string;
@@ -1430,6 +1431,7 @@ const TADashboard = ({
                 {activeClass && (
                   <StudentRoster
                     classId={activeClass.id}
+                    classCode={activeClass.code}
                     cohorts={cohorts}
                     roster={roster}
                     presentIds={new Set(validPresentStudents.map((p) => p.id))}
@@ -1466,11 +1468,13 @@ const TADashboard = ({
             <CardContent>
               <StudentRoster
                 classId={activeClass.id}
+                classCode={activeClass.code}
                 cohorts={cohorts}
                 roster={roster}
                 presentIds={new Set(validPresentStudents.map((p) => p.id))}
                 onMarkPresent={handleMarkAttendanceManually}
                 requirement={requirementOf(activeClass)}
+                canClearRoster
                 onRosterChanged={() => void loadRoster()}
                 onVisibleChange={setVisibleStudents}
               />
@@ -2219,14 +2223,15 @@ const TADashboard = ({
             >
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleRemoveStudent}
+            <ConfirmDelete
+              label="Remove student"
+              confirmLabel="Yes, remove them"
+              warning="They come off this class's roster and stop being marked absent. Their attendance so far is kept, and they can be added back."
+              icon={<UserMinus className="h-4 w-4 mr-2" />}
               disabled={!studentToRemove}
-            >
-              <UserMinus className="h-4 w-4 mr-2" />
-              Remove Student
-            </Button>
+              resetKey={studentToRemove?.student_id}
+              onConfirm={() => void handleRemoveStudent()}
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>
