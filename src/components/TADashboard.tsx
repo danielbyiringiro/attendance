@@ -2226,7 +2226,7 @@ const TADashboard = ({
             <ConfirmDelete
               label="Remove student"
               confirmLabel="Yes, remove them"
-              warning="They come off the roster; their record is kept"
+              warning="They come off this class's roster and stop being marked absent. Their attendance so far is kept, and they can be added back."
               icon={<UserMinus className="h-4 w-4 mr-2" />}
               disabled={!studentToRemove}
               resetKey={studentToRemove?.student_id}

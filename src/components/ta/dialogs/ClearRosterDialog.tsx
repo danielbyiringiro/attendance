@@ -329,8 +329,8 @@ const ClearRosterDialog = ({
               confirmLabel="Yes, erase it all"
               warning={
                 preview
-                  ? `${preview.attendance_records} record${preview.attendance_records === 1 ? "" : "s"} destroyed, no undo`
-                  : "This cannot be undone"
+                  ? `${preview.students} student${preview.students === 1 ? "" : "s"} and ${preview.attendance_records} attendance record${preview.attendance_records === 1 ? "" : "s"} will be destroyed, along with every correction behind them. Nothing can be exported afterwards.`
+                  : "Everything recorded against these students in this class will be destroyed."
               }
               icon={<Trash2 className="mr-2 h-4 w-4" />}
               isWorking={isWorking}

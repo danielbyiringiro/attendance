@@ -236,7 +236,7 @@ const NoClassDays = ({
               <ConfirmDelete
                 label="Remove"
                 confirmLabel="Yes, remove it"
-                warning="Sessions return to this date"
+                warning="Sessions are scheduled on this date again. Check-ins that were replaced when the day was declared off do not come back."
                 size="sm"
                 className="self-start sm:self-auto"
                 icon={<X className="mr-1 h-4 w-4" />}

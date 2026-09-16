@@ -120,7 +120,7 @@ const SessionCancelDialog = ({
           <ConfirmDelete
             label="Cancel the class"
             confirmLabel="Yes, cancel it"
-            warning="Every check-in against it is deleted"
+            warning="Every attendance record against this session is deleted, including anyone who has already checked in. Uncancelling does not bring them back."
             isWorking={isSaving}
             resetKey={session?.id}
             onConfirm={handleCancel}

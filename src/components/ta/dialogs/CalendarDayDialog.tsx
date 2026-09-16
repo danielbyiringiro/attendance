@@ -242,7 +242,7 @@ const CalendarDayDialog = ({
             <ConfirmDelete
               label="Remove"
               confirmLabel="Yes, remove it"
-              warning="Sessions return to this date"
+              warning="Sessions are scheduled on this date again. Check-ins that were replaced when the day was declared off do not come back."
               size="sm"
               icon={<X className="mr-1 h-4 w-4" />}
               isWorking={busy === "clear"}

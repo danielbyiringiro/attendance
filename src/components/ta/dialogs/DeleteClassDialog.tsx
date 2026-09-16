@@ -174,8 +174,8 @@ const DeleteClassDialog = ({
             confirmLabel="Yes, delete the class"
             warning={
               preview
-                ? `${preview.attendance_records} attendance record${preview.attendance_records === 1 ? "" : "s"} go with it`
-                : "This cannot be undone"
+                ? `${target?.code} goes, and with it ${preview.sessions} session${preview.sessions === 1 ? "" : "s"}, ${preview.enrolments} enrolment${preview.enrolments === 1 ? "" : "s"} and ${preview.attendance_records} attendance record${preview.attendance_records === 1 ? "" : "s"}.`
+                : "The class and every session, enrolment and attendance record in it will be destroyed."
             }
             icon={<Trash2 className="h-4 w-4 mr-2" />}
             isWorking={isWorking}

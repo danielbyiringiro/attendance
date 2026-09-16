@@ -575,7 +575,7 @@ const Admin = () => {
               <ConfirmDelete
                 label="Delete the class"
                 confirmLabel="Yes, delete it"
-                warning="Every record of it goes, for everybody"
+                warning="This deletes somebody else's class. Its sessions, enrolments and every attendance record go, for everybody who teaches it, and students whose only class this was are deleted too."
                 isWorking={busy === "delete"}
                 resetKey={deleting.class_id}
                 onConfirm={() =>

@@ -210,7 +210,7 @@ const ClassMembers = ({ classId, className }: ClassMembersProps) => {
               <ConfirmDelete
                 label="Remove"
                 confirmLabel="Yes, remove them"
-                warning="They lose access to this class"
+                warning="They lose access to this class immediately — its roster, its attendance and its settings. Another member can add them back."
                 size="sm"
                 icon={<UserMinus className="mr-1 h-3.5 w-3.5" />}
                 isWorking={isWorking}
