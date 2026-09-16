@@ -1091,6 +1091,60 @@ eq(
 );
 eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2026, 0, 15)), { year: 2026, month: 0 });
 
+// Days off on a student's own history (migration 045).
+{
+  const { historyEntries } = await import(pathToFileURL(calOut).href);
+
+  eq("a day off outranks the exemption it caused", dayTone(["exempted", "dayoff"]), "dayoff");
+  eq("a real mark still outranks a day off", dayTone(["dayoff", "present"]), "present");
+
+  const records = [
+    { date: "2026-09-22", className: "Data Structures", tone: "exempted" },
+    { date: "2026-09-23", className: "Data Structures", tone: "present" },
+    { date: "2026-09-24", className: "Data Structures", tone: "absent" },
+  ];
+  const daysOff = [
+    { date: "2026-09-22", className: "Data Structures", mode: "exempt", reason: "Public holiday" },
+    { date: "2026-09-23", className: "Data Structures", mode: "present", reason: "Lab credit" },
+    // Declared on a date nothing was held: no session to pair with.
+    { date: "2026-09-30", className: "Data Structures", mode: "exempt", reason: "Reading week" },
+    // The same date declared twice, whole class and cohort.
+    { date: "2026-09-30", className: "Data Structures", mode: "exempt", reason: "Reading week (cohort)" },
+  ];
+  const entries = historyEntries(records, daysOff, false);
+  const on = (date) => entries.filter((e) => e.date === date).map((e) => `${e.tone}:${e.label ?? ""}`);
+
+  eq("a day that did not count shows the day off, not Exempt", on("2026-09-22"), ["dayoff:Public holiday"]);
+  eq("a day that counted keeps Present and adds the reason", on("2026-09-23"), ["present:", "dayoff:Lab credit (counted)"]);
+  eq("a day off with no session still shows", on("2026-09-30"), ["dayoff:Reading week"]);
+  eq("an ordinary absence is untouched", on("2026-09-24"), ["absent:"]);
+  eq(
+    "with several classes, the reason names its class",
+    historyEntries([], [daysOff[0]], true).map((e) => e.label),
+    ["Data Structures: Public holiday"],
+  );
+
+  // One rule for both calendars of a student: the TA's record and their own.
+  const { sessionTone, studentCalendar } = await import(pathToFileURL(calOut).href);
+  const s = (status, state, date = "2026-09-15") => ({ date, className: "", status, state });
+
+  eq("a mark shows as itself", sessionTone(s("closed", "unexcused")), "absent");
+  eq("a cancelled class is no class", sessionTone(s("cancelled", null)), "cancelled");
+  eq("an open session with no mark yet is not closed", sessionTone(s("open", null)), "pending");
+  eq("a closed session with no mark is left off: it predates the student", sessionTone(s("closed", null)), null);
+  eq("a register taken early shows", sessionTone(s("scheduled", "present")), "present");
+
+  eq(
+    "both screens get the same entries from the same facts",
+    studentCalendar(
+      [s("closed", "exempted", "2026-09-22"), s("closed", null, "2026-09-01"), s("open", null, "2026-09-29")],
+      [{ date: "2026-09-22", className: "", mode: "exempt", reason: "Public holiday" }],
+      false,
+    ).map((e) => `${e.date}:${e.tone}:${e.label ?? ""}`),
+    ["2026-09-29:pending:", "2026-09-22:dayoff:Public holiday"],
+  );
+}
+
 // ---------------------------------------------------------------------------
 // taNavigation — where a remembered dashboard tab lands
 //

@@ -39,7 +39,10 @@ import { useToast } from "@/hooks/use-toast";
 import ThemeToggle from "@/components/ThemeToggle";
 import AccessibilitySettings from "@/components/AccessibilitySettings";
 import AttendanceCalendar from "@/components/AttendanceCalendar";
-import { toneOf, type CalendarEntry } from "@/lib/attendanceCalendar";
+import {
+  studentCalendar,
+  type HistoryDayOff,
+} from "@/lib/attendanceCalendar";
 
 interface AttendanceRecord {
   /** The session this row is about — what a flag is filed against. */
@@ -50,11 +53,15 @@ interface AttendanceRecord {
   className: string;
   cohort: string;
   wasCancelled: boolean;
+  /** scheduled | open | closed | cancelled, for the calendar. */
+  sessionStatus: string;
   /** What was recorded, for the calendar's colour. */
   state: AttendanceState | null;
   timestamp?: string;
   isFlagged?: boolean;
   flagStatus?: "flagged" | "accepted" | "denied" | null;
+  /** Why the class did not meet on this date, when it was a day off (045). */
+  dayOffReason?: string;
 }
 
 /** One class the student is in, with its own record and its own rate. */
@@ -65,6 +72,8 @@ interface ClassHistory {
   /** The percentage this class requires. */
   threshold: number;
   records: AttendanceRecord[];
+  /** The days this class did not meet for this student, with why (045). */
+  daysOff: HistoryDayOff[];
   tally: AttendanceTally;
 }
 
@@ -249,6 +258,14 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
       const payload = (rpcData ?? {}) as {
         sessions?: SessionRecord[];
+        days_off?: Array<{
+          date: string;
+          class: string;
+          class_code: string;
+          cohort: string;
+          mode: "exempt" | "present";
+          reason: string;
+        }>;
         flagged?: Array<{
           session_date: string;
           session_id: string | null;
@@ -299,6 +316,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
           className: sn.class,
           cohort: sn.cohort,
           wasCancelled: cancelled,
+          sessionStatus: sn.status,
           state: (sn.state as AttendanceState | null) ?? null,
           status: cancelled ? "No class" : (label[sn.state ?? ""] ?? "No record"),
           timestamp: sn.marked_at ?? undefined,
@@ -319,13 +337,26 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
 
       const grouped: ClassHistory[] = [...byClass.entries()]
         .map(([classCode, own]) => {
+          // The days this class did not meet, and why. A session on one of
+          // them carries the reason, so the list can say it too.
+          const daysOff: HistoryDayOff[] = (payload.days_off ?? [])
+            .filter((d) => d.class_code === classCode)
+            .map((d) => ({
+              date: d.date,
+              className: d.class,
+              mode: d.mode,
+              reason: d.reason,
+            }));
+          const reasonOn = new Map(daysOff.map((d) => [d.date, d.reason]));
           const records = own
             .map(toRecord)
+            .map((r) => ({ ...r, dayOffReason: reasonOn.get(r.date) }))
             .sort((a, b) => b.date.localeCompare(a.date));
 
           return {
             classCode,
             className: own[0].class,
+            daysOff,
             cohort: own[0].cohort,
             threshold: own[0].min_attendance ?? 75,
             records,
@@ -367,14 +398,22 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
     ? shownRecords.filter((r) => r.date === dayFilter)
     : shownRecords;
 
+  const shownClasses = classes.filter(
+    (c) => selectedClass === "all" || c.classCode === selectedClass,
+  );
   // With several classes showing, a day can hold more than one, so each
-  // names its class rather than just its state.
-  const manyClasses = new Set(shownRecords.map((r) => r.className)).size > 1;
-  const calendarEntries: CalendarEntry[] = shownRecords.map((r) => ({
-    date: r.date,
-    tone: toneOf(r.state, r.wasCancelled),
-    label: manyClasses ? r.className : undefined,
-  }));
+  // names its class rather than just its state. studentCalendar is the same
+  // rule the TA's record of this student uses, so the two calendars agree.
+  const calendarEntries = studentCalendar(
+    shownRecords.map((r) => ({
+      date: r.date,
+      className: r.className,
+      status: r.sessionStatus,
+      state: r.state,
+    })),
+    shownClasses.flatMap((c) => c.daysOff),
+    shownClasses.length > 1,
+  );
 
   const getFlagButtonState = (record: AttendanceRecord) => {
     if (record.flagStatus === "accepted") {
@@ -669,6 +708,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                 : record.wasCancelled
                                   ? "Class cancelled"
                                   : "Not marked"}
+                              {record.dayOffReason && ` · Day off: ${record.dayOffReason}`}
                               {record.flagStatus === "accepted" && " · flag accepted"}
                               {record.flagStatus === "denied" && " · flag denied"}
                               {record.isFlagged && " · flag pending"}
@@ -753,6 +793,11 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                                 >
                                   {record.status}
                                 </span>
+                                {record.dayOffReason && (
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    Day off: {record.dayOffReason}
+                                  </span>
+                                )}
                                 {record.flagStatus === "accepted" && (
                                   <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/15 text-success">
                                     Flag Accepted

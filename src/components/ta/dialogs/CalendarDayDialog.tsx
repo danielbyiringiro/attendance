@@ -409,7 +409,8 @@ const CalendarDayDialog = ({
               onChange={(e) => setReason(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Applies to every cohort. Check-ins already here are replaced.
+              Applies to every cohort. Check-ins already here are replaced. Students
+              see the reason in their history.
             </p>
             <div className="flex gap-2">
               <Button

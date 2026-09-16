@@ -66,6 +66,21 @@ export const listEnrolments = async (
   }));
 };
 
+/** One student's enrolment in a class: their cohort and when they joined. */
+export const enrolmentOf = async (
+  classId: string,
+  studentId: string,
+): Promise<{ cohort_id: string; enrolled_on: string } | null> => {
+  const { data, error } = await supabase
+    .from("enrolments")
+    .select("cohort_id, enrolled_on")
+    .eq("class_id", classId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error) fail("Could not load the enrolment", error);
+  return data;
+};
+
 export interface RosterRow {
   student_id: string;
   name?: string | null;

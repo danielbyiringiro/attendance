@@ -336,7 +336,7 @@ const NoClassDays = ({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ncd-reason">Reason</Label>
+              <Label htmlFor="ncd-reason">Reason (students see this)</Label>
               <Input
                 id="ncd-reason"
                 value={reason}
