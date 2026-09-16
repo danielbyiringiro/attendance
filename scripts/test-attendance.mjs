@@ -1195,6 +1195,110 @@ eq("nothing remembered starts on Attendance", restoreNavigation(null, null), { t
 eq("an unknown tab starts on Attendance", restoreNavigation("reports", null), { tab: "attendance", classTab: "sessions" });
 eq("an unknown class tab falls back to Sessions", restoreNavigation("class", "timetable"), { tab: "class", classTab: "sessions" });
 
+// ---------------------------------------------------------------------------
+// attendanceRule — what a class requires, and whether a student has met it
+//
+// A class requires a percentage, or allows a number of absences (046). The
+// roster, the record a TA opens and the student's own page all ask that same
+// question, so the bands and the wording are pinned here instead of being
+// written out three times and drifting apart.
+// ---------------------------------------------------------------------------
+
+const ruleOut = join(mkdtempSync(join(tmpdir(), "rule-")), "rule.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/attendanceRule.ts")],
+  outfile: ruleOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const {
+  standingOf,
+  standingValue,
+  requirementLabel,
+  requirementSummary,
+  shortFilterLabel,
+  shortfallLine,
+  requirementOf,
+} = await import(pathToFileURL(ruleOut).href);
+
+console.log("\nattendanceRule");
+
+const pctRule = { rule: "percentage", minPercentage: 75, maxAbsences: 4 };
+const absRule = { rule: "absences", minPercentage: 75, maxAbsences: 3 };
+
+eq("at the required percentage, met", standingOf(pctRule, { counted: 10, rate: 75, absent: 2 }), "met");
+eq("just under is a warning, not a failure", standingOf(pctRule, { counted: 10, rate: 72, absent: 3 }), "warning");
+eq("well under is short", standingOf(pctRule, { counted: 10, rate: 40, absent: 6 }), "short");
+eq("nothing counted yet is not failing", standingOf(pctRule, { counted: 0, rate: 0, absent: 0 }), "none");
+
+eq("inside the allowance, met", standingOf(absRule, { counted: 5, rate: 60, absent: 2 }), "met");
+eq("on the last allowed absence is a warning", standingOf(absRule, { counted: 5, rate: 40, absent: 3 }), "warning");
+eq("one over the allowance is short", standingOf(absRule, { counted: 5, rate: 40, absent: 4 }), "short");
+eq(
+  "a rate far below the percentage does not matter under the absences rule",
+  standingOf(absRule, { counted: 9, rate: 10, absent: 1 }),
+  "met",
+);
+eq(
+  "an allowance is spent before anything has closed",
+  standingOf(absRule, { counted: 0, rate: 0, absent: 4 }),
+  "short",
+);
+
+eq(
+  "the number shown is the rate, or the absences against the allowance",
+  [
+    standingValue(pctRule, { counted: 4, rate: 80, absent: 1 }),
+    standingValue(absRule, { counted: 4, rate: 80, absent: 1 }),
+  ],
+  ["80%", "1/3"],
+);
+eq("nothing counted shows a dash, not 0%", standingValue(pctRule, { counted: 0, rate: 0, absent: 0 }), "—");
+
+eq(
+  "each rule says what it requires in its own words",
+  [requirementLabel(pctRule), requirementLabel(absRule)],
+  ["of 75% needed", "of 3 absences allowed"],
+);
+eq(
+  "one absence allowed is not pluralised",
+  requirementLabel({ rule: "absences", minPercentage: 75, maxAbsences: 1 }),
+  "of 1 absence allowed",
+);
+eq(
+  "the roster's filter is named for the rule",
+  [shortFilterLabel(pctRule), shortFilterLabel(absRule)],
+  ["Below 75%", "Over 3 absences"],
+);
+eq(
+  "and the settings row says it plainly",
+  [requirementSummary(pctRule), requirementSummary(absRule)],
+  ["75%", "Up to 3 absences"],
+);
+
+eq(
+  "a student who is short is told which rule they are short of",
+  [
+    shortfallLine(pctRule, { counted: 10, rate: 40, absent: 6 }),
+    shortfallLine(absRule, { counted: 10, rate: 40, absent: 6 }),
+  ],
+  ["Below the 75% this class requires.", "6 absences, more than the 3 this class allows."],
+);
+eq("nobody who has met it is told anything", shortfallLine(pctRule, { counted: 10, rate: 90, absent: 0 }), null);
+
+eq(
+  "a class row from before the rule existed reads as the percentage one",
+  requirementOf({ min_attendance_percentage: 60 }),
+  { rule: "percentage", minPercentage: 60, maxAbsences: 4 },
+);
+eq(
+  "a class on the absences rule carries its allowance",
+  requirementOf({ attendance_rule: "absences", min_attendance_percentage: 75, max_absences: 2 }),
+  { rule: "absences", minPercentage: 75, maxAbsences: 2 },
+);
+
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the
 // exit code still caught failures, but the number on screen was short by

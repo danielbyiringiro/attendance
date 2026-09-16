@@ -115,6 +115,7 @@ import {
   todayStr,
   weekKeyOf,
 } from "@/lib/dates";
+import { requirementOf } from "@/lib/attendanceRule";
 
 interface Student {
   id: string;
@@ -1432,9 +1433,7 @@ const TADashboard = ({
                     cohorts={cohorts}
                     roster={roster}
                     presentIds={new Set(validPresentStudents.map((p) => p.id))}
-                    minAttendancePercentage={
-                      activeClass.min_attendance_percentage
-                    }
+                    requirement={requirementOf(activeClass)}
                     onRosterChanged={() => void loadRoster()}
                   />
                 )}
@@ -1471,7 +1470,7 @@ const TADashboard = ({
                 roster={roster}
                 presentIds={new Set(validPresentStudents.map((p) => p.id))}
                 onMarkPresent={handleMarkAttendanceManually}
-                minAttendancePercentage={activeClass.min_attendance_percentage}
+                requirement={requirementOf(activeClass)}
                 onRosterChanged={() => void loadRoster()}
                 onVisibleChange={setVisibleStudents}
               />
@@ -1927,7 +1926,7 @@ const TADashboard = ({
           classId={activeClass.id}
           cohorts={cohorts}
           log={detailLog}
-          threshold={activeClass.min_attendance_percentage}
+          requirement={requirementOf(activeClass)}
           onOpenChange={(open) => {
             if (!open) setDetailStudent(null);
           }}

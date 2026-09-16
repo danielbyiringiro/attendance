@@ -43,6 +43,14 @@ import {
   studentCalendar,
   type HistoryDayOff,
 } from "@/lib/attendanceCalendar";
+import {
+  requirementLabel,
+  requirementOf,
+  standingOf,
+  standingValue,
+  STANDING_COLOUR,
+  type ClassRequirement,
+} from "@/lib/attendanceRule";
 
 interface AttendanceRecord {
   /** The session this row is about — what a flag is filed against. */
@@ -69,8 +77,8 @@ interface ClassHistory {
   classCode: string;
   className: string;
   cohort: string;
-  /** The percentage this class requires. */
-  threshold: number;
+  /** What this class requires, and how (046). */
+  requirement: ClassRequirement;
   records: AttendanceRecord[];
   /** The days this class did not meet for this student, with why (045). */
   daysOff: HistoryDayOff[];
@@ -100,6 +108,10 @@ interface SessionRecord {
   marked_at: string | null;
   /** What this class requires, so the screen does not have to assume. */
   min_attendance: number | null;
+  /** Which of the two requirements the class is run by (046). */
+  attendance_rule?: "percentage" | "absences" | null;
+  /** Unexcused absences allowed, under the "absences" rule (046). */
+  max_absences?: number | null;
 }
 
 // This file used to carry its own SEMESTER_START (May 26 2026) and a third copy
@@ -358,7 +370,11 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
             className: own[0].class,
             daysOff,
             cohort: own[0].cohort,
-            threshold: own[0].min_attendance ?? 75,
+            requirement: requirementOf({
+              attendance_rule: own[0].attendance_rule,
+              min_attendance_percentage: own[0].min_attendance,
+              max_absences: own[0].max_absences,
+            }),
             records,
             // Cancelled sessions are dropped: nobody attended a class that did
             // not run, and it must not count against them.
@@ -540,19 +556,23 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                             <div className="text-right">
                               <p
                                 className={`text-2xl font-bold ${
-                                  c.tally.graded === 0
-                                    ? "text-muted-foreground"
-                                    : c.tally.rate >= c.threshold
-                                      ? "text-success"
-                                      : c.tally.rate >= c.threshold - 15
-                                        ? "text-warning"
-                                        : "text-destructive"
+                                  STANDING_COLOUR[
+                                    standingOf(c.requirement, {
+                                      counted: c.tally.graded,
+                                      rate: c.tally.rate,
+                                      absent: c.tally.absent,
+                                    })
+                                  ]
                                 }`}
                               >
-                                {c.tally.graded === 0 ? "—" : `${c.tally.rate}%`}
+                                {standingValue(c.requirement, {
+                                  counted: c.tally.graded,
+                                  rate: c.tally.rate,
+                                  absent: c.tally.absent,
+                                })}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                of {c.threshold}% needed
+                                {requirementLabel(c.requirement)}
                               </p>
                             </div>
                           </div>

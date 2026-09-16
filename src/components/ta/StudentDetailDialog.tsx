@@ -41,6 +41,12 @@ import {
   type HistoryDayOff,
   type StudentSession,
 } from "@/lib/attendanceCalendar";
+import {
+  shortfallLine,
+  standingOf,
+  STANDING_COLOUR,
+  type ClassRequirement,
+} from "@/lib/attendanceRule";
 
 interface StudentDetailDialogProps {
   student: StudentStanding | null;
@@ -49,7 +55,7 @@ interface StudentDetailDialogProps {
   /** Cohorts of that class, so the student can be moved between them. */
   cohorts: CohortRow[];
   log: AttendanceLog | null;
-  threshold: number;
+  requirement: ClassRequirement;
   onOpenChange: (open: boolean) => void;
   /** Called after a correction, so the list behind can re-read. */
   onChanged: () => void;
@@ -79,7 +85,7 @@ const StudentDetailDialog = ({
   classId,
   cohorts,
   log,
-  threshold,
+  requirement,
   onOpenChange,
   onChanged,
 }: StudentDetailDialogProps) => {
@@ -214,6 +220,15 @@ const StudentDetailDialog = ({
       }));
     return studentCalendar(sessions, own?.daysOff ?? [], false);
   }, [student, log, cohorts, facts]);
+
+  // How this student stands against what the class requires — a percentage, or
+  // a number of absences (046). One rule, shared with the roster behind this
+  // dialog and with the student's own page.
+  const totals = student
+    ? { counted: student.sessions, rate: student.rate, absent: student.absent }
+    : { counted: 0, rate: 0, absent: 0 };
+  const standing = standingOf(requirement, totals);
+  const shortfall = student ? shortfallLine(requirement, totals) : null;
 
   const handleCorrect = async (sessionId: string, state: AttendanceState) => {
     if (!student) return;
@@ -354,10 +369,11 @@ const StudentDetailDialog = ({
                 <div key={stat.label} className="rounded-md border px-3 py-2">
                   <p
                     className={`text-xl font-bold tabular-nums ${
-                      stat.label === "Rate" && student.sessions > 0
-                        ? student.rate >= threshold
-                          ? "text-success"
-                          : "text-destructive"
+                      // Whichever number the class is judged on carries the
+                      // colour: the rate, or the absences against an allowance.
+                      stat.label ===
+                      (requirement.rule === "absences" ? "Absent" : "Rate")
+                        ? STANDING_COLOUR[standing]
                         : stat.label === "Absent" && student.absent > 0
                           ? "text-destructive"
                           : ""
@@ -370,9 +386,9 @@ const StudentDetailDialog = ({
               ))}
             </div>
 
-            {student.sessions > 0 && student.rate < threshold && (
+            {shortfall && (
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                Below the {threshold}% this class requires.
+                {shortfall}
               </p>
             )}
 
