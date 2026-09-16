@@ -313,3 +313,110 @@ export const codesMatch = (a: string | null, b: string | null): boolean => {
   const strip = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
   return strip(a) === strip(b);
 };
+
+// ---------------------------------------------------------------------------
+// Choosing a column: what is in it, and whether it can be the ID
+// ---------------------------------------------------------------------------
+
+/** The rows a mapping would actually read: from firstDataRow, blank lines out. */
+const dataRows = (rows: string[][], firstDataRow: number): string[][] =>
+  rows
+    .slice(Math.max(0, firstDataRow))
+    .filter((r) => r.some((c) => c.trim()));
+
+const valuesIn = (
+  rows: string[][],
+  col: number,
+  firstDataRow: number,
+): string[] => dataRows(rows, firstDataRow).map((r) => (r[col] ?? "").trim());
+
+/**
+ * A few real values out of one column, for showing beside the choice.
+ *
+ * A column title tells a TA what the file calls it; the values tell them
+ * whether it is the thing students type. "ROLL NO" and "ROLL NO/REGISTER NO."
+ * are indistinguishable as words and obvious as values — one counts 1, 2, 3 and
+ * the other holds 20250001. Distinct, because a column of the same repeated
+ * value says more by showing it once.
+ */
+export const samplesFor = (
+  rows: string[][],
+  col: number,
+  firstDataRow: number,
+  limit = 3,
+): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of valuesIn(rows, col, firstDataRow)) {
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length === limit) break;
+  }
+  return out;
+};
+
+/**
+ * Is this column counting 1, 2, 3…?
+ *
+ * The serial column is the dangerous one. It is short, numeric and present in
+ * every CAMU export, so it survives every "looks like an identifier" test, and
+ * choosing it enrols the class as students "1" through "40" — IDs nobody will
+ * ever type, and an attendance record that silently stays empty all term.
+ */
+const countsUpwards = (values: string[]): boolean => {
+  if (values.length < 3) return false;
+  if (!values.every((v) => /^\d{1,4}$/.test(v))) return false;
+
+  const numbers = values.map(Number);
+  let consecutive = 0;
+  for (let i = 1; i < numbers.length; i += 1) {
+    if (numbers[i] === numbers[i - 1] + 1) consecutive += 1;
+  }
+  // Most of the steps, not all: a PDF read can drop a row in the middle.
+  return consecutive >= Math.max(2, Math.floor((numbers.length - 1) * 0.8));
+};
+
+/**
+ * Why the chosen ID column looks wrong, or null when it looks fine.
+ *
+ * Said out loud on the screen where the choice is made, because every failure
+ * this file can cause is silent: no format is enforced on an ID anywhere, so
+ * the wrong column uploads cleanly and only shows up weeks later as attendance
+ * that never matches anybody.
+ *
+ * Never blocks the upload. A roster of names as IDs is unusual, not impossible,
+ * and the person looking at the file knows more than these rules do.
+ */
+export const idColumnWarning = (
+  rows: string[][],
+  mapping: ColumnMapping,
+): string | null => {
+  if (mapping.studentId === null) return null;
+
+  if (mapping.name !== null && mapping.name === mapping.studentId) {
+    return "The ID and the name are set to the same column, so one of them is wrong.";
+  }
+
+  const values = valuesIn(rows, mapping.studentId, mapping.firstDataRow);
+  const filled = values.filter(Boolean);
+
+  if (filled.length === 0) {
+    return "That column is empty from this row down, so nothing would be uploaded.";
+  }
+
+  if (countsUpwards(filled)) {
+    return "That column counts 1, 2, 3 — it is the serial number, not the ID students type at check-in.";
+  }
+
+  if (filled.filter((v) => /\d/.test(v)).length * 2 < filled.length) {
+    return "Most of that column is words rather than numbers. Check it is the ID students type, not their name or programme.";
+  }
+
+  const blank = values.length - filled.length;
+  if (blank * 4 > values.length) {
+    return `That column is blank on ${blank} of ${values.length} rows, and those rows cannot be uploaded.`;
+  }
+
+  return null;
+};

@@ -65,6 +65,8 @@ const {
   applyMapping,
   courseCodeIn,
   codesMatch,
+  idColumnWarning,
+  samplesFor,
   buildGrid,
   detectColumns,
   groupIntoLines,
@@ -538,6 +540,79 @@ eq("and is reported", gappySheetRows.skipped.map((s) => s.reason), [
   "no ID in that column",
 ]);
 
+
+// ---------------------------------------------------------------------------
+// Choosing a column: the values beside each choice, and when to warn
+//
+// Every failure this pipeline can cause is silent — no format is enforced on an
+// ID anywhere, so the wrong column uploads cleanly and shows up weeks later as
+// attendance that never matches anybody. The screen therefore shows what is IN
+// each column and says so when the chosen one does not look like IDs.
+// ---------------------------------------------------------------------------
+
+eq(
+  "the values of a column are shown, from the first data row",
+  samplesFor(camu.rows, 2, camuMap.firstDataRow),
+  ["20250001", "20250002", "20250003"],
+);
+
+eq(
+  "the serial column shows what it really is",
+  samplesFor(camu.rows, 0, camuMap.firstDataRow),
+  ["1", "2", "3"],
+);
+
+eq(
+  "a repeated value is shown once, not three times",
+  samplesFor(camu.rows, 4, camuMap.firstDataRow),
+  ["Computer Science", "Information Systems"],
+);
+
+eq(
+  "the preamble is never sampled as data",
+  samplesFor(camu.rows, 3, camuMap.firstDataRow),
+  ["Ama Serwaa", "Kofi Boateng", "Yaa Owusu"],
+);
+
+eq("a correct mapping is not warned about", idColumnWarning(camu.rows, camuMap), null);
+
+eq(
+  "nothing is said before a column is chosen",
+  idColumnWarning(camu.rows, { ...camuMap, studentId: null }),
+  null,
+);
+
+ok(
+  "the serial column is called out as the serial column",
+  (idColumnWarning(camu.rows, { ...camuMap, studentId: 0 }) ?? "").includes(
+    "serial number",
+  ),
+  idColumnWarning(camu.rows, { ...camuMap, studentId: 0 }),
+);
+
+ok(
+  "a column of names is called out as words",
+  (idColumnWarning(camu.rows, { ...camuMap, studentId: 3, name: 1 }) ?? "").includes(
+    "words",
+  ),
+  idColumnWarning(camu.rows, { ...camuMap, studentId: 3, name: 1 }),
+);
+
+ok(
+  "the same column for both is called out",
+  (idColumnWarning(camu.rows, { ...camuMap, name: camuMap.studentId }) ?? "").includes(
+    "same column",
+  ),
+  idColumnWarning(camu.rows, { ...camuMap, name: camuMap.studentId }),
+);
+
+ok(
+  "a column with gaps says how many rows it would lose",
+  (idColumnWarning(gappySheet.rows, autoMap(gappySheet.rows)) ?? "").includes(
+    "1 of 3 rows",
+  ),
+  idColumnWarning(gappySheet.rows, autoMap(gappySheet.rows)),
+);
 
 console.log(`\n${checks} checks, ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);
