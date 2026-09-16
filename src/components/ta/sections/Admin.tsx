@@ -31,6 +31,7 @@ import {
   type StaffAccount,
 } from "@/lib/api/staff";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import HelpAdmin from "@/components/ta/HelpAdmin";
 
 /**
  * Approving accounts, and repairing a class nobody can reach.
@@ -163,6 +164,10 @@ const Admin = () => {
 
   return (
     <div className="space-y-4">
+      {/* 049: what staff see on Help. Its own component — this screen is
+          already doing accounts, domains and class repair. */}
+      <HelpAdmin />
+
       {/* Waiting for a decision */}
       <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
         <CardHeader>

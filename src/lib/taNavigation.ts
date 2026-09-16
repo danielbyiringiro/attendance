@@ -17,6 +17,7 @@ export type TATab =
   | "students"
   | "class"
   | "classes"
+  | "help"
   | "admin";
 
 export type ClassTab = "sessions" | "pattern" | "settings";
@@ -27,6 +28,9 @@ const TABS: readonly string[] = [
   "students",
   "class",
   "classes",
+  // 049. Listed here as well as in the union, or a browser tab left open on
+  // Help would come back to Attendance without saying why.
+  "help",
   "admin",
 ];
 
