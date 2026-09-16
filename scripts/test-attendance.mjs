@@ -335,6 +335,26 @@ eq(
   0,
 );
 
+// A cohort move rewrites one column of an enrolment and leaves the records
+// alone, so stu-4 — marked late on s3, cohort B's session — keeps that mark
+// after moving to cohort A. Counted from A's sessions alone it disappeared,
+// and their rate was taken over the days since the move.
+{
+  const moved = sessionStatesFor(forRate, "stu-4", "coh-a");
+  eq("a mark from the cohort they left still counts", tallyStates(moved).late, 1);
+  eq("so the rate is taken over it", tallyStates(moved).rate, 100);
+  eq(
+    "their own cohort's sessions are still there too",
+    moved.length,
+    sessionStatesFor(forRate, "never-marked", "coh-a").length + 1,
+  );
+  eq(
+    "but not the sessions of that cohort they were never marked on",
+    sessionStatesFor(forRate, "stu-1", "coh-a"),
+    ["present", "present"],
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 

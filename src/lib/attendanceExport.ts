@@ -376,13 +376,17 @@ export const buildAttendanceExport = async (
   // One read, the same one every screen uses. Everything the old version had to
   // assemble by hand — which days a cohort met, which were cancelled, who was
   // excused, who checked in — is a column on these rows.
-  const log = await attendanceLog(classId, {
-    from: startStr,
-    to: endStr,
-    cohortId: cohort === "all" ? undefined : cohort,
-  });
+  // The whole class, not just the cohort in scope: a student who has moved
+  // cohorts keeps their marks on their old cohort's sessions, and those are
+  // part of their record. `inScope` below puts the cohort filter back for
+  // everything that is about the cohort rather than about one student.
+  const log = await attendanceLog(classId, { from: startStr, to: endStr });
 
-  const held = log.sessions.filter((sn) => sn.status !== "cancelled");
+  const inScope = (cohortId: string) => cohort === "all" || cohortId === cohort;
+
+  const held = log.sessions.filter(
+    (sn) => sn.status !== "cancelled" && inScope(sn.cohort_id),
+  );
 
   if (held.length === 0) {
     return empty(
@@ -425,10 +429,28 @@ export const buildAttendanceExport = async (
     else sessionsFor.set(sn.cohort_id, [sn]);
   });
 
+  // Every session that ran, in scope or not, so a mark left behind by a cohort
+  // move can be found by its session id below.
+  const ranById = new Map(
+    log.sessions
+      .filter((sn) => sn.status !== "cancelled")
+      .map((sn) => [sn.session_id, sn]),
+  );
+
   roster.forEach((student) => {
-    const sessions = (sessionsFor.get(student.cohort_id) ?? [])
-      .slice()
-      .sort((x, y) => x.session_date.localeCompare(y.session_date));
+    const own = sessionsFor.get(student.cohort_id) ?? [];
+    const ownIds = new Set(own.map((sn) => sn.session_id));
+    // Their cohort's sessions plus any other session they are marked on. A
+    // student who moved from A to B keeps their marks on A's sessions — the
+    // move rewrites the enrolment, not the records — and that term is part of
+    // their record wherever they sit now.
+    const carried = (log.byStudent.get(student.student_id) ?? [])
+      .filter((m) => !ownIds.has(m.session_id) && ranById.has(m.session_id))
+      .map((m) => ranById.get(m.session_id)!);
+
+    const sessions = [...own, ...carried].sort((x, y) =>
+      x.session_date.localeCompare(y.session_date),
+    );
 
     const states = sessions.map(
       (sn) => stateOf.get(`${student.student_id}-${sn.session_id}`) ?? null,
@@ -476,7 +498,12 @@ export const buildAttendanceExport = async (
   if (clampNotes.length) {
     notes.push(`Range adjusted: ${clampNotes.join("; ")}`);
   }
-  const cancelled = log.sessions.length - held.length;
+  // Counted in scope, not as "everything the log holds minus what ran": the
+  // log is the whole class now, so that subtraction would report every other
+  // cohort's sessions as cancelled ones.
+  const cancelled = log.sessions.filter(
+    (sn) => sn.status === "cancelled" && inScope(sn.cohort_id),
+  ).length;
   if (cancelled > 0) {
     notes.push(
       `${cancelled} cancelled session${cancelled === 1 ? "" : "s"} excluded, for the cohorts they belonged to`,
@@ -513,7 +540,9 @@ export const buildAttendanceExport = async (
     effectiveEnd: endStr,
     notice: notes.length ? `${notes.join(". ")}.` : undefined,
     sessionDays: heldDays.size,
-    candidateDays: log.sessions.length,
+    // In scope, for the same reason as `cancelled` above: this is the "of N
+    // possible" the dialog prints beside the sessions held.
+    candidateDays: log.sessions.filter((sn) => inScope(sn.cohort_id)).length,
     summary,
     detail,
   };

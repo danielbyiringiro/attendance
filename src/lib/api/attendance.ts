@@ -573,6 +573,20 @@ export const sessionWasHeld = (
   return !marks.every((m) => m.state === "exempted");
 };
 
+/**
+ * One student's sessions, as states, oldest first.
+ *
+ * Their cohort's sessions, plus any session they are marked on — which is what
+ * carries a record across a cohort move. Moving a student rewrites one column
+ * of their enrolment and deliberately leaves attendance_records alone, so a
+ * term spent in cohort A is still stored after they move to B. Counted from
+ * B's sessions alone, that term silently vanished: their marks sat on A's
+ * sessions with nowhere to land, and their rate was taken over the handful of
+ * days since the move.
+ *
+ * Driven from sessions rather than from marks, so a session still open counts
+ * as pending rather than as an absence.
+ */
 export const sessionStatesFor = (
   log: AttendanceLog,
   studentId: string,
@@ -583,7 +597,11 @@ export const sessionStatesFor = (
   );
 
   return log.sessions
-    .filter((s) => s.cohort_id === cohortId && s.status !== "cancelled")
+    .filter(
+      (s) =>
+        s.status !== "cancelled" &&
+        (s.cohort_id === cohortId || byId.has(s.session_id)),
+    )
     .sort((a, b) => a.session_date.localeCompare(b.session_date))
     .map((s) => byId.get(s.session_id) ?? null);
 };
