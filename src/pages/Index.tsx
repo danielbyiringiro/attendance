@@ -16,6 +16,7 @@ import { ClassProvider } from "@/lib/classContext";
 import {
   BarChart3,
   CalendarDays,
+  CircleHelp,
   GraduationCap,
   History,
   ShieldCheck,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { ensureStaff, type StaffIdentity } from "@/lib/api/staff";
+import { getHelp } from "@/lib/api/help";
 import AccountPending from "@/components/AccountPending";
 import { getOpenSessionSummary } from "@/lib/api/sessions";
 import {
@@ -66,6 +68,10 @@ const TA_TABS: ReadonlyArray<{
   // Sessions, Weekly pattern and Settings for the chosen class. The list of
   // every class is not a sidebar item: it opens from the class switcher.
   { id: "class", label: "Class", icon: GraduationCap },
+  // 049. Last before Admin, and available to everyone: it is where the videos
+  // live permanently and where announcements are read. A first-run modal alone
+  // would be a video seen once and never found again.
+  { id: "help", label: "Help", icon: CircleHelp },
   // Only rendered for an admin — see the filter where TA_TABS is mapped.
   { id: "admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
 ];
@@ -94,10 +100,13 @@ const CLASS_TAB_KEY = "ta_class_tab";
 const TANav = ({
   tabs,
   active,
+  unreadHelp = 0,
   onSelect,
 }: {
   tabs: typeof TA_TABS;
   active: TATab;
+  /** 049: announcements this account has not read. 0 shows nothing. */
+  unreadHelp?: number;
   onSelect: (tab: TATab) => void;
 }) => {
   const { isMobile, setOpenMobile } = useSidebar();
@@ -116,6 +125,13 @@ const TANav = ({
             >
               <Icon />
               <span>{label}</span>
+              {/* The count, not just a dot: "3 things you have not read" is
+                  worth knowing before deciding whether to look now. */}
+              {id === "help" && unreadHelp > 0 && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground">
+                  {unreadHelp}
+                </span>
+              )}
             </button>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -142,6 +158,31 @@ const Index = () => {
    * screen to say it had failed, nothing to retry and no way to sign out.
    */
   const [identityError, setIdentityError] = useState<string | null>(null);
+  /*
+   * 049: announcements this account has not read, for the sidebar.
+   *
+   * Fetched once when the dashboard appears rather than polled: an
+   * announcement is not urgent, and a number that only moves on a reload is
+   * both honest and free. Help clears it as soon as it is opened.
+   */
+  const [unreadHelp, setUnreadHelp] = useState(0);
+
+  // Only once the account is actually in, because get_help answers for whoever
+  // is asking and a pending account has nothing to be told yet. A failure is
+  // swallowed: an unread badge is the least important thing on this screen, and
+  // nobody should get an error toast because a count could not be fetched.
+  useEffect(() => {
+    if (!isTA || identity?.status !== "approved") return;
+    let live = true;
+    getHelp()
+      .then((help) => {
+        if (live) setUnreadHelp(help.unread);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [isTA, identity?.status]);
   const [showTALogin, setShowTALogin] = useState(false);
   const [showStudentDashboard, setShowStudentDashboard] = useState(false);
   // Through restoreNavigation, which also moves a tab remembered from before
@@ -403,6 +444,7 @@ const Index = () => {
                     (t) => !t.adminOnly || identity?.is_admin,
                   )}
                   active={taTab}
+                  unreadHelp={unreadHelp}
                   onSelect={handleSetTaTab}
                 />
               </SidebarGroupContent>
@@ -417,6 +459,7 @@ const Index = () => {
               activeSection={taTab}
               classTab={classTab}
               onNavigate={handleSetTaTab}
+              onHelpRead={() => setUnreadHelp(0)}
               onLogout={handleTALogout}
             />
           </div>

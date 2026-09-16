@@ -73,6 +73,8 @@ import Classes from "@/components/ta/sections/Classes";
 import ClassArea from "@/components/ta/sections/ClassArea";
 import type { ClassTab, TATab } from "@/lib/taNavigation";
 import Admin from "@/components/ta/sections/Admin";
+import Help from "@/components/ta/sections/Help";
+import { CircleHelp } from "lucide-react";
 import SessionActions from "@/components/ta/SessionActions";
 import SessionRosterDialog from "@/components/ta/SessionRosterDialog";
 import SessionRollCall from "@/components/ta/SessionRollCall";
@@ -137,6 +139,8 @@ interface TADashboardProps {
   classTab: ClassTab;
   /** Go to another section, and optionally a tab of the Class page. */
   onNavigate: (tab: TATab, classTab?: ClassTab) => void;
+  /** 049: Help has been opened, so the sidebar's unread dot can clear. */
+  onHelpRead?: () => void;
   onLogout: () => void;
 }
 
@@ -179,6 +183,7 @@ const TADashboard = ({
   activeSection = "attendance",
   classTab,
   onNavigate,
+  onHelpRead,
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
@@ -1169,6 +1174,9 @@ const TADashboard = ({
   const isStudentsSection = activeSection === "students";
   const isClassSection = activeSection === "class";
   const isAdminSection = activeSection === "admin";
+  // 049. Like Classes, Class and Admin, this is not about one class, so it must
+  // not sit under the "no class selected" notice below.
+  const isHelpSection = activeSection === "help";
   const isClassesSection = activeSection === "classes";
   // A lookup rather than a five-deep ternary: adding a section to the nested
   // version meant threading a branch into two of them and leaving a dead arm
@@ -1185,6 +1193,10 @@ const TADashboard = ({
     admin: {
       title: "Admin",
       description: "Approve accounts, and repair a class nobody can reach",
+    },
+    help: {
+      title: "Help",
+      description: "How to use this, and what has changed lately",
     },
     analytics: {
       title: "Attendance Analytics",
@@ -1247,18 +1259,35 @@ const TADashboard = ({
             one and when it is still arriving — an empty roster otherwise reads
             as a class where everybody is absent. */}
         {!isClassesSection && !isClassSection &&
-          !isAdminSection && !activeClass && (
+          !isAdminSection && !isHelpSection && !activeClass && (
           <Card className="border-2 border-dashed">
             <CardContent className="pt-6 text-center">
               <p className="font-medium">No class selected</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Choose one in the class switcher, or create one from All classes.
               </p>
+              {/*
+                049. This card is where a brand-new account lands, and setting
+                up a first class is the one genuinely non-obvious sequence in
+                the app — create it, say when it meets, generate the sessions,
+                then upload a roster. Rather than explain that here, point at
+                the screen that does, which is also where it stays findable in
+                week six.
+              */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => onNavigate("help")}
+              >
+                <CircleHelp className="mr-1 h-4 w-4" />
+                New here? Watch how it works
+              </Button>
             </CardContent>
           </Card>
         )}
         {!isClassesSection && !isClassSection &&
-          !isAdminSection && activeClass && isRosterLoading && (
+          !isAdminSection && !isHelpSection && activeClass && isRosterLoading && (
           <p className="text-sm text-muted-foreground">Loading the roster…</p>
         )}
 
@@ -1276,6 +1305,7 @@ const TADashboard = ({
           />
         )}
         {isAdminSection && <Admin />}
+        {isHelpSection && <Help onRead={onHelpRead} />}
 
         {/*
           What this screen can do, above what it is showing.
