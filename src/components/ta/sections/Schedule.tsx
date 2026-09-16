@@ -70,6 +70,18 @@ interface Slot {
   signup: string;
   /** How many minutes before the start check-in may open. */
   early: string;
+  /**
+   * 048: check-in shuts when the class starts. Per slot, so one weekly meeting
+   * can be run that way — a lecture where the register is the door — while the
+   * cohort's lab keeps the ordinary sign-up window.
+   *
+   * Undefined inherits the class default; true and false are both deliberate
+   * choices, which is why this is not a plain boolean.
+   */
+  closesAtStart?: boolean;
+  /** How long check-in lasts when this slot's session is opened late. */
+  grace: string;
+  graceCountsLate?: boolean;
 }
 
 let nextKey = 0;
@@ -80,6 +92,8 @@ const newSlot = (weekday = 2): Slot => ({
   duration: "",
   signup: "",
   early: "",
+  // Blank inherits the class default, like every other window on a slot.
+  grace: "",
 });
 
 /** "09:00:00" -> "09:00", so the value fits an <input type="time">. */
@@ -149,6 +163,9 @@ const Schedule = () => {
           duration: r.duration_minutes ? String(r.duration_minutes) : "",
           signup: r.auto_close_minutes ? String(r.auto_close_minutes) : "",
           early: r.early_open_minutes ? String(r.early_open_minutes) : "",
+          closesAtStart: r.closes_at_start ?? undefined,
+          grace: r.grace_minutes ? String(r.grace_minutes) : "",
+          graceCountsLate: r.grace_counts_late ?? undefined,
         });
       });
       setSlots(byCohort);
@@ -318,6 +335,9 @@ const Schedule = () => {
           durationMinutes: s.duration ? Number(s.duration) : undefined,
           autoCloseMinutes: s.signup ? Number(s.signup) : undefined,
           earlyOpenMinutes: s.early ? Number(s.early) : undefined,
+          closesAtStart: s.closesAtStart,
+          graceMinutes: s.grace ? Number(s.grace) : undefined,
+          graceCountsLate: s.graceCountsLate,
         }));
         await setCohortSchedules([cohort.id], payload);
       }
@@ -471,6 +491,7 @@ const Schedule = () => {
                       <span className="w-[6.5rem]">Class runs</span>
                       <span className="w-[6.5rem]">Sign-up open</span>
                       <span className="w-[6.5rem]">Opens early</span>
+                      <span className="w-[8rem]">Shuts at start</span>
                     </div>
                   )}
                   {rows.length === 0 ? (
@@ -592,6 +613,51 @@ const Schedule = () => {
                             <span className="text-xs text-muted-foreground">
                               early
                             </span>
+                          </div>
+
+                          {/*
+                            048, per slot. A cohort's lecture can shut the door
+                            at the start while its lab keeps the sign-up window,
+                            which is the usual reason this differs inside one
+                            cohort at all.
+                          */}
+                          <div className="flex w-full items-center gap-1 sm:w-[8rem]">
+                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
+                              Shuts at start
+                            </span>
+                            <label className="flex items-center gap-1">
+                              <input
+                                type="checkbox"
+                                title="Check-in shuts when this class starts, rather than staying open for the sign-up window."
+                                checked={slot.closesAtStart ?? false}
+                                onChange={(e) =>
+                                  patch(cohort.id, slot.key, {
+                                    closesAtStart: e.target.checked,
+                                  })
+                                }
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                at start
+                              </span>
+                            </label>
+                            {slot.closesAtStart && (
+                              <Input
+                                type="number"
+                                min={1}
+                                max={30}
+                                className="w-[3.5rem]"
+                                title="If this session is opened after its class already started, how long check-in stays open. 1 to 30 minutes."
+                                placeholder={String(
+                                  activeClass.default_grace_minutes ?? 5,
+                                )}
+                                value={slot.grace}
+                                onChange={(e) =>
+                                  patch(cohort.id, slot.key, {
+                                    grace: e.target.value,
+                                  })
+                                }
+                              />
+                            )}
                           </div>
 
                           {/*

@@ -7,6 +7,10 @@
  *   opens  at  max(opened_at, starts_at - early_open_minutes)
  *   closes at  max(opened_at, starts_at) + auto_close_minutes
  *
+ * Migration 048 adds the other way a class can be run: check-in that shuts when
+ * the class starts, with a grace window for a session opened after it. That
+ * changes only the closing time and what counts as late, both mirrored below.
+ *
  * Two implementations of one rule is normally how they drift, so this one is
  * pinned: `npm run test:attendance` runs it against the worked examples written
  * into 028's own header. If the database rule changes, those assertions are
@@ -41,6 +45,16 @@ export interface SessionWindowInput {
   /** How long the class runs. Bounds how late the sweep will still open it. */
   duration_minutes: number;
   status: string;
+  /**
+   * 048: check-in shuts when the class starts, rather than auto_close_minutes
+   * after it. Optional so anything session-shaped from before this still fits;
+   * absent reads as off, which is the behaviour every class had.
+   */
+  closes_at_start?: boolean;
+  /** How long check-in lasts when the session was opened after its start. */
+  grace_minutes?: number;
+  /** Whether a mark inside that grace window is recorded late. */
+  grace_counts_late?: boolean;
 }
 
 const minutes = (n: number) => n * 60_000;
@@ -181,7 +195,14 @@ export const sessionWindow = (
   // time from which pressing Open costs nothing.
   if (!s.opened_at) {
     const earliest = starts - minutes(s.early_open_minutes);
-    const latest = starts + minutes(s.duration_minutes);
+    // 048: where check-in shuts at the start, the sweep stops trying there
+    // too — opening a class already in progress would mint a PIN for a window
+    // that is over. Only a person can open it after that, and doing so is what
+    // starts the grace window.
+    const latest =
+      s.closes_at_start === true
+        ? starts
+        : starts + minutes(s.duration_minutes);
     return {
       phase: "not_opened",
       opensAt: null,
@@ -200,8 +221,42 @@ export const sessionWindow = (
   const opened = new Date(s.opened_at).getTime();
   const opensAt = later(opened, starts - minutes(s.early_open_minutes));
   const anchor = later(opened, starts);
-  const closesAt = anchor + minutes(s.auto_close_minutes);
-  const lateFrom = anchor + minutes(s.late_window_minutes);
+
+  /*
+   * 048, mirroring session_closes_at:
+   *
+   *   off                          the later of opening and the start, plus
+   *                                the sign-up window
+   *   on, opened by the start      the start itself
+   *   on, opened after the start   grace_minutes from the click, because
+   *                                closing at a moment already past would
+   *                                leave no window at all
+   */
+  const shutsAtStart = s.closes_at_start === true;
+  const inGrace = shutsAtStart && opened > starts;
+  const closesAt = !shutsAtStart
+    ? anchor + minutes(s.auto_close_minutes)
+    : inGrace
+      ? opened + minutes(s.grace_minutes ?? 5)
+      : starts;
+
+  /*
+   * Inside a grace window the class decides lateness outright, so there is no
+   * threshold to count down to: either every mark is late or none is. It is
+   * collapsed onto an endpoint rather than invented, so the phases stay honest
+   * — grace that counts as late is 'live_late' from the moment it opens, and
+   * grace that does not never reaches it.
+   *
+   * With the setting on and the session opened early, late_window_minutes can
+   * never be reached: the window shuts at the start, before lateness begins.
+   * Pinning lateFrom to the close says that rather than implying a threshold
+   * nobody will ever cross.
+   */
+  const lateFrom = !shutsAtStart
+    ? anchor + minutes(s.late_window_minutes)
+    : inGrace && s.grace_counts_late === true
+      ? opensAt
+      : closesAt;
 
   const shape = {
     opensAt: new Date(opensAt),

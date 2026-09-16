@@ -44,6 +44,9 @@ const SessionEditDialog = ({
   const [time, setTime] = useState("");
   const [duration, setDuration] = useState("");
   const [signup, setSignup] = useState("");
+  // 048, for this session alone: the pattern it came from is left as it is.
+  const [closesAtStart, setClosesAtStart] = useState(false);
+  const [grace, setGrace] = useState("5");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -63,6 +66,8 @@ const SessionEditDialog = ({
     );
     setDuration(String(session.duration_minutes));
     setSignup(String(session.auto_close_minutes));
+    setClosesAtStart(session.closes_at_start ?? false);
+    setGrace(String(session.grace_minutes ?? 5));
   }, [session, timezone]);
 
   const handleSave = async () => {
@@ -74,6 +79,8 @@ const SessionEditDialog = ({
         startTime: time || undefined,
         durationMinutes: duration ? Number(duration) : undefined,
         autoCloseMinutes: signup ? Number(signup) : undefined,
+        closesAtStart,
+        graceMinutes: closesAtStart && grace ? Number(grace) : undefined,
       });
       toast({
         title: "Session moved",
@@ -144,18 +151,68 @@ const SessionEditDialog = ({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="edit-signup">Sign-up open (min)</Label>
+            <Label
+              htmlFor="edit-signup"
+              className={closesAtStart ? "text-muted-foreground" : undefined}
+            >
+              Sign-up open (min)
+            </Label>
             <Input
               id="edit-signup"
               type="number"
               min={1}
               value={signup}
+              disabled={closesAtStart}
               onChange={(e) => setSignup(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              How long check-in stays open once you open it.
+              {closesAtStart
+                ? "Not used while check-in closes at the start."
+                : "How long check-in stays open once you open it."}
             </p>
           </div>
+        </div>
+
+        {/*
+          048, for one session. The class setting is on Class → Settings and the
+          weekly one is on the pattern; this is the day the lecturer asked for
+          the register to be shut at the door, or the day it should not be.
+        */}
+        <div className="space-y-2 rounded-md border p-3">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={closesAtStart}
+              onChange={(e) => setClosesAtStart(e.target.checked)}
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">
+                Check-in closes when this class starts
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                This session only. The weekly pattern keeps whatever it says.
+              </span>
+            </span>
+          </label>
+
+          {closesAtStart && (
+            <div className="flex flex-wrap items-center gap-2 border-t pt-2">
+              <Label htmlFor="edit-grace" className="text-xs">
+                If opened late, stay open for
+              </Label>
+              <Input
+                id="edit-grace"
+                type="number"
+                min={1}
+                max={30}
+                className="h-8 w-20"
+                value={grace}
+                onChange={(e) => setGrace(e.target.value)}
+              />
+              <span className="text-xs text-muted-foreground">minutes</span>
+            </div>
+          )}
         </div>
 
         <p className="text-xs text-muted-foreground">

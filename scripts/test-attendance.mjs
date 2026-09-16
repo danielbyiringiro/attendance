@@ -447,6 +447,98 @@ eq(
   "live_late",
 );
 
+// ---------------------------------------------------------------------------
+// 048: check-in that shuts when the class starts
+//
+// The same rule as session_closes_at, restated here for the same reason as
+// everything above it. Off, every number below is identical to 028's.
+// ---------------------------------------------------------------------------
+
+const shuts = { ...base, closes_at_start: true, grace_minutes: 5 };
+
+// Opened early: the door shuts as the class starts, not a window later.
+const shutsEarly = { ...shuts, opened_at: "2026-09-11T08:45:00Z" };
+eq(
+  "shuts at the start — opened early, it closes at 09:00",
+  sessionWindow(shutsEarly, at("08:50")).closesAt.toISOString(),
+  "2026-09-11T09:00:00.000Z",
+);
+eq(
+  "and 08:50 is still on time",
+  sessionWindow(shutsEarly, at("08:50")).phase,
+  "live",
+);
+eq(
+  "at 09:01 the window has gone",
+  sessionWindow(shutsEarly, at("09:01")).phase,
+  "expired",
+);
+eq(
+  "late_window_minutes never bites, because the window shuts first",
+  sessionWindow(shutsEarly, at("08:59")).phase,
+  "live",
+);
+
+// Opened in the same instant the class begins: the same branch, deliberately.
+eq(
+  "opened exactly at the start, it closes at the start",
+  sessionWindow(
+    { ...shuts, opened_at: CLASS_AT },
+    at("09:00"),
+  ).closesAt.toISOString(),
+  "2026-09-11T09:00:00.000Z",
+);
+
+// Opened after: grace measured from the click, or there would be no window.
+const shutsLate = { ...shuts, opened_at: "2026-09-11T09:07:00Z" };
+eq(
+  "opened late — grace runs from the click",
+  sessionWindow(shutsLate, at("09:08")).closesAt.toISOString(),
+  "2026-09-11T09:12:00.000Z",
+);
+eq(
+  "a mark inside grace is on time by default",
+  sessionWindow(shutsLate, at("09:08")).phase,
+  "live",
+);
+eq(
+  "and late when the class asks for that",
+  sessionWindow({ ...shutsLate, grace_counts_late: true }, at("09:08")).phase,
+  "live_late",
+);
+eq(
+  "grace_counts_late does not leak into a session opened before the class",
+  sessionWindow({ ...shutsEarly, grace_counts_late: true }, at("08:50")).phase,
+  "live",
+);
+
+// The sweep's bound, which the card reads to say whether the chance has gone.
+const shutsUnopened = { ...shuts, opened_at: null, status: "scheduled" };
+eq(
+  "unopened — the sweep will not open it once the class has begun",
+  sessionWindow(shutsUnopened, at("08:00")).autoOpenUntil.toISOString(),
+  "2026-09-11T09:00:00.000Z",
+);
+eq(
+  "whereas an ordinary session can still open itself mid-class (033)",
+  sessionWindow(
+    { ...base, opened_at: null, status: "scheduled" },
+    at("08:00"),
+  ).autoOpenUntil.toISOString(),
+  "2026-09-11T10:00:00.000Z",
+);
+ok(
+  "and at 09:30 that chance has gone for the one that shuts at the start",
+  sessionWindow(shutsUnopened, at("09:30")).autoOpenMissed === true,
+);
+
+// Off: every number is 028's, unchanged.
+eq(
+  "with the setting off nothing moves",
+  sessionWindow({ ...early, closes_at_start: false }, at("08:50")).closesAt.toISOString(),
+  "2026-09-11T09:15:00.000Z",
+);
+
 // The bug this was written for: status says open long after the window passed.
 const stale = sessionWindow(early, at("11:00"));
 eq("a window that has passed reads as expired", stale.phase, "expired");

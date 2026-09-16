@@ -48,6 +48,13 @@ export interface ClassRow {
   default_auto_close_minutes: number;
   default_early_open_minutes: number;
   /**
+   * 048: what new sessions inherit. Off keeps the behaviour every class had —
+   * check-in runs until auto_close_minutes after the class began.
+   */
+  default_closes_at_start: boolean;
+  default_grace_minutes: number;
+  default_grace_counts_late: boolean;
+  /**
    * Absences in a week that put a student on the Weekly Absences report.
    * Migration 043; 2 until somebody changes it.
    */
@@ -84,6 +91,16 @@ export interface CohortScheduleRow {
    * written on every session and read by nothing.
    */
   early_open_minutes: number | null;
+  /**
+   * 048: check-in shuts when the class starts, per weekly slot. NULL inherits
+   * the class default, so a cohort's lecture can be run that way while its lab
+   * keeps the ordinary sign-up window.
+   */
+  closes_at_start: boolean | null;
+  /** How long check-in lasts when a session is opened late. NULL inherits. */
+  grace_minutes: number | null;
+  /** Whether a mark inside that grace window is late. NULL inherits. */
+  grace_counts_late: boolean | null;
   delivery_mode: DeliveryMode | null;
   effective_from: string | null;
   effective_until: string | null;
@@ -105,6 +122,14 @@ export interface SessionRow {
   late_window_minutes: number;
   auto_close_minutes: number;
   early_open_minutes: number;
+  /**
+   * 048: check-in shuts at starts_at rather than auto_close_minutes after it.
+   */
+  closes_at_start: boolean;
+  /** How long check-in lasts when this was opened after its start. 1–30. */
+  grace_minutes: number;
+  /** Whether a mark inside that grace window is recorded late. */
+  grace_counts_late: boolean;
   opened_at: string | null;
   closed_at: string | null;
   cancelled_at: string | null;
