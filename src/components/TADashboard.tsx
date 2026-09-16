@@ -1430,6 +1430,7 @@ const TADashboard = ({
                 {activeClass && (
                   <StudentRoster
                     classId={activeClass.id}
+                    classCode={activeClass.code}
                     cohorts={cohorts}
                     roster={roster}
                     presentIds={new Set(validPresentStudents.map((p) => p.id))}
@@ -1466,11 +1467,13 @@ const TADashboard = ({
             <CardContent>
               <StudentRoster
                 classId={activeClass.id}
+                classCode={activeClass.code}
                 cohorts={cohorts}
                 roster={roster}
                 presentIds={new Set(validPresentStudents.map((p) => p.id))}
                 onMarkPresent={handleMarkAttendanceManually}
                 requirement={requirementOf(activeClass)}
+                canClearRoster
                 onRosterChanged={() => void loadRoster()}
                 onVisibleChange={setVisibleStudents}
               />

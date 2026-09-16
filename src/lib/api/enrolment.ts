@@ -5,7 +5,12 @@
 // never on the student row itself.
 
 import { supabase } from "@/lib/supabase";
-import type { EnrolledStudent, UpsertEnrolmentsResult } from "@/lib/api/types";
+import type {
+  EnrolledStudent,
+  RosterClearingPreview,
+  RosterClearingResult,
+  UpsertEnrolmentsResult,
+} from "@/lib/api/types";
 
 const fail = (what: string, error: { message: string } | null): never => {
   throw new Error(`${what}: ${error?.message ?? "unknown error"}`);
@@ -190,6 +195,55 @@ export const dropEnrolment = async (
     .eq("class_id", classId)
     .eq("student_id", studentId);
   if (error) fail("Could not remove the student", error);
+};
+
+/**
+ * What clearing a roster would remove, before anything is removed (047).
+ *
+ * Scope is a parameter, never the screen's current filter: a destructive action
+ * that quietly follows a filter is how somebody narrows to one cohort, forgets,
+ * and clears the class.
+ */
+export const previewRosterClearing = async (
+  classId: string,
+  cohortId?: string | null,
+): Promise<RosterClearingPreview> => {
+  const { data, error } = await supabase.rpc("preview_roster_clearing", {
+    p_class_id: classId,
+    p_cohort_id: cohortId ?? null,
+  });
+  if (error) fail("Could not check what this would remove", error);
+  return data as RosterClearingPreview;
+};
+
+/**
+ * Empty a roster. `confirmCode` must equal the class's own code — the server
+ * checks, so a UI bug cannot clear a class by passing a stray `true`.
+ *
+ * Without `erase` every enrolment in scope is dropped and nothing is deleted.
+ * With it, the enrolments, this class's attendance and this class's flags go,
+ * and anybody left in no class at all is deleted from the registry unless
+ * `deleteOrphanedStudents` says otherwise. Both are irreversible; only one
+ * destroys a term of attendance.
+ */
+export const clearRoster = async (
+  classId: string,
+  confirmCode: string,
+  opts: {
+    cohortId?: string | null;
+    erase?: boolean;
+    deleteOrphanedStudents?: boolean;
+  } = {},
+): Promise<RosterClearingResult> => {
+  const { data, error } = await supabase.rpc("clear_roster", {
+    p_class_id: classId,
+    p_confirm_code: confirmCode,
+    p_cohort_id: opts.cohortId ?? null,
+    p_erase: opts.erase ?? false,
+    p_delete_orphaned_students: opts.deleteOrphanedStudents ?? true,
+  });
+  if (error) fail("Could not clear the roster", error);
+  return data as RosterClearingResult;
 };
 
 /**
