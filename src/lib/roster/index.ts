@@ -26,7 +26,9 @@ export {
   courseCodeIn,
   findFirstDataRow,
   findHeaderRow,
+  idColumnWarning,
   preambleOf,
+  samplesFor,
 } from "./columns";
 
 export { readCsvFile, tableFromCsv } from "./csvSource";

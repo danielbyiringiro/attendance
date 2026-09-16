@@ -33,7 +33,9 @@ import {
   autoMap,
   codesMatch,
   courseCodeIn,
+  idColumnWarning,
   readCsvFile,
+  samplesFor,
   type ColumnMapping,
   type ExtractedTable,
 } from "@/lib/roster";
@@ -271,6 +273,22 @@ const RosterUpload = ({
   const columnName = (i: number) =>
     headerCells?.[i]?.trim() ? headerCells[i].trim() : `Column ${i + 1}`;
 
+  /*
+   * What is actually in a column, shown beside the choice.
+   *
+   * A title says what the file calls a column; the values say whether it is the
+   * thing students type. "ROLL NO" and "ROLL NO/REGISTER NO." are
+   * indistinguishable as words — as values, one counts 1, 2, 3 and the other
+   * holds 20250001.
+   */
+  const columnSamples = (i: number) =>
+    table ? samplesFor(table.rows, i, mapping.firstDataRow) : [];
+
+  // Said out loud here, because getting this wrong is silent: no format is
+  // enforced on an ID, so the wrong column uploads cleanly and only surfaces
+  // weeks later as attendance that never matches anybody.
+  const idWarning = table ? idColumnWarning(table.rows, mapping) : null;
+
   const sample = mapped.rows.slice(0, 5);
 
   return (
@@ -406,6 +424,13 @@ const RosterUpload = ({
               </div>
             )}
 
+            {idWarning && (
+              <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <span>{idWarning}</span>
+              </div>
+            )}
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">
@@ -424,6 +449,11 @@ const RosterUpload = ({
                     {Array.from({ length: columnCount }, (_, i) => (
                       <SelectItem key={i} value={String(i)}>
                         {columnName(i)}
+                        {columnSamples(i).length > 0 && (
+                          <span className="ml-2 font-mono text-xs text-muted-foreground">
+                            {columnSamples(i).join(" · ")}
+                          </span>
+                        )}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -452,6 +482,11 @@ const RosterUpload = ({
                     {Array.from({ length: columnCount }, (_, i) => (
                       <SelectItem key={i} value={String(i)}>
                         {columnName(i)}
+                        {columnSamples(i).length > 0 && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {columnSamples(i).join(" · ")}
+                          </span>
+                        )}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -584,9 +619,13 @@ const RosterUpload = ({
                             <td
                               key={c}
                               className={
+                                // Both chosen columns are marked, so the grid
+                                // shows the mapping rather than just the file.
                                 c === mapping.studentId
-                                  ? "whitespace-nowrap px-2 py-1 font-mono font-semibold"
-                                  : "whitespace-nowrap px-2 py-1"
+                                  ? "whitespace-nowrap bg-primary/10 px-2 py-1 font-mono font-semibold"
+                                  : c === mapping.name
+                                    ? "whitespace-nowrap bg-primary/5 px-2 py-1 font-medium"
+                                    : "whitespace-nowrap px-2 py-1"
                               }
                             >
                               {cell || <span className="text-muted-foreground">·</span>}
