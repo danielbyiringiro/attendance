@@ -32,6 +32,12 @@ export const setSessionWindows = async (
     cohortId?: string;
     autoCloseMinutes?: number;
     earlyOpenMinutes?: number;
+    /** 048: check-in shuts when the class starts. */
+    closesAtStart?: boolean;
+    /** 048: how long it lasts when opened after the start. 1–30. */
+    graceMinutes?: number;
+    /** 048: whether a mark inside that grace window is recorded late. */
+    graceCountsLate?: boolean;
   },
 ): Promise<SessionWindowsResult> => {
   const { data, error } = await supabase.rpc("set_session_windows", {
@@ -39,6 +45,9 @@ export const setSessionWindows = async (
     p_cohort_id: opts.cohortId ?? null,
     p_auto_close_minutes: opts.autoCloseMinutes ?? null,
     p_early_open_minutes: opts.earlyOpenMinutes ?? null,
+    p_closes_at_start: opts.closesAtStart ?? null,
+    p_grace_minutes: opts.graceMinutes ?? null,
+    p_grace_counts_late: opts.graceCountsLate ?? null,
   });
   if (error) throw new Error(`Could not update the timing: ${error.message}`);
   return data as SessionWindowsResult;

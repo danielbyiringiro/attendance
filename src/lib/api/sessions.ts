@@ -426,6 +426,15 @@ export const updateSession = async (
     /** Marks after this many minutes are `late` rather than `present`. */
     lateWindowMinutes?: number;
     notes?: string;
+    /**
+     * 048: check-in shuts when this session starts, rather than after the
+     * sign-up window. One session only — the weekly pattern is untouched.
+     */
+    closesAtStart?: boolean;
+    /** How long check-in lasts when this is opened after its start. 1–30. */
+    graceMinutes?: number;
+    /** Whether a mark inside that grace window is recorded late. */
+    graceCountsLate?: boolean;
   },
 ): Promise<SessionRow> => {
   const { data, error } = await supabase.rpc("update_session", {
@@ -436,6 +445,9 @@ export const updateSession = async (
     p_notes: changes.notes ?? null,
     p_auto_close_minutes: changes.autoCloseMinutes ?? null,
     p_late_window_minutes: changes.lateWindowMinutes ?? null,
+    p_closes_at_start: changes.closesAtStart ?? null,
+    p_grace_minutes: changes.graceMinutes ?? null,
+    p_grace_counts_late: changes.graceCountsLate ?? null,
   });
   if (error) fail("Could not change the session", error);
   return data as SessionRow;

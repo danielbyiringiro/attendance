@@ -27,6 +27,7 @@ import {
   describeAdd,
   setNoClassDay,
   untilFor,
+  updateSession,
   type AddScope,
   type NoClassMode,
 } from "@/lib/api/sessions";
@@ -193,6 +194,43 @@ const CalendarDayDialog = ({
     }
   };
 
+  /*
+   * 048, applied to this date.
+   *
+   * Session by session rather than through one RPC: update_session already
+   * knows what may be changed — it refuses anything that has run — and a
+   * day-shaped variant of it would be a second place for that rule to live.
+   * A day holds a handful of sessions, so the loop costs nothing.
+   */
+  const scheduledToday = sessions.filter((s) => s.status === "scheduled");
+
+  const setDayRule = async (closesAtStart: boolean) => {
+    if (scheduledToday.length === 0) return;
+    setBusy("rule");
+    try {
+      for (const s of scheduledToday) {
+        await updateSession(s.id, { closesAtStart });
+      }
+      toast({
+        title: closesAtStart
+          ? "Check-in shuts at the start here"
+          : "Check-in uses the sign-up window here",
+        description: `${scheduledToday.length} session${
+          scheduledToday.length === 1 ? "" : "s"
+        } on this date changed. The weekly pattern is untouched.`,
+      });
+      await onChanged();
+    } catch (e) {
+      toast({
+        title: "Could not change this day",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const handleClearDay = async () => {
     if (!date || !dayOff) return;
     setBusy("clear");
@@ -301,6 +339,50 @@ const CalendarDayDialog = ({
             </div>
           ))}
         </div>
+
+        {/*
+          048, for this date. The class setting lives on Class → Settings and
+          the weekly one on the pattern; this is the day somebody wants the
+          register shut at the door, or the day the usual rule should not apply.
+
+          Only sessions that have not run yet: update_session refuses the rest,
+          because their attendance is already recorded against the old rule.
+        */}
+        {scheduledToday.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Check-in on this day</p>
+              <p className="text-xs text-muted-foreground">
+                {scheduledToday.length} session
+                {scheduledToday.length === 1 ? "" : "s"} not yet run
+                {sessions.length > scheduledToday.length &&
+                  `, of ${sessions.length} here`}
+                .
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy === "rule"}
+                onClick={() => void setDayRule(true)}
+              >
+                {busy === "rule" ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : null}
+                Shut at the start
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy === "rule"}
+                onClick={() => void setDayRule(false)}
+              >
+                Use the sign-up window
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Add a session here */}
         {adding ? (

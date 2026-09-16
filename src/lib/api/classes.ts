@@ -205,6 +205,15 @@ export interface ScheduleSlot {
    * is purely how early students may mark. Omit to inherit the class default.
    */
   earlyOpenMinutes?: number;
+  /**
+   * 048: check-in shuts when the class starts rather than after the sign-up
+   * window. Omit to inherit the class default.
+   */
+  closesAtStart?: boolean;
+  /** How long check-in lasts when a session is opened after its start. 1–30. */
+  graceMinutes?: number;
+  /** Whether a mark inside that grace window is recorded late. */
+  graceCountsLate?: boolean;
 }
 
 /**
@@ -231,6 +240,10 @@ export const setCohortSchedules = async (
       auto_close_minutes: s.autoCloseMinutes ?? null,
       late_window_minutes: s.lateWindowMinutes ?? null,
       early_open_minutes: s.earlyOpenMinutes ?? null,
+      // 048. Null inherits the class default, exactly as the three above do.
+      closes_at_start: s.closesAtStart ?? null,
+      grace_minutes: s.graceMinutes ?? null,
+      grace_counts_late: s.graceCountsLate ?? null,
     })),
   });
   if (error) fail("Could not save the schedule", error);
