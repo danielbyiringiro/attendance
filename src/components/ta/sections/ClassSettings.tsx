@@ -32,6 +32,10 @@ import SessionTimingSettings from "@/components/ta/SessionTimingSettings";
 import CohortReportSettings from "@/components/ta/CohortReportSettings";
 import ClassMembers from "@/components/ta/ClassMembers";
 import DisplayLinkPanel from "@/components/ta/DisplayLinkPanel";
+import {
+  requirementOf,
+  requirementSummary,
+} from "@/lib/attendanceRule";
 
 const SECTIONS = [
   { id: "class-settings-details", label: "Details" },
@@ -179,7 +183,12 @@ const ClassSettings = ({ onOpenAllClasses }: ClassSettingsProps) => {
       `${formatDate(activeClass.term_starts_on)} – ${formatDate(activeClass.term_ends_on)}`,
     ],
     ["Timezone", activeClass.timezone],
-    ["Required attendance", `${activeClass.min_attendance_percentage}%`],
+    [
+      activeClass.attendance_rule === "absences"
+        ? "Absences allowed"
+        : "Required attendance",
+      requirementSummary(requirementOf(activeClass)),
+    ],
   ];
 
   return (

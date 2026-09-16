@@ -60,6 +60,9 @@ const TIMEZONES = [
  */
 const DEFAULT_THRESHOLD = 75;
 
+/** What classes.max_absences defaults to in the schema (046). */
+const DEFAULT_MAX_ABSENCES = 4;
+
 const today = () => toDateStr(new Date());
 
 // Sessions only exist between the term dates, so a term ending today produces
@@ -90,6 +93,13 @@ const ClassFormDialog = ({
    * field either snaps back to a value or shows nothing. Validated on submit.
    */
   const [threshold, setThreshold] = useState(String(DEFAULT_THRESHOLD));
+  /*
+   * Which of the two requirements this class is run by (046), and the number
+   * the other one uses. Both are sent on save, so switching back and forth
+   * keeps whatever was set for the rule not in force.
+   */
+  const [rule, setRule] = useState<"percentage" | "absences">("percentage");
+  const [maxAbsences, setMaxAbsences] = useState(String(DEFAULT_MAX_ABSENCES));
   const [cohortMode, setCohortMode] = useState<"count" | "labels">("count");
   const [cohortCount, setCohortCount] = useState("1");
   const [cohortLabels, setCohortLabels] = useState("");
@@ -110,6 +120,8 @@ const ClassFormDialog = ({
       setTermEnd(editing.term_ends_on);
       setTimezone(editing.timezone);
       setThreshold(String(editing.min_attendance_percentage));
+      setRule(editing.attendance_rule === "absences" ? "absences" : "percentage");
+      setMaxAbsences(String(editing.max_absences ?? DEFAULT_MAX_ABSENCES));
     } else {
       setCode("");
       setName("");
@@ -118,6 +130,8 @@ const ClassFormDialog = ({
       setTermEnd(today());
       setTimezone("Africa/Accra");
       setThreshold(String(DEFAULT_THRESHOLD));
+      setRule("percentage");
+      setMaxAbsences(String(DEFAULT_MAX_ABSENCES));
       setCohortMode("count");
       setCohortCount("1");
       setCohortLabels("");
@@ -183,11 +197,15 @@ const ClassFormDialog = ({
       return;
     }
 
+    // Only the rule in force is checked. The other number is still sent so it
+    // survives a switch, but a class run on absences should not be stopped from
+    // saving by a percentage box nobody is using.
     const thresholdValue = Number(threshold);
     if (
-      !Number.isFinite(thresholdValue) ||
-      thresholdValue < 0 ||
-      thresholdValue > 100
+      rule === "percentage" &&
+      (!Number.isFinite(thresholdValue) ||
+        thresholdValue < 0 ||
+        thresholdValue > 100)
     ) {
       toast({
         title: "Check the required attendance",
@@ -198,6 +216,31 @@ const ClassFormDialog = ({
       return;
     }
 
+    const maxAbsencesValue = Number(maxAbsences);
+    if (
+      rule === "absences" &&
+      (!Number.isInteger(maxAbsencesValue) || maxAbsencesValue < 0)
+    ) {
+      toast({
+        title: "Check the absences allowed",
+        description:
+          "It has to be a whole number of absences, zero or more. Zero means any unexcused absence puts a student over.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Whichever box was not validated keeps what the class already had.
+    const requirement = {
+      attendanceRule: rule,
+      minAttendancePercentage: Number.isFinite(thresholdValue)
+        ? thresholdValue
+        : undefined,
+      maxAbsences: Number.isInteger(maxAbsencesValue)
+        ? maxAbsencesValue
+        : undefined,
+    };
+
     setIsSaving(true);
     try {
       if (editing) {
@@ -207,7 +250,7 @@ const ClassFormDialog = ({
           termStartsOn: termStart,
           termEndsOn: termEnd,
           timezone,
-          minAttendancePercentage: thresholdValue,
+          ...requirement,
         });
         toast({ title: "Class updated" });
         onSaved(editing.id);
@@ -232,13 +275,15 @@ const ClassFormDialog = ({
           cohortCount: cohortMode === "count" ? count : undefined,
           cohortLabels: cohortMode === "labels" ? parsedLabels : undefined,
         });
-        // create_class has no threshold parameter and the column defaults to
-        // 75, so this second call only happens when the TA actually chose
-        // something else.
-        if (thresholdValue !== DEFAULT_THRESHOLD) {
-          await updateClass(result.class_id, {
-            minAttendancePercentage: thresholdValue,
-          });
+        // create_class takes no requirement and the columns default to 75% on
+        // the percentage rule, so this second call only happens when the TA
+        // actually chose something else.
+        if (
+          thresholdValue !== DEFAULT_THRESHOLD ||
+          rule !== "percentage" ||
+          maxAbsencesValue !== DEFAULT_MAX_ABSENCES
+        ) {
+          await updateClass(result.class_id, requirement);
         }
 
         toast({
@@ -349,24 +394,75 @@ const ClassFormDialog = ({
             not be set.
           */}
           <div className="space-y-2">
-            <Label htmlFor="min-attendance">Required attendance</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="min-attendance"
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                className="w-24"
-                value={threshold}
-                onChange={(e) => setThreshold(e.target.value)}
-              />
-              <span className="text-sm text-muted-foreground">%</span>
+            <Label>What this class requires</Label>
+            {/*
+              Two ways of saying the same thing, and a course is run one way or
+              the other. A percentage moves as the term goes on — four absences
+              out of twelve sessions is 67%, and the same four out of thirty is
+              87% — so a class that thinks in absences and sets a percentage
+              flags different students in September and in November.
+            */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={rule === "percentage" ? "secondary" : "outline"}
+                aria-pressed={rule === "percentage"}
+                onClick={() => setRule("percentage")}
+              >
+                Attendance percentage
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={rule === "absences" ? "secondary" : "outline"}
+                aria-pressed={rule === "absences"}
+                onClick={() => setRule("absences")}
+              >
+                Absences allowed
+              </Button>
             </div>
+
+            {rule === "percentage" ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  id="min-attendance"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="w-24"
+                  value={threshold}
+                  onChange={(e) => setThreshold(e.target.value)}
+                  aria-label="Required attendance percentage"
+                />
+                <span className="text-sm text-muted-foreground">
+                  % needed to pass
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Input
+                  id="max-absences"
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="w-24"
+                  value={maxAbsences}
+                  onChange={(e) => setMaxAbsences(e.target.value)}
+                  aria-label="Absences allowed"
+                />
+                <span className="text-sm text-muted-foreground">
+                  unexcused absences allowed
+                </span>
+              </div>
+            )}
+
             <p className="text-xs text-muted-foreground">
-              Students below this are flagged on the roster and told on their
-              own attendance page. Changing it re-colours the existing numbers;
-              it does not alter anybody's records.
+              Students short of this are flagged on the roster and told on their
+              own attendance page. Excused absences and exemptions never count
+              against either. Changing it re-colours the existing numbers; it
+              does not alter anybody's records.
             </p>
           </div>
 

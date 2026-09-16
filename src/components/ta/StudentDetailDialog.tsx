@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -26,11 +26,27 @@ import {
 } from "@/lib/api/attendance";
 import type { AttendanceState, CohortRow } from "@/lib/api/types";
 import type { StudentStanding } from "@/components/ta/StudentRoster";
-import { editStudent, type StudentEdit } from "@/lib/api/enrolment";
+import {
+  editStudent,
+  enrolmentOf,
+  type StudentEdit,
+} from "@/lib/api/enrolment";
+import { listNoClassDays } from "@/lib/api/sessions";
 import { fromDateStr } from "@/lib/dates";
 import { format } from "date-fns";
 import AttendanceCalendar from "@/components/AttendanceCalendar";
-import { toneOf, type CalendarEntry } from "@/lib/attendanceCalendar";
+import {
+  studentCalendar,
+  type CalendarEntry,
+  type HistoryDayOff,
+  type StudentSession,
+} from "@/lib/attendanceCalendar";
+import {
+  shortfallLine,
+  standingOf,
+  STANDING_COLOUR,
+  type ClassRequirement,
+} from "@/lib/attendanceRule";
 
 interface StudentDetailDialogProps {
   student: StudentStanding | null;
@@ -39,7 +55,7 @@ interface StudentDetailDialogProps {
   /** Cohorts of that class, so the student can be moved between them. */
   cohorts: CohortRow[];
   log: AttendanceLog | null;
-  threshold: number;
+  requirement: ClassRequirement;
   onOpenChange: (open: boolean) => void;
   /** Called after a correction, so the list behind can re-read. */
   onChanged: () => void;
@@ -69,7 +85,7 @@ const StudentDetailDialog = ({
   classId,
   cohorts,
   log,
-  threshold,
+  requirement,
   onOpenChange,
   onChanged,
 }: StudentDetailDialogProps) => {
@@ -111,6 +127,54 @@ const StudentDetailDialog = ({
     setForm(null);
   });
 
+  /*
+   * What the calendar needs beyond the marks: the day this student joined, so
+   * a class cancelled before then is not shown as theirs, and the days off for
+   * the whole class or their cohort, with reasons. The student's own history
+   * shows the same (get_student_attendance, 045).
+   *
+   * Keyed by student, so a slow answer for the last one opened is never drawn
+   * on this one. If it fails the calendar still shows every mark, just without
+   * days off, which is not worth interrupting a correction for.
+   */
+  const [facts, setFacts] = useState<{
+    studentId: string;
+    enrolledOn: string | null;
+    daysOff: HistoryDayOff[];
+  } | null>(null);
+  const openId = student?.student_id;
+  const openCohort = student?.cohort;
+
+  useEffect(() => {
+    if (!openId) return;
+    let live = true;
+    Promise.all([listNoClassDays(classId), enrolmentOf(classId, openId)])
+      .then(([days, enrolment]) => {
+        if (!live) return;
+        const cohortId =
+          enrolment?.cohort_id ??
+          cohorts.find((c) => c.label === openCohort)?.id;
+        setFacts({
+          studentId: openId,
+          enrolledOn: enrolment?.enrolled_on ?? null,
+          daysOff: days
+            .filter((d) => d.cohort_id === null || d.cohort_id === cohortId)
+            .map((d) => ({
+              date: d.on_date,
+              className: "",
+              mode: d.mode,
+              reason: d.reason,
+            })),
+        });
+      })
+      .catch(() => {
+        if (live) setFacts(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [classId, openId, openCohort, cohorts]);
+
   const marks = useMemo(() => {
     if (!student || !log) return [];
     return [...(log.byStudent.get(student.student_id) ?? [])]
@@ -126,16 +190,45 @@ const StudentDetailDialog = ({
     );
   }, [student, log]);
 
+  /*
+   * The same calendar the student sees of themselves: every mark they have in
+   * the class, whichever cohort it was in, plus their cohort's sessions since
+   * they joined, through studentCalendar — the one rule both screens use.
+   */
   const calendarEntries = useMemo<CalendarEntry[]>(() => {
     if (!student || !log) return [];
-    return (log.byStudent.get(student.student_id) ?? []).map((m) => ({
-      date: m.session_date,
-      tone: toneOf(
+    const own = facts?.studentId === student.student_id ? facts : null;
+    const cohortId = cohorts.find((c) => c.label === student.cohort)?.id;
+    const stateOn = new Map(
+      (log.byStudent.get(student.student_id) ?? []).map((m) => [
+        m.session_id,
         m.state,
-        log.sessionById.get(m.session_id)?.status === "cancelled",
-      ),
-    }));
-  }, [student, log]);
+      ]),
+    );
+    const sessions: StudentSession[] = log.sessions
+      .filter(
+        (s) =>
+          stateOn.has(s.session_id) ||
+          (s.cohort_id === cohortId &&
+            (!own?.enrolledOn || own.enrolledOn <= s.session_date)),
+      )
+      .map((s) => ({
+        date: s.session_date,
+        className: "",
+        status: s.status,
+        state: stateOn.get(s.session_id) ?? null,
+      }));
+    return studentCalendar(sessions, own?.daysOff ?? [], false);
+  }, [student, log, cohorts, facts]);
+
+  // How this student stands against what the class requires — a percentage, or
+  // a number of absences (046). One rule, shared with the roster behind this
+  // dialog and with the student's own page.
+  const totals = student
+    ? { counted: student.sessions, rate: student.rate, absent: student.absent }
+    : { counted: 0, rate: 0, absent: 0 };
+  const standing = standingOf(requirement, totals);
+  const shortfall = student ? shortfallLine(requirement, totals) : null;
 
   const handleCorrect = async (sessionId: string, state: AttendanceState) => {
     if (!student) return;
@@ -276,10 +369,11 @@ const StudentDetailDialog = ({
                 <div key={stat.label} className="rounded-md border px-3 py-2">
                   <p
                     className={`text-xl font-bold tabular-nums ${
-                      stat.label === "Rate" && student.sessions > 0
-                        ? student.rate >= threshold
-                          ? "text-success"
-                          : "text-destructive"
+                      // Whichever number the class is judged on carries the
+                      // colour: the rate, or the absences against an allowance.
+                      stat.label ===
+                      (requirement.rule === "absences" ? "Absent" : "Rate")
+                        ? STANDING_COLOUR[standing]
                         : stat.label === "Absent" && student.absent > 0
                           ? "text-destructive"
                           : ""
@@ -292,9 +386,9 @@ const StudentDetailDialog = ({
               ))}
             </div>
 
-            {student.sessions > 0 && student.rate < threshold && (
+            {shortfall && (
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                Below the {threshold}% this class requires.
+                {shortfall}
               </p>
             )}
 

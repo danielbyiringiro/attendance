@@ -33,6 +33,14 @@ export interface ClassRow {
   term_ends_on: string;
   timezone: string;
   min_attendance_percentage: number;
+  /**
+   * What this class requires, and how (046). "percentage" reads
+   * min_attendance_percentage; "absences" reads max_absences. Both numbers are
+   * always set, so switching the rule keeps what the other one uses.
+   */
+  attendance_rule: "percentage" | "absences";
+  /** Unexcused absences allowed under the "absences" rule. */
+  max_absences: number;
   default_method: AttendanceMethod;
   default_delivery_mode: DeliveryMode;
   default_duration_minutes: number;

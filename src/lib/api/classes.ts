@@ -100,6 +100,10 @@ export interface UpdateClassInput {
   termEndsOn?: string;
   timezone?: string;
   minAttendancePercentage?: number;
+  /** 046: which of the two requirements this class is run by. */
+  attendanceRule?: "percentage" | "absences";
+  /** 046: unexcused absences allowed, under the "absences" rule. */
+  maxAbsences?: number;
   defaultDurationMinutes?: number;
   defaultLateWindowMinutes?: number;
   defaultAutoCloseMinutes?: number;
@@ -117,6 +121,8 @@ export const updateClass = async (
     p_term_ends_on: input.termEndsOn ?? null,
     p_timezone: input.timezone ?? null,
     p_min_attendance_percentage: input.minAttendancePercentage ?? null,
+    p_attendance_rule: input.attendanceRule ?? null,
+    p_max_absences: input.maxAbsences ?? null,
     p_default_duration_minutes: input.defaultDurationMinutes ?? null,
     p_default_late_window_minutes: input.defaultLateWindowMinutes ?? null,
     p_default_auto_close_minutes: input.defaultAutoCloseMinutes ?? null,

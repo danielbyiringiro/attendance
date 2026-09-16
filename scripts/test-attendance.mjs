@@ -335,6 +335,26 @@ eq(
   0,
 );
 
+// A cohort move rewrites one column of an enrolment and leaves the records
+// alone, so stu-4 — marked late on s3, cohort B's session — keeps that mark
+// after moving to cohort A. Counted from A's sessions alone it disappeared,
+// and their rate was taken over the days since the move.
+{
+  const moved = sessionStatesFor(forRate, "stu-4", "coh-a");
+  eq("a mark from the cohort they left still counts", tallyStates(moved).late, 1);
+  eq("so the rate is taken over it", tallyStates(moved).rate, 100);
+  eq(
+    "their own cohort's sessions are still there too",
+    moved.length,
+    sessionStatesFor(forRate, "never-marked", "coh-a").length + 1,
+  );
+  eq(
+    "but not the sessions of that cohort they were never marked on",
+    sessionStatesFor(forRate, "stu-1", "coh-a"),
+    ["present", "present"],
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 
@@ -1091,6 +1111,60 @@ eq(
 );
 eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2026, 0, 15)), { year: 2026, month: 0 });
 
+// Days off on a student's own history (migration 045).
+{
+  const { historyEntries } = await import(pathToFileURL(calOut).href);
+
+  eq("a day off outranks the exemption it caused", dayTone(["exempted", "dayoff"]), "dayoff");
+  eq("a real mark still outranks a day off", dayTone(["dayoff", "present"]), "present");
+
+  const records = [
+    { date: "2026-09-22", className: "Data Structures", tone: "exempted" },
+    { date: "2026-09-23", className: "Data Structures", tone: "present" },
+    { date: "2026-09-24", className: "Data Structures", tone: "absent" },
+  ];
+  const daysOff = [
+    { date: "2026-09-22", className: "Data Structures", mode: "exempt", reason: "Public holiday" },
+    { date: "2026-09-23", className: "Data Structures", mode: "present", reason: "Lab credit" },
+    // Declared on a date nothing was held: no session to pair with.
+    { date: "2026-09-30", className: "Data Structures", mode: "exempt", reason: "Reading week" },
+    // The same date declared twice, whole class and cohort.
+    { date: "2026-09-30", className: "Data Structures", mode: "exempt", reason: "Reading week (cohort)" },
+  ];
+  const entries = historyEntries(records, daysOff, false);
+  const on = (date) => entries.filter((e) => e.date === date).map((e) => `${e.tone}:${e.label ?? ""}`);
+
+  eq("a day that did not count shows the day off, not Exempt", on("2026-09-22"), ["dayoff:Public holiday"]);
+  eq("a day that counted keeps Present and adds the reason", on("2026-09-23"), ["present:", "dayoff:Lab credit (counted)"]);
+  eq("a day off with no session still shows", on("2026-09-30"), ["dayoff:Reading week"]);
+  eq("an ordinary absence is untouched", on("2026-09-24"), ["absent:"]);
+  eq(
+    "with several classes, the reason names its class",
+    historyEntries([], [daysOff[0]], true).map((e) => e.label),
+    ["Data Structures: Public holiday"],
+  );
+
+  // One rule for both calendars of a student: the TA's record and their own.
+  const { sessionTone, studentCalendar } = await import(pathToFileURL(calOut).href);
+  const s = (status, state, date = "2026-09-15") => ({ date, className: "", status, state });
+
+  eq("a mark shows as itself", sessionTone(s("closed", "unexcused")), "absent");
+  eq("a cancelled class is no class", sessionTone(s("cancelled", null)), "cancelled");
+  eq("an open session with no mark yet is not closed", sessionTone(s("open", null)), "pending");
+  eq("a closed session with no mark is left off: it predates the student", sessionTone(s("closed", null)), null);
+  eq("a register taken early shows", sessionTone(s("scheduled", "present")), "present");
+
+  eq(
+    "both screens get the same entries from the same facts",
+    studentCalendar(
+      [s("closed", "exempted", "2026-09-22"), s("closed", null, "2026-09-01"), s("open", null, "2026-09-29")],
+      [{ date: "2026-09-22", className: "", mode: "exempt", reason: "Public holiday" }],
+      false,
+    ).map((e) => `${e.date}:${e.tone}:${e.label ?? ""}`),
+    ["2026-09-29:pending:", "2026-09-22:dayoff:Public holiday"],
+  );
+}
+
 // ---------------------------------------------------------------------------
 // taNavigation — where a remembered dashboard tab lands
 //
@@ -1120,6 +1194,110 @@ eq("so is any other tab", restoreNavigation("students", "pattern"), { tab: "stud
 eq("nothing remembered starts on Attendance", restoreNavigation(null, null), { tab: "attendance", classTab: "sessions" });
 eq("an unknown tab starts on Attendance", restoreNavigation("reports", null), { tab: "attendance", classTab: "sessions" });
 eq("an unknown class tab falls back to Sessions", restoreNavigation("class", "timetable"), { tab: "class", classTab: "sessions" });
+
+// ---------------------------------------------------------------------------
+// attendanceRule — what a class requires, and whether a student has met it
+//
+// A class requires a percentage, or allows a number of absences (046). The
+// roster, the record a TA opens and the student's own page all ask that same
+// question, so the bands and the wording are pinned here instead of being
+// written out three times and drifting apart.
+// ---------------------------------------------------------------------------
+
+const ruleOut = join(mkdtempSync(join(tmpdir(), "rule-")), "rule.mjs");
+await build({
+  entryPoints: [join(root, "src/lib/attendanceRule.ts")],
+  outfile: ruleOut,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  logLevel: "silent",
+});
+const {
+  standingOf,
+  standingValue,
+  requirementLabel,
+  requirementSummary,
+  shortFilterLabel,
+  shortfallLine,
+  requirementOf,
+} = await import(pathToFileURL(ruleOut).href);
+
+console.log("\nattendanceRule");
+
+const pctRule = { rule: "percentage", minPercentage: 75, maxAbsences: 4 };
+const absRule = { rule: "absences", minPercentage: 75, maxAbsences: 3 };
+
+eq("at the required percentage, met", standingOf(pctRule, { counted: 10, rate: 75, absent: 2 }), "met");
+eq("just under is a warning, not a failure", standingOf(pctRule, { counted: 10, rate: 72, absent: 3 }), "warning");
+eq("well under is short", standingOf(pctRule, { counted: 10, rate: 40, absent: 6 }), "short");
+eq("nothing counted yet is not failing", standingOf(pctRule, { counted: 0, rate: 0, absent: 0 }), "none");
+
+eq("inside the allowance, met", standingOf(absRule, { counted: 5, rate: 60, absent: 2 }), "met");
+eq("on the last allowed absence is a warning", standingOf(absRule, { counted: 5, rate: 40, absent: 3 }), "warning");
+eq("one over the allowance is short", standingOf(absRule, { counted: 5, rate: 40, absent: 4 }), "short");
+eq(
+  "a rate far below the percentage does not matter under the absences rule",
+  standingOf(absRule, { counted: 9, rate: 10, absent: 1 }),
+  "met",
+);
+eq(
+  "an allowance is spent before anything has closed",
+  standingOf(absRule, { counted: 0, rate: 0, absent: 4 }),
+  "short",
+);
+
+eq(
+  "the number shown is the rate, or the absences against the allowance",
+  [
+    standingValue(pctRule, { counted: 4, rate: 80, absent: 1 }),
+    standingValue(absRule, { counted: 4, rate: 80, absent: 1 }),
+  ],
+  ["80%", "1/3"],
+);
+eq("nothing counted shows a dash, not 0%", standingValue(pctRule, { counted: 0, rate: 0, absent: 0 }), "—");
+
+eq(
+  "each rule says what it requires in its own words",
+  [requirementLabel(pctRule), requirementLabel(absRule)],
+  ["of 75% needed", "of 3 absences allowed"],
+);
+eq(
+  "one absence allowed is not pluralised",
+  requirementLabel({ rule: "absences", minPercentage: 75, maxAbsences: 1 }),
+  "of 1 absence allowed",
+);
+eq(
+  "the roster's filter is named for the rule",
+  [shortFilterLabel(pctRule), shortFilterLabel(absRule)],
+  ["Below 75%", "Over 3 absences"],
+);
+eq(
+  "and the settings row says it plainly",
+  [requirementSummary(pctRule), requirementSummary(absRule)],
+  ["75%", "Up to 3 absences"],
+);
+
+eq(
+  "a student who is short is told which rule they are short of",
+  [
+    shortfallLine(pctRule, { counted: 10, rate: 40, absent: 6 }),
+    shortfallLine(absRule, { counted: 10, rate: 40, absent: 6 }),
+  ],
+  ["Below the 75% this class requires.", "6 absences, more than the 3 this class allows."],
+);
+eq("nobody who has met it is told anything", shortfallLine(pctRule, { counted: 10, rate: 90, absent: 0 }), null);
+
+eq(
+  "a class row from before the rule existed reads as the percentage one",
+  requirementOf({ min_attendance_percentage: 60 }),
+  { rule: "percentage", minPercentage: 60, maxAbsences: 4 },
+);
+eq(
+  "a class on the absences rule carries its allowance",
+  requirementOf({ attendance_rule: "absences", min_attendance_percentage: 75, max_absences: 2 }),
+  { rule: "absences", minPercentage: 75, maxAbsences: 2 },
+);
 
 // Printed last, immediately before the exit. It used to sit in the middle of
 // the file, so every block appended after it ran without being counted: the

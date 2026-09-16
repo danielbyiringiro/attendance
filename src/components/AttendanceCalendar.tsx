@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
@@ -27,8 +27,20 @@ const TONE_CELL: Record<DayTone, string> = {
   absent: "bg-destructive/15 shadow-[inset_3px_0_0_hsl(var(--destructive))]",
   excused: "bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]",
   exempted: "bg-muted/70 shadow-[inset_3px_0_0_hsl(var(--muted-foreground))]",
+  dayoff: "bg-muted/70 shadow-[inset_3px_0_0_hsl(var(--muted-foreground))]",
   pending: "bg-muted/40 shadow-[inset_3px_0_0_hsl(var(--border))]",
   cancelled: "bg-muted/40 shadow-[inset_3px_0_0_hsl(var(--muted-foreground))]",
+};
+
+/*
+ * A day off is striped, the same way SessionCalendar marks one, so it reads as
+ * "no class" at a glance and is never mistaken for a single exemption, which
+ * shares its colour. Inline rather than a class: the gradient's commas and
+ * spaces do not survive as a Tailwind arbitrary value.
+ */
+const HATCH: CSSProperties = {
+  backgroundImage:
+    "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.14) 0 3px, transparent 3px 8px)",
 };
 
 interface AttendanceCalendarProps {
@@ -143,7 +155,13 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
                   weekday: "short",
                   day: "numeric",
                   month: "short",
-                })}: ${onDay.map((e) => TONE_LABEL[e.tone]).join(", ")}`
+                })}: ${onDay
+                  .map((e) =>
+                    e.tone === "dayoff" && e.label
+                      ? `${TONE_LABEL.dayoff} (${e.label})`
+                      : TONE_LABEL[e.tone],
+                  )
+                  .join(", ")}`
               : undefined;
 
           // Spans throughout, not divs or paragraphs: the cell may be a button,
@@ -191,6 +209,7 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
           const cell = `block min-h-[3.75rem] p-1 text-left sm:min-h-[4.5rem] ${
             tone ? TONE_CELL[tone] : "bg-card"
           } ${inMonth ? "" : "opacity-40"} ${isToday ? "ring-2 ring-inset ring-primary" : ""}`;
+          const style = tone === "dayoff" ? HATCH : undefined;
 
           return tone && onDayClick ? (
             <button
@@ -198,13 +217,14 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
               key={key}
               title={summary}
               aria-label={summary}
+              style={style}
               onClick={() => onDayClick(key)}
               className={`${cell} cursor-pointer transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
             >
               {body}
             </button>
           ) : (
-            <div key={key} title={summary} aria-label={summary} className={cell}>
+            <div key={key} title={summary} aria-label={summary} style={style} className={cell}>
               {body}
             </div>
           );
@@ -217,7 +237,10 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           {tonesShown.map((t) => (
             <span key={t} className="flex items-center gap-1.5">
-              <span className={`h-4 w-6 shrink-0 rounded border ${TONE_CELL[t]}`} />
+              <span
+                style={t === "dayoff" ? HATCH : undefined}
+                className={`h-4 w-6 shrink-0 rounded border ${TONE_CELL[t]}`}
+              />
               {TONE_LABEL[t]}
             </span>
           ))}

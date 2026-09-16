@@ -14,6 +14,15 @@ import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
 import { toCsv } from "@/lib/csv";
 import { downloadCsv } from "@/lib/attendanceExport";
 import { todayStr } from "@/lib/dates";
+import {
+  DEFAULT_REQUIREMENT,
+  shortFilterLabel,
+  shortFilterSlug,
+  standingOf,
+  standingValue,
+  STANDING_COLOUR,
+  type ClassRequirement,
+} from "@/lib/attendanceRule";
 
 export interface RosterEntry {
   student_id: string;
@@ -39,8 +48,8 @@ interface StudentRosterProps {
   /** Shown as a "Mark Present" action when given. */
   onMarkPresent?: (studentId: string, cohort: string) => void;
   presentIds?: Set<string>;
-  /** Below this, a rate is shown in red. */
-  minAttendancePercentage?: number;
+  /** What this class requires, and how (046). */
+  requirement?: ClassRequirement;
   /**
    * Re-read the roster itself.
    *
@@ -63,15 +72,12 @@ interface StudentRosterProps {
   onVisibleChange?: (visible: number) => void;
 }
 
-const rateColour = (rate: number, threshold: number) =>
-  rate >= threshold
-    ? "text-success"
-    // A band below the threshold rather than straight to red: somebody at 72
-    // against a 75 requirement is in a different position from somebody at 40,
-    // and the colour should say so.
-    : rate >= threshold - 15
-      ? "text-warning"
-      : "text-destructive";
+/** A roster row's three numbers, as the class's requirement reads them. */
+const toStanding = (s: StudentStanding) => ({
+  counted: s.sessions,
+  rate: s.rate,
+  absent: s.absent,
+});
 
 /**
  * Every student in the class, with their attendance, filtered as you type.
@@ -87,7 +93,7 @@ const StudentRoster = ({
   roster,
   onMarkPresent,
   presentIds,
-  minAttendancePercentage = 75,
+  requirement = DEFAULT_REQUIREMENT,
   onRosterChanged,
   onVisibleChange,
 }: StudentRosterProps) => {
@@ -149,10 +155,10 @@ const StudentRoster = ({
       .filter((s) => cohortFilter === "all" || s.cohort === cohortFilter)
       .filter((s) => {
         if (risk === "all") return true;
-        // Somebody with no graded sessions has no rate to be below; excluding
-        // them keeps a new class from listing everybody as at risk.
+        // Somebody with nothing counted yet has no standing to be short of,
+        // which keeps a new class from listing everybody as at risk.
         if (risk === "below") {
-          return s.sessions > 0 && s.rate < minAttendancePercentage;
+          return standingOf(requirement, toStanding(s)) === "short";
         }
         return s.absent >= absenceFloor;
       })
@@ -169,7 +175,7 @@ const StudentRoster = ({
     cohortFilter,
     risk,
     absenceFloor,
-    minAttendancePercentage,
+    requirement,
   ]);
 
   // Switching class clears the filters.
@@ -212,7 +218,7 @@ const StudentRoster = ({
     );
     const scope =
       risk === "below"
-        ? `below-${minAttendancePercentage}`
+        ? shortFilterSlug(requirement)
         : risk === "absences"
           ? `min-${absenceFloor}-absences`
           : "all";
@@ -272,7 +278,7 @@ const StudentRoster = ({
           variant={risk === "below" ? "secondary" : "ghost"}
           onClick={() => setRisk("below")}
         >
-          Below {minAttendancePercentage}%
+          {shortFilterLabel(requirement)}
         </Button>
         <Button
           size="sm"
@@ -366,12 +372,10 @@ const StudentRoster = ({
                 <div className="flex shrink-0 items-center gap-3">
                   <span
                     className={`text-sm font-semibold tabular-nums ${
-                      s.sessions === 0
-                        ? "text-muted-foreground"
-                        : rateColour(s.rate, minAttendancePercentage)
+                      STANDING_COLOUR[standingOf(requirement, toStanding(s))]
                     }`}
                   >
-                    {s.sessions === 0 ? "—" : `${s.rate}%`}
+                    {standingValue(requirement, toStanding(s))}
                   </span>
                   {onMarkPresent && (
                     <Button
@@ -400,7 +404,7 @@ const StudentRoster = ({
         classId={classId}
         cohorts={cohorts}
         log={log}
-        threshold={minAttendancePercentage}
+        requirement={requirement}
         onOpenChange={(open) => !open && setOpenStudent(null)}
         onChanged={() => {
           // Both: an attendance correction changes the log, an edit to the
