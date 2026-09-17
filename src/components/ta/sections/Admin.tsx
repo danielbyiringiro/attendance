@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   adminDecideStaff,
   adminDeleteClass,
+  adminDeleteStaff,
   adminListClasses,
   adminListClassMembers,
   adminListStaff,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/api/staff";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
 import HelpAdmin from "@/components/ta/HelpAdmin";
+import FeedbackQueue from "@/components/ta/FeedbackQueue";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /**
  * Approving accounts, and repairing a class nobody can reach.
@@ -68,6 +71,11 @@ const Admin = () => {
    * would be a round trip to re-fetch what is on screen.
    */
   const [accountQuery, setAccountQuery] = useState("");
+  // 050. A search finds somebody you can already name; this answers "how many
+  // declined accounts am I carrying", which is the question that made the list
+  // feel unmanageable in the first place.
+  const [accountStatus, setAccountStatus] =
+    useState<"all" | "approved" | "rejected">("all");
   const [classQuery, setClassQuery] = useState("");
   const [confirmCode, setConfirmCode] = useState("");
 
@@ -141,7 +149,11 @@ const Admin = () => {
   };
 
   const decidedAll = accounts.filter((a) => a.status !== "pending");
-  const decided = decidedAll.filter(matchesAccount);
+  const approvedCount = decidedAll.filter((a) => a.status === "approved").length;
+  const rejectedCount = decidedAll.filter((a) => a.status === "rejected").length;
+  const decided = decidedAll
+    .filter((a) => accountStatus === "all" || a.status === accountStatus)
+    .filter(matchesAccount);
 
   const matchesClass = (c: AdminClassRow) => {
     const q = classQuery.trim().toLowerCase();
@@ -163,11 +175,26 @@ const Admin = () => {
   }
 
   return (
-    <div className="space-y-4">
-      {/* 049: what staff see on Help. Its own component — this screen is
-          already doing accounts, domains and class repair. */}
-      <HelpAdmin />
+    /*
+      050. Four jobs that were one long scroll: approvals, feedback, class
+      repair and what staff see on Help. Ordered by how often each is actually
+      used — the approval queue daily, class repair almost never — and the
+      pending count sits on the tab so it is visible without opening it.
+    */
+    <Tabs defaultValue="accounts" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="accounts">
+          Accounts
+          {pending.length > 0 && (
+            <Badge className="ml-1.5">{pending.length}</Badge>
+          )}
+        </TabsTrigger>
+        <TabsTrigger value="feedback">Feedback</TabsTrigger>
+        <TabsTrigger value="classes">Classes</TabsTrigger>
+        <TabsTrigger value="content">Content</TabsTrigger>
+      </TabsList>
 
+      <TabsContent value="accounts" className="mt-0 space-y-4">
       {/* Waiting for a decision */}
       <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
         <CardHeader>
@@ -245,12 +272,32 @@ const Admin = () => {
       {/* Everyone else */}
       <Card className="border-2">
         <CardHeader>
-          <CardTitle className="text-base">
-            Accounts (
-            {accountQuery.trim()
-              ? `${decided.length} of ${decidedAll.length}`
-              : decidedAll.length}
-            )
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <span>
+              Accounts (
+              {accountQuery.trim() || accountStatus !== "all"
+                ? `${decided.length} of ${decidedAll.length}`
+                : decidedAll.length}
+              )
+            </span>
+            <div className="ml-auto flex flex-wrap gap-1">
+              {(
+                [
+                  ["all", `All (${decidedAll.length})`],
+                  ["approved", `Approved (${approvedCount})`],
+                  ["rejected", `Declined (${rejectedCount})`],
+                ] as Array<["all" | "approved" | "rejected", string]>
+              ).map(([value, text]) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={accountStatus === value ? "secondary" : "ghost"}
+                  onClick={() => setAccountStatus(value)}
+                >
+                  {text}
+                </Button>
+              ))}
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-1">
@@ -310,7 +357,41 @@ const Admin = () => {
                   >
                     Approve after all
                   </Button>
-                ) : (
+                ) : null}
+
+                {/*
+                  050. Only for a declined account, and only here. This is the
+                  case rejection does not answer: somebody who should never have
+                  had an account at all, sitting in the list for ever.
+
+                  It does NOT stop them coming back — ensure_staff makes a new
+                  pending row on their next visit. Housekeeping, not a wall.
+                */}
+                {a.status === "rejected" && (
+                  <ConfirmDelete
+                    label="Remove"
+                    confirmLabel="Yes, remove the account"
+                    warning={
+                      a.classes > 0
+                        ? `They are still on ${a.classes} class${a.classes === 1 ? "" : "es"} — the server will refuse until they are taken off.`
+                        : "The account is gone. They can sign up again, and would arrive as a new request."
+                    }
+                    size="sm"
+                    isWorking={busy === a.staff_id}
+                    resetKey={a.staff_id}
+                    onConfirm={() =>
+                      void run(a.staff_id, async () => {
+                        await adminDeleteStaff(a.staff_id);
+                        toast({
+                          title: "Account removed",
+                          description: `${a.email ?? "It"} is no longer in the list.`,
+                        });
+                      })
+                    }
+                  />
+                )}
+
+                {a.status !== "rejected" && (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -408,6 +489,13 @@ const Admin = () => {
         </CardContent>
       </Card>
 
+      </TabsContent>
+
+      <TabsContent value="feedback" className="mt-0">
+        <FeedbackQueue />
+      </TabsContent>
+
+      <TabsContent value="classes" className="mt-0 space-y-4">
       {/* Class repair */}
       <Card className="border-2">
         <CardHeader>
@@ -595,7 +683,12 @@ const Admin = () => {
           </CardContent>
         </Card>
       )}
-    </div>
+      </TabsContent>
+
+      <TabsContent value="content" className="mt-0">
+        <HelpAdmin />
+      </TabsContent>
+    </Tabs>
   );
 };
 

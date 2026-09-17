@@ -185,6 +185,27 @@ export const adminListStaff = async (
   return (data ?? []) as StaffAccount[];
 };
 
+/**
+ * Remove an account entirely (050). Admin only.
+ *
+ * For the case rejection does not answer: somebody who should never have had an
+ * account, cluttering the list for ever. The server refuses your own account
+ * and anybody who still manages a class, because class_staff cascades and a
+ * class with no members is one nobody can reach.
+ *
+ * It does NOT stop them signing up again — ensure_staff makes a new pending row
+ * on their next visit. This is housekeeping, not a block.
+ */
+export const adminDeleteStaff = async (
+  staffId: string,
+): Promise<{ deleted: boolean; email: string | null; status: string }> => {
+  const { data, error } = await supabase.rpc("admin_delete_staff", {
+    p_staff_id: staffId,
+  });
+  if (error) fail("Could not remove the account", error);
+  return data as { deleted: boolean; email: string | null; status: string };
+};
+
 export const adminDecideStaff = async (
   staffId: string,
   approve: boolean,

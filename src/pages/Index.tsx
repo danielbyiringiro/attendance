@@ -495,7 +495,16 @@ const Index = () => {
       <div className="fixed right-4 top-4 flex items-center gap-1 opacity-70 transition-opacity hover:opacity-100">
         <AccessibilitySettings />
         <ThemeToggle />
-        <Button onClick={() => setShowTALogin(true)} variant="ghost" size="sm">
+        {/* 050: labelled. An unmarked gear in the corner of a student's page
+            is an invitation to find out what it does, and what it did was put
+            them in the approval queue. */}
+        <Button
+          onClick={() => setShowTALogin(true)}
+          variant="ghost"
+          size="sm"
+          title="Staff sign in — students do not need an account"
+          aria-label="Staff sign in"
+        >
           <Settings className="h-4 w-4" />
         </Button>
       </div>
