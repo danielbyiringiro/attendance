@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { listAllowedDomains } from "@/lib/api/staff";
@@ -24,6 +24,9 @@ type Mode = "signin" | "signup";
  */
 const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
   const [mode, setMode] = useState<Mode>("signin");
+  // 050. Reset when the mode changes, so switching to sign in and back does not
+  // leave it ticked from a moment ago.
+  const [confirmedStaff, setConfirmedStaff] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -157,6 +160,26 @@ const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/*
+              050. Students kept signing up for an account they do not need,
+              which put them in the admin's approval queue. The screen never
+              said who it was for — and it talks about accepted email domains,
+              which at a university where students share the domain reads as
+              "you qualify".
+            */}
+            {mode === "signup" && (
+              <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <p className="text-xs">
+                  <span className="font-medium">
+                    This is for teaching staff.
+                  </span>{" "}
+                  If you are a student, you do not need an account — close this
+                  and enter your student ID and the PIN your TA reads out.
+                </p>
+              </div>
+            )}
+
             {mode === "signup" && (
               <div className="space-y-2">
                 <label className="text-sm font-medium">Your name</label>
@@ -232,9 +255,29 @@ const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
               </div>
             </div>
 
+            {/* Deliberate friction, and only here: one tick costs a real TA a
+                second, and is the thing that stops an idle "why not". */}
+            {mode === "signup" && (
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={confirmedStaff}
+                  onChange={(e) => setConfirmedStaff(e.target.checked)}
+                />
+                <span className="text-xs">
+                  I teach or assist on a course here, and need to take
+                  attendance.
+                </span>
+              </label>
+            )}
+
             <Button
               type="submit"
-              disabled={isSubmitting || (mode === "signup" && domainLooksWrong)}
+              disabled={
+                isSubmitting ||
+                (mode === "signup" && (domainLooksWrong || !confirmedStaff))
+              }
               className="h-12 w-full bg-gradient-primary text-primary-foreground shadow-soft transition-opacity hover:opacity-90"
             >
               {isSubmitting ? (
@@ -256,6 +299,7 @@ const TALogin = ({ onLogin, onCancel }: TALoginProps) => {
               onClick={() => {
                 setMode(mode === "signin" ? "signup" : "signin");
                 setPassword("");
+                setConfirmedStaff(false);
               }}
             >
               {mode === "signin"

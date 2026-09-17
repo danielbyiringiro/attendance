@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Loader2, Megaphone, PlayCircle } from "lucide-react";
+import { ExternalLink, Loader2, Megaphone, MessageSquare, PlayCircle, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getHelp, markAnnouncementsRead, type HelpContent } from "@/lib/api/help";
+import { sendFeedback } from "@/lib/api/feedback";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 /**
  * How to use the app, and what has changed lately.
@@ -21,6 +24,10 @@ const Help = ({ onRead }: { onRead?: () => void }) => {
   const { toast } = useToast();
   const [content, setContent] = useState<HelpContent | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // 051. Kept here rather than in a dialog: somebody who has just been confused
+  // by a screen should not have to find a second one to say so.
+  const [report, setReport] = useState("");
+  const [isSending, setIsSending] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -59,6 +66,26 @@ const Help = ({ onRead }: { onRead?: () => void }) => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const send = async () => {
+    setIsSending(true);
+    try {
+      await sendFeedback(report.trim(), "help");
+      setReport("");
+      toast({
+        title: "Sent",
+        description: "Thank you — an admin sees this with your name on it.",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not send that",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   const postedOn = (iso: string) =>
     new Date(iso).toLocaleDateString(undefined, {
@@ -161,6 +188,46 @@ const Help = ({ onRead }: { onRead?: () => void }) => {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/*
+        051. The other direction from Updates: those come from an admin, this
+        goes back to one. Stored in the app rather than pointed at a form
+        elsewhere — a link rots when whoever set it up moves on, and nothing
+        here would know that feedback had simply stopped arriving.
+      */}
+      <Card className="border-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MessageSquare className="h-5 w-5" />
+            Tell us what is wrong
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Textarea
+            rows={3}
+            value={report}
+            placeholder="What were you trying to do, and what happened instead?"
+            onChange={(e) => setReport(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Sent with your name, so an admin can come back to you about it.
+            </p>
+            <Button
+              size="sm"
+              disabled={isSending || report.trim() === ""}
+              onClick={() => void send()}
+            >
+              {isSending ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="mr-1 h-4 w-4" />
+              )}
+              Send
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
