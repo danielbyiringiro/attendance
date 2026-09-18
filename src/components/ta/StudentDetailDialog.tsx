@@ -164,6 +164,7 @@ const StudentDetailDialog = ({
               className: "",
               mode: d.mode,
               reason: d.reason,
+              hue: d.hue,
             })),
         });
       })

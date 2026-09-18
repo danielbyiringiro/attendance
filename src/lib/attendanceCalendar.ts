@@ -9,6 +9,7 @@
  */
 
 import { fromDateStr } from "@/lib/dates";
+import type { NoClassHue } from "@/lib/api/sessions";
 import type { AttendanceState } from "@/lib/api/types";
 
 export type DayTone =
@@ -51,6 +52,13 @@ export interface CalendarEntry {
   tone: DayTone;
   /** Shown instead of the tone's word, e.g. a class name when several show. */
   label?: string;
+  /**
+   * Only on a `dayoff`: the colour staff gave that day (052). Carried so the
+   * student's month and the staff month draw the same date the same way —
+   * they are looking at one day, and a calendar that disagrees with itself
+   * teaches people not to trust either half.
+   */
+  hue?: NoClassHue;
 }
 
 /** The colour a recorded state gets. A cancelled class is "no class" whatever is stored. */
@@ -144,13 +152,15 @@ export interface HistoryRecord {
   tone: DayTone;
 }
 
-/** A day off from get_student_attendance (migration 045). */
+/** A day off from get_student_attendance (migration 045, colour added in 052). */
 export interface HistoryDayOff {
   date: string;
   className: string;
   /** "exempt": the day does not count. "present": it counts, and everybody got it. */
   mode: "exempt" | "present";
   reason: string;
+  /** Missing on a record written before 052 was run; amber is what those were. */
+  hue?: NoClassHue;
 }
 
 const dayKey = (date: string, className: string) => `${date}|${className}`;
@@ -199,6 +209,7 @@ export const historyEntries = (
       date: d.date,
       tone: "dayoff",
       label: nameClasses ? `${d.className}: ${reason}` : reason,
+      hue: d.hue ?? "amber",
     });
   });
 

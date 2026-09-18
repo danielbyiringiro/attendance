@@ -253,3 +253,100 @@ COMMENT ON FUNCTION public.set_no_class_day(uuid, date, text, text, uuid, text) 
   'recorded against them are deleted; ones that were opened or marked are '
   'closed with everybody exempted (or present). Remembered, so regenerating '
   'does not bring the day back.';
+
+-- ----------------------------------------------------------------------------
+-- The same colour on the student's own calendar
+--
+-- 045 gave get_student_attendance a `days_off` key so a student could see why a
+-- date stopped counting, and their calendar has printed the reason ever since.
+-- It drew every one of them in the same grey, because grey was the only colour
+-- a day off had. Now that a day off carries a colour, the student's month and
+-- the staff month should not disagree about what it looks like — they are the
+-- same day.
+--
+-- Copied from its latest definition (046) with one key added. Nothing else it
+-- returns changes.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_student_attendance(p_student_id text)
+RETURNS jsonb
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $fn$
+  SELECT jsonb_build_object(
+    'flagged', COALESCE((
+      SELECT jsonb_agg(
+               jsonb_build_object(
+                 'session_date', f.session_date,
+                 'session_id',   f.session_id,
+                 'status',       f.status))
+      FROM public.flagged f
+      WHERE f.student_id = p_student_id), '[]'::jsonb),
+    -- Cancelled sessions are included and labelled, so the screen can show
+    -- "no class" instead of silently omitting the day.
+    'sessions', COALESCE((
+      SELECT jsonb_agg(
+               jsonb_build_object(
+                 'session_id',      s.id,
+                 'date',            s.session_date,
+                 'class',           k.name,
+                 'class_code',      k.code,
+                 'cohort',          co.label,
+                 'status',          s.status,
+                 'state',           ar.state,
+                 'marked_at',       ar.marked_at,
+                 'min_attendance',  k.min_attendance_percentage,
+                 -- 046: which rule this class is run by, and its allowance.
+                 'attendance_rule', k.attendance_rule,
+                 'max_absences',    k.max_absences)
+               ORDER BY s.session_date DESC)
+      FROM public.class_sessions s
+      JOIN public.cohorts co ON co.id = s.cohort_id
+      JOIN public.classes k  ON k.id  = s.class_id
+      -- On the class, not the cohort (045): a mark kept from a cohort the
+      -- student has since moved out of still shows, as it does for the TA.
+      JOIN public.enrolments e
+        ON e.class_id = s.class_id
+       AND e.student_id = p_student_id
+      LEFT JOIN public.attendance_records ar
+        ON ar.session_id = s.id AND ar.student_id = p_student_id
+      -- Not a scheduled session, unless the student is already marked on it
+      -- (045): a register taken early counts on the TA side, so it does here.
+      WHERE (s.status <> 'scheduled' OR ar.session_id IS NOT NULL)
+        AND (
+          -- On their cohort's register that day...
+          (e.cohort_id = s.cohort_id
+           AND e.enrolled_on <= s.session_date
+           AND (e.dropped_on IS NULL OR e.dropped_on >= s.session_date))
+          -- ...or somebody marked them on it anyway (042).
+          OR ar.session_id IS NOT NULL
+        )), '[]'::jsonb),
+    -- 045: the days their classes did not meet, and why. Whole-class days off
+    -- and ones for the student's own cohort; never another cohort's.
+    'days_off', COALESCE((
+      SELECT jsonb_agg(
+               jsonb_build_object(
+                 'date',       d.on_date,
+                 'class',      k.name,
+                 'class_code', k.code,
+                 'cohort',     co.label,
+                 'mode',       d.mode,
+                 'reason',     d.reason,
+                 -- 052: so the student's calendar draws the day in the
+                 -- same colour the staff calendar does.
+                 'hue',        d.hue)
+               ORDER BY d.on_date DESC, k.code)
+      FROM public.enrolments e
+      JOIN public.cohorts co ON co.id = e.cohort_id
+      JOIN public.classes k  ON k.id  = e.class_id
+      JOIN public.no_class_days d
+        ON d.class_id = e.class_id
+       AND (d.cohort_id IS NULL OR d.cohort_id = e.cohort_id)
+      WHERE e.student_id = p_student_id
+        AND (e.dropped_on IS NULL OR d.on_date <= e.dropped_on)), '[]'::jsonb)
+  );
+$fn$;
+
+REVOKE ALL ON FUNCTION public.get_student_attendance(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.get_student_attendance(text) TO anon, authenticated;

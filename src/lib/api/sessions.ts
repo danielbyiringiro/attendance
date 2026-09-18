@@ -279,6 +279,42 @@ export const describeAdd = (r: AddSessionsResult): string => {
   return bits.join(" ");
 };
 
+/**
+ * What colour a day off is drawn in (052). A name rather than a hex: the app
+ * renders in light and dark, so each of these resolves to two values, and a
+ * colour picked at noon still reads at night. Six, because an arbitrary picker
+ * produces days off nobody can see against a white cell.
+ */
+export type NoClassHue =
+  | "amber"
+  | "rose"
+  | "violet"
+  | "teal"
+  | "blue"
+  | "slate";
+
+/** In the order they are offered. amber is what every day off was before 052. */
+export const NO_CLASS_HUES: readonly NoClassHue[] = [
+  "amber",
+  "rose",
+  "violet",
+  "teal",
+  "blue",
+  "slate",
+];
+
+/** One declared date, as the calendar and the list both read it. */
+export interface NoClassDay {
+  id: string;
+  on_date: string;
+  mode: NoClassMode;
+  /** Never empty — 036 made it NOT NULL, so the calendar can always show it. */
+  reason: string;
+  hue: NoClassHue;
+  /** Null means the whole class, which is what a public holiday is. */
+  cohort_id: string | null;
+}
+
 /** What a no-class day does to the percentage. Two actions, not a toggle. */
 export type NoClassMode =
   /** The day leaves the calculation. Everyone exempted. A holiday. */
@@ -307,9 +343,18 @@ export const setNoClassDay = async (
   mode: NoClassMode,
   reason: string,
   cohortId?: string,
+  hue?: NoClassHue,
 ): Promise<{
   date: string;
   mode: NoClassMode;
+  reason: string;
+  hue: NoClassHue;
+  /**
+   * False when this declared the day, true when it corrected one already
+   * declared. A words-only correction returns zeroes below: since 052 the
+   * attendance rewrite runs only when the mode changed.
+   */
+  edited: boolean;
   /** Kept and marked, because something had already happened at them. */
   sessions: number;
   /**
@@ -329,11 +374,15 @@ export const setNoClassDay = async (
     p_mode: mode,
     p_reason: reason,
     p_cohort_id: cohortId ?? null,
+    p_hue: hue ?? null,
   });
   if (error) fail("Could not set the day", error);
   return data as {
     date: string;
     mode: NoClassMode;
+    reason: string;
+    hue: NoClassHue;
+    edited: boolean;
     sessions: number;
     removed: number;
     students: number;
@@ -364,28 +413,14 @@ export const clearNoClassDay = async (
 /** Every date this class has declared off, soonest first. */
 export const listNoClassDays = async (
   classId: string,
-): Promise<
-  Array<{
-    id: string;
-    on_date: string;
-    mode: NoClassMode;
-    reason: string;
-    cohort_id: string | null;
-  }>
-> => {
+): Promise<NoClassDay[]> => {
   const { data, error } = await supabase
     .from("no_class_days")
-    .select("id, on_date, mode, reason, cohort_id")
+    .select("id, on_date, mode, reason, hue, cohort_id")
     .eq("class_id", classId)
     .order("on_date", { ascending: true });
   if (error) fail("Could not load the days off", error);
-  return (data ?? []) as Array<{
-    id: string;
-    on_date: string;
-    mode: NoClassMode;
-    reason: string;
-    cohort_id: string | null;
-  }>;
+  return (data ?? []) as NoClassDay[];
 };
 
 export const cancelSession = async (

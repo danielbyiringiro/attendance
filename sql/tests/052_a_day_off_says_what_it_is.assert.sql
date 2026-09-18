@@ -17,6 +17,7 @@
 --   correcting the words leaves every attendance record alone
 --   changing the MODE does rewrite them
 --   the CHECK constraint refuses a bad colour even without the function
+--   a student's own history carries the colour, so both calendars agree
 --
 -- Wrapped in a transaction that is rolled back.
 -- ============================================================================
@@ -310,5 +311,40 @@ BEGIN
   RAISE NOTICE '052 ok: the CHECK refuses a colour the function never saw';
 END;
 $constraint$;
+
+-- ------------------------------- the student sees the same day, same colour --
+-- 045 gave the student the reason; 052 has to give them the colour with it, or
+-- the two calendars disagree about a day that is the same day.
+DO $student_side$
+DECLARE
+  t       record;
+  v_out   jsonb;
+  v_day   jsonb;
+BEGIN
+  SELECT * INTO t FROM t052;
+
+  v_out := public.get_student_attendance('S052A');
+
+  SELECT d INTO v_day
+    FROM jsonb_array_elements(v_out -> 'days_off') AS d
+   WHERE (d ->> 'date')::date = t.holiday;
+
+  IF v_day IS NULL THEN
+    RAISE EXCEPTION '052: the student cannot see the day off at all';
+  END IF;
+  IF v_day ->> 'hue' IS NULL THEN
+    RAISE EXCEPTION '052: the student sees the day off but not its colour';
+  END IF;
+  -- $corrects$ left this one violet.
+  IF v_day ->> 'hue' <> 'violet' THEN
+    RAISE EXCEPTION '052: the student sees % where staff see violet', v_day ->> 'hue';
+  END IF;
+  IF v_day ->> 'reason' IS NULL OR v_day ->> 'reason' = '' THEN
+    RAISE EXCEPTION '052: the colour arrived without the reason it belongs to';
+  END IF;
+
+  RAISE NOTICE '052 ok: the student''s calendar gets the same colour as the staff one';
+END;
+$student_side$;
 
 ROLLBACK;

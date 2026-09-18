@@ -1216,7 +1216,8 @@ eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2
     { date: "2026-09-24", className: "Data Structures", tone: "absent" },
   ];
   const daysOff = [
-    { date: "2026-09-22", className: "Data Structures", mode: "exempt", reason: "Public holiday" },
+    { date: "2026-09-22", className: "Data Structures", mode: "exempt", reason: "Public holiday", hue: "violet" },
+    // No hue: what a record written before 052 was run looks like.
     { date: "2026-09-23", className: "Data Structures", mode: "present", reason: "Lab credit" },
     // Declared on a date nothing was held: no session to pair with.
     { date: "2026-09-30", className: "Data Structures", mode: "exempt", reason: "Reading week" },
@@ -1234,6 +1235,21 @@ eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2
     "with several classes, the reason names its class",
     historyEntries([], [daysOff[0]], true).map((e) => e.label),
     ["Data Structures: Public holiday"],
+  );
+
+  // 052. The student is looking at the same date on the same term as the staff
+  // calendar, so it has to be drawn the same colour there — and a day declared
+  // before the migration ran has no colour stored, which is exactly the amber
+  // every day off already was.
+  eq(
+    "a day off carries the colour staff gave it",
+    entries.filter((e) => e.date === "2026-09-22").map((e) => e.hue),
+    ["violet"],
+  );
+  eq(
+    "a day off stored without a colour falls back to amber",
+    entries.filter((e) => e.tone === "dayoff" && e.date === "2026-09-23").map((e) => e.hue),
+    ["amber"],
   );
 
   // One rule for both calendars of a student: the TA's record and their own.
