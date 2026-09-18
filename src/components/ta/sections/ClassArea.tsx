@@ -5,7 +5,6 @@ import { Loader2 } from "lucide-react";
 import { useActiveClass } from "@/lib/classContext";
 import type { ClassTab } from "@/lib/taNavigation";
 import Sessions from "@/components/ta/sections/Sessions";
-import Schedule from "@/components/ta/sections/Schedule";
 import ClassSettings from "@/components/ta/sections/ClassSettings";
 
 interface ClassAreaProps {
@@ -61,15 +60,11 @@ const ClassArea = ({ tab, onTabChange, onOpenAllClasses }: ClassAreaProps) => {
     >
       <TabsList>
         <TabsTrigger value="sessions">Sessions</TabsTrigger>
-        <TabsTrigger value="pattern">Weekly pattern</TabsTrigger>
         <TabsTrigger value="settings">Settings</TabsTrigger>
       </TabsList>
 
       <TabsContent value="sessions" className="mt-0">
         <Sessions />
-      </TabsContent>
-      <TabsContent value="pattern" className="mt-0">
-        <Schedule />
       </TabsContent>
       <TabsContent value="settings" className="mt-0">
         <ClassSettings onOpenAllClasses={onOpenAllClasses} />

@@ -1294,11 +1294,14 @@ const { restoreNavigation } = await import(pathToFileURL(navOut).href);
 
 console.log("\ntaNavigation");
 
-eq("the old Schedule tab opens the weekly pattern", restoreNavigation("schedule", null), { tab: "class", classTab: "pattern" });
+eq("the old Schedule tab opens Sessions, where the pattern now lives", restoreNavigation("schedule", null), { tab: "class", classTab: "sessions" });
 eq("the old Class Sessions tab opens Sessions", restoreNavigation("sessions", "settings"), { tab: "class", classTab: "sessions" });
 eq("Classes kept its name and opens the list of all classes", restoreNavigation("classes", null), { tab: "classes", classTab: "sessions" });
 eq("a current tab is kept, with its class tab", restoreNavigation("class", "settings"), { tab: "class", classTab: "settings" });
-eq("so is any other tab", restoreNavigation("students", "pattern"), { tab: "students", classTab: "pattern" });
+// A browser tab left open on Weekly pattern: that tab is gone, and the
+// fallback has to put it on the screen the pattern moved into.
+eq("a remembered Weekly pattern lands on Sessions", restoreNavigation("class", "pattern"), { tab: "class", classTab: "sessions" });
+eq("so is any other tab", restoreNavigation("students", "settings"), { tab: "students", classTab: "settings" });
 eq("nothing remembered starts on Attendance", restoreNavigation(null, null), { tab: "attendance", classTab: "sessions" });
 eq("an unknown tab starts on Attendance", restoreNavigation("reports", null), { tab: "attendance", classTab: "sessions" });
 eq("an unknown class tab falls back to Sessions", restoreNavigation("class", "timetable"), { tab: "class", classTab: "sessions" });

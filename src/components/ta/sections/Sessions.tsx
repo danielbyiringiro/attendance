@@ -8,15 +8,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CalendarDays, CalendarOff, List, Loader2 } from "lucide-react";
+import { CalendarDays, CalendarOff, List, Loader2, Wand2 } from "lucide-react";
 import { useActiveClass } from "@/lib/classContext";
 import SessionList from "@/components/ta/SessionList";
 import NoClassDays from "@/components/ta/NoClassDays";
 import SessionCalendar from "@/components/ta/SessionCalendar";
+import Schedule from "@/components/ta/sections/Schedule";
+import FillSessionsDialog from "@/components/ta/dialogs/FillSessionsDialog";
 
 /**
- * The Sessions tab of a class: every session, as a month or a list, and its
- * days off — the screen opened every day.
+ * A class's sessions and the weekly pattern that produces them, on one screen.
+ *
+ * They were two tabs until now, and the split put the button on one and its
+ * consequence on the other: "Generate sessions" sat at the bottom of the
+ * pattern editor, and the only way to see what it had done was to change tab.
+ * People pressed it, read a number, and went looking. Side by side, a pattern
+ * edit and the month it rewrites are in the same glance.
  *
  * Check-in timing and the display link used to sit at the top of this screen.
  * Both are set about once a term, so they moved to the class's Settings tab and
@@ -30,6 +37,7 @@ const Sessions = () => {
    */
   const [view, setView] = useState<"month" | "list">("month");
   const [daysOffOpen, setDaysOffOpen] = useState(false);
+  const [fillOpen, setFillOpen] = useState(false);
   // Bumped when the days-off window closes, so the calendar re-reads the days
   // it paints instead of showing what it loaded before the change.
   const [calendarKey, setCalendarKey] = useState(0);
@@ -93,7 +101,12 @@ const Sessions = () => {
               </Button>
             </div>
 
-            {view === "month" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => setFillOpen(true)}>
+                <Wand2 className="mr-1 h-4 w-4" />
+                Fill in sessions
+              </Button>
+              {view === "month" && (
               <Button
                 size="sm"
                 variant="outline"
@@ -102,7 +115,8 @@ const Sessions = () => {
                 <CalendarOff className="mr-1 h-4 w-4" />
                 Days off
               </Button>
-            )}
+              )}
+            </div>
           </div>
 
           {view === "list" ? (
@@ -123,6 +137,24 @@ const Sessions = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* The weekly rule, under what it produces.
+          Stacked rather than side by side: a slot is six controls wide — day,
+          time, length, sign-up, early open, shuts at start — and squeezing
+          that into a column would cost more than the glance saves. The month
+          stays on top because it is what the screen is opened for; the pattern
+          is edited about once a term, and now it is edited in front of the
+          calendar it rewrites instead of on a tab away from it. */}
+      <Schedule />
+
+      <FillSessionsDialog
+        open={fillOpen}
+        onOpenChange={setFillOpen}
+        classId={activeClass.id}
+        termStart={activeClass.term_starts_on}
+        termEnd={activeClass.term_ends_on}
+        onFilled={() => setCalendarKey((k) => k + 1)}
+      />
 
       <Dialog
         open={daysOffOpen}

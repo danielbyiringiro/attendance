@@ -35,6 +35,38 @@ export const listSessions = async (q: SessionQuery): Promise<SessionRow[]> => {
   return (data ?? []) as SessionRow[];
 };
 
+/**
+ * The first and last session this class has, whatever their status.
+ *
+ * Two small queries rather than reading the whole term: the fill dialog needs
+ * only these two dates, and a class with a term of sessions should not have to
+ * ship all of them to work out where its record starts.
+ */
+export const sessionDateRange = async (
+  classId: string,
+): Promise<{ first: string | null; last: string | null }> => {
+  const [firstRes, lastRes] = await Promise.all([
+    supabase
+      .from("class_sessions")
+      .select("session_date")
+      .eq("class_id", classId)
+      .order("session_date", { ascending: true })
+      .limit(1),
+    supabase
+      .from("class_sessions")
+      .select("session_date")
+      .eq("class_id", classId)
+      .order("session_date", { ascending: false })
+      .limit(1),
+  ]);
+  if (firstRes.error) fail("Could not read the session dates", firstRes.error);
+  if (lastRes.error) fail("Could not read the session dates", lastRes.error);
+  return {
+    first: firstRes.data?.[0]?.session_date ?? null,
+    last: lastRes.data?.[0]?.session_date ?? null,
+  };
+};
+
 /** The sessions a TA acts on today, across every cohort of the class. */
 export const listTodaySessions = async (
   classId: string,
@@ -486,6 +518,71 @@ export const updateSession = async (
   });
   if (error) fail("Could not change the session", error);
   return data as SessionRow;
+};
+
+/** Which stretch of the term a fill covers. */
+export type FillScope =
+  /** From the start of term to the earliest session on record. */
+  | "gap"
+  /** The start of term through today. */
+  | "past"
+  /** Today to the end of term. */
+  | "future"
+  /** The whole thing. */
+  | "term";
+
+export interface FillPlan {
+  from: string;
+  to: string;
+  /** True when nothing was written — this is a preview. */
+  dry_run: boolean;
+  /** False when the range ends behind today, where nothing is ever removed. */
+  pruned: boolean;
+  created: number;
+  removed: number;
+  /**
+   * Standing although the pattern no longer names their date, and why. The
+   * number a TA needs when 11 moved and they expected 14.
+   */
+  kept: {
+    marked: number;
+    by_hand: number;
+    cancelled: number;
+  };
+}
+
+/**
+ * Create the sessions the weekly pattern wants across a range, and ahead of
+ * today remove the ones it no longer wants.
+ *
+ * With `dryRun` it does exactly that work, counts it, and rolls it back — so
+ * the plan a screen shows is produced by the code that will run, not by a
+ * second implementation that can drift from it. That is the whole reason this
+ * exists rather than a counting query: a preview that can be wrong about the
+ * action is worse than no preview, because it is believed.
+ *
+ * Pruning never reaches behind today, and never touches a session that is
+ * cancelled, moved by hand, or has anybody marked against it.
+ */
+export const fillSessions = async (
+  classId: string,
+  opts: {
+    from?: string;
+    to?: string;
+    /** Default true. False creates only, and removes nothing. */
+    prune?: boolean;
+    dryRun?: boolean;
+  } = {},
+): Promise<FillPlan> => {
+  const { data, error } = await supabase.rpc("fill_sessions", {
+    p_class_id: classId,
+    p_from: opts.from ?? null,
+    p_to: opts.to ?? null,
+    p_prune: opts.prune ?? true,
+    p_dry_run: opts.dryRun ?? false,
+  });
+  if (error) fail("Could not work out what to fill in", error);
+  return data as FillPlan;
 };
 
 export interface ApplyScheduleResult {

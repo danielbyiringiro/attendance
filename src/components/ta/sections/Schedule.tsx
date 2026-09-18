@@ -20,7 +20,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  CalendarPlus,
   Copy,
   CopyPlus,
   Loader2,
@@ -35,7 +34,7 @@ import {
   setCohortSchedules,
   type ScheduleSlot,
 } from "@/lib/api/classes";
-import { applyScheduleToFuture, generateSessions } from "@/lib/api/sessions";
+import { applyScheduleToFuture } from "@/lib/api/sessions";
 import { todayStr } from "@/lib/dates";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
@@ -142,9 +141,6 @@ const Schedule = () => {
   const [saved, setSaved] = useState<Record<string, Slot[]>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [genFrom, setGenFrom] = useState("");
-  const [genTo, setGenTo] = useState("");
 
   const load = useCallback(async () => {
     if (!activeClass) return;
@@ -183,10 +179,6 @@ const Schedule = () => {
 
   useEffect(() => {
     void load();
-    if (activeClass) {
-      setGenFrom(activeClass.term_starts_on);
-      setGenTo(activeClass.term_ends_on);
-    }
   }, [activeClass, load]);
 
   const cohortName = (id: string) =>
@@ -378,32 +370,6 @@ const Schedule = () => {
       });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    if (!activeClass) return;
-    setIsGenerating(true);
-    try {
-      const created = await generateSessions(activeClass.id, {
-        from: genFrom || undefined,
-        to: genTo || undefined,
-      });
-      toast({
-        title: created === 0 ? "Nothing new to create" : "Sessions created",
-        description:
-          created === 0
-            ? "Every scheduled day in that range already has a session."
-            : `${created} session${created === 1 ? "" : "s"} created. Days that already existed were left alone.`,
-      });
-    } catch (e) {
-      toast({
-        title: "Could not create the sessions",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -805,52 +771,6 @@ const Schedule = () => {
         </CardContent>
       </Card>
 
-      <Card className="border-2">
-        <CardHeader>
-          <CardTitle className="text-base">Backfill earlier sessions</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid max-w-md grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="gen-from">From</Label>
-              <Input
-                id="gen-from"
-                type="date"
-                value={genFrom}
-                onChange={(e) => setGenFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="gen-to">To</Label>
-              <Input
-                id="gen-to"
-                type="date"
-                value={genTo}
-                onChange={(e) => setGenTo(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={handleGenerate}
-            disabled={isGenerating}
-          >
-            {isGenerating ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CalendarPlus className="mr-2 h-4 w-4" />
-            )}
-            Create sessions in this range
-          </Button>
-
-          <p className="text-xs text-muted-foreground">
-            Only needed for days already in the past — a class set up mid-term,
-            say. Saving the pattern above already handles everything from today
-            onward. Days that already have a session are left alone either way.
-          </p>
-        </CardContent>
-      </Card>
     </div>
   );
 };
