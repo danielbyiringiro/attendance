@@ -16,6 +16,8 @@ import CalendarDayDialog, {
 } from "@/components/ta/dialogs/CalendarDayDialog";
 import SessionEditDialog from "@/components/ta/dialogs/SessionEditDialog";
 import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
+import MoveSessionDialog from "@/components/ta/dialogs/MoveSessionDialog";
+import { useSessionDrag } from "@/lib/useSessionDrag";
 
 /**
  * A month of sessions.
@@ -25,11 +27,15 @@ import SessionCancelDialog from "@/components/ta/dialogs/SessionCancelDialog";
  * which is the question the pattern editor cannot show and the list only shows
  * one screenful at a time.
  *
- * EDITABLE BY CLICKING A DAY, NOT BY DRAGGING
+ * EDITABLE BY CLICKING A DAY, AND BY MOVING A SESSION
  *
  * Dragging a session has two defensible meanings — move this one, or change the
- * pattern from here on — and picking wrong silently rewrites a term. Clicking a
- * day has no such ambiguity: you get that day, and the actions that apply to it.
+ * pattern from here on — and picking wrong silently rewrites a term. So a drop
+ * never picks: it opens MoveSessionDialog, which asks, with both answers'
+ * numbers already worked out by the server (054). A session can be moved by
+ * dragging it, by touch, or by tapping its grip and then a day — see
+ * useSessionDrag for why all three. Clicking a day still has no ambiguity: you
+ * get that day, and the actions that apply to it.
  *
  * So every day opens a dialog with the sessions on it, their open/close/edit/
  * cancel actions, and the two things you can add: a session, or a declared day
@@ -178,6 +184,10 @@ const SessionCalendar = ({
   // either is dismissed.
   const [editing, setEditing] = useState<SessionRow | null>(null);
   const [cancelling, setCancelling] = useState<SessionRow | null>(null);
+  // A drop waiting for its answer: which session, and where it was put.
+  const [moving, setMoving] = useState<{ session: SessionRow; to: string } | null>(
+    null,
+  );
 
   const days = useMemo(
     () => monthGrid(cursor.year, cursor.month),
@@ -234,6 +244,16 @@ const SessionCalendar = ({
     [cohorts],
   );
 
+  const drag = useSessionDrag(
+    useCallback(
+      (sessionId: string, date: string) => {
+        const found = sessions.find((x) => x.id === sessionId);
+        if (found) setMoving({ session: found, to: date });
+      },
+      [sessions],
+    ),
+  );
+
   const timeOf = (iso: string) =>
     new Date(iso).toLocaleTimeString(undefined, {
       hour: "2-digit",
@@ -284,7 +304,31 @@ const SessionCalendar = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-md border bg-border">
+      {/* Carrying by tap: say what is in hand and how to put it down. Without
+          this a session picked up by accident looks like nothing happened, and
+          the next tap on a day moves it somewhere nobody meant. */}
+      {drag.carrying && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
+          <span>
+            Moving{" "}
+            {(() => {
+              const c = sessions.find((x) => x.id === drag.carrying);
+              return c
+                ? `cohort ${cohortLabel.get(c.cohort_id) ?? "?"} ${timeOf(c.starts_at)}`
+                : "a session";
+            })()}{" "}
+            — tap the day to put it on.
+          </span>
+          <Button size="sm" variant="ghost" onClick={drag.cancel}>
+            Put it down
+          </Button>
+        </div>
+      )}
+
+      <div
+        className="grid grid-cols-7 gap-px overflow-hidden rounded-md border bg-border select-none"
+        {...drag.gridProps}
+      >
         {WEEKDAYS.map((w) => (
           <div
             key={w}
@@ -310,17 +354,33 @@ const SessionCalendar = ({
           const hidden = onDay.length - shown.length;
 
           return (
-            <button
-              type="button"
+            // A div in a button's clothes rather than a <button>: Firefox
+            // sends every pointer event inside a button to the button itself,
+            // so a session chip in one could never be picked up there.
+            <div
+              role="button"
+              tabIndex={0}
               key={key}
+              data-date={key}
+              aria-label={d.toDateString()}
               onClick={() => setOpenDay(key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setOpenDay(key);
+                }
+              }}
               style={
                 off?.mode === "exempt" ? hatchFor(off.hue) : undefined
               }
-              className={`min-h-[4.5rem] cursor-pointer p-1 text-left transition-colors hover:brightness-95 sm:min-h-[6rem] ${
+              className={`min-h-[4.5rem] cursor-pointer p-1 text-left transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-[6rem] ${
                 off ? HUE_CELL[off.hue] : KIND_CELL[kind]
               } ${inMonth ? "" : "opacity-40"} ${
                 isToday ? "ring-2 ring-inset ring-primary" : ""
+              } ${
+                drag.overDate === key
+                  ? "!bg-primary/15 ring-2 ring-inset ring-primary"
+                  : ""
               }`}
             >
               <div className="flex items-baseline justify-between gap-1">
@@ -366,22 +426,51 @@ const SessionCalendar = ({
               )}
 
               <div className="mt-0.5 space-y-0.5">
-                {shown.map((s) => (
-                  <div
-                    key={s.id}
-                    className={`truncate rounded px-1 py-px text-[0.65rem] leading-tight ${CHIP[s.status]}`}
-                    title={`Cohort ${cohortLabel.get(s.cohort_id) ?? "?"} · ${timeOf(s.starts_at)} · ${s.status}`}
-                  >
-                    {cohortLabel.get(s.cohort_id) ?? "?"} {timeOf(s.starts_at)}
-                  </div>
-                ))}
+                {shown.map((s) => {
+                  // Only a session that has not run can move. One that is open
+                  // or closed has a register taken against its time; moving it
+                  // would put those marks on a day they were not taken.
+                  const movable = s.status === "scheduled";
+                  const carried = drag.carrying === s.id;
+                  return (
+                    <div
+                      key={s.id}
+                      data-session-id={movable ? s.id : undefined}
+                      draggable={movable}
+                      // Touch drags are ours, not the page's scroll.
+                      style={movable ? { touchAction: "none" } : undefined}
+                      className={`flex items-center gap-0.5 truncate rounded px-1 py-px text-[0.65rem] leading-tight ${
+                        carried
+                          ? "bg-primary text-primary-foreground"
+                          : CHIP[s.status]
+                      } ${movable ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      title={`Cohort ${cohortLabel.get(s.cohort_id) ?? "?"} · ${timeOf(s.starts_at)} · ${s.status}${
+                        movable ? " · drag to another day, or tap the dots to pick it up" : ""
+                      }`}
+                    >
+                      {movable && (
+                        // Drawn, not typed: the braille ⠿ the prototype used
+                        // rendered as nothing on a machine without that font,
+                        // and the only sign a chip could move disappeared.
+                        <span
+                          data-grip
+                          aria-hidden
+                          className="h-2.5 w-1.5 shrink-0 opacity-60 [background-image:radial-gradient(currentColor_40%,transparent_45%)] [background-size:3px_3px]"
+                        />
+                      )}
+                      <span className="truncate">
+                        {cohortLabel.get(s.cohort_id) ?? "?"} {timeOf(s.starts_at)}
+                      </span>
+                    </div>
+                  );
+                })}
                 {hidden > 0 && (
                   <p className="px-1 text-[0.6rem] text-muted-foreground">
                     +{hidden} more
                   </p>
                 )}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -404,6 +493,17 @@ const SessionCalendar = ({
           setOpenDay(null);
           setCancelling(s);
         }}
+      />
+
+      <MoveSessionDialog
+        session={moving?.session ?? null}
+        toDate={moving?.to ?? null}
+        cohortLabel={
+          moving ? (cohortLabel.get(moving.session.cohort_id) ?? "?") : ""
+        }
+        timeLabel={moving ? timeOf(moving.session.starts_at) : ""}
+        onClose={() => setMoving(null)}
+        onMoved={load}
       />
 
       <SessionEditDialog
