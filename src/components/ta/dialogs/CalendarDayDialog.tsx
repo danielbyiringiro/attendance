@@ -121,6 +121,12 @@ const CalendarDayDialog = ({
       timeZone: timezone,
     });
 
+  const weekday = date
+    ? new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+        weekday: "long",
+      })
+    : "";
+
   const pretty = date
     ? new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
         weekday: "long",
@@ -354,11 +360,12 @@ const CalendarDayDialog = ({
                 {s.status === "scheduled" && (
                   <Button
                     size="sm"
-                    variant="ghost"
-                    title="Change the day or time"
+                    variant="outline"
+                    title="Change the time, length or check-in rules — for this session or its run"
                     onClick={() => onEdit(s)}
                   >
-                    <PencilLine className="h-4 w-4" />
+                    <PencilLine className="mr-1 h-4 w-4" />
+                    Edit
                   </Button>
                 )}
                 {s.status !== "cancelled" && (
@@ -453,9 +460,12 @@ const CalendarDayDialog = ({
             <div className="grid gap-1">
               {(
                 [
-                  ["day", "Just this date"],
-                  ["range", "Weekly, until a date I choose"],
-                  ["term", "Weekly, to the end of term"],
+                  // Worded the way a calendar app words it, with the day
+                  // named: "every Tuesday" is unambiguous where "weekly" left
+                  // people checking whether it meant every day of the week.
+                  ["day", "Does not repeat"],
+                  ["range", `Every ${weekday}, until a date I choose`],
+                  ["term", `Every ${weekday}, to the end of term`],
                 ] as Array<[AddScope, string]>
               ).map(([value, text]) => (
                 <button

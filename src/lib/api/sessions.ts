@@ -520,6 +520,80 @@ export const updateSession = async (
   return data as SessionRow;
 };
 
+/**
+ * How far an edit reaches — the question a calendar app asks about a
+ * repeating event.
+ */
+export type EditScope =
+  /** This session alone. The only scope that can move a date. */
+  | "one"
+  /** This session and every later one in its run. */
+  | "future"
+  /** Every session in its run, earlier ones included. */
+  | "series";
+
+export interface SeriesEditResult {
+  scope: EditScope;
+  updated: number;
+  /** Left alone because somebody had been marked on them. */
+  skipped_marked: number;
+  /** Left alone because they are open, closed or cancelled. */
+  skipped_status: number;
+}
+
+/**
+ * Edit one session, or the run it belongs to (053).
+ *
+ * A run is the same cohort meeting on the same weekday at the same time —
+ * "every Tuesday at nine". The bulk scopes skip anything somebody has been
+ * marked on and anything no longer scheduled, and say how many; a date can
+ * only change with scope "one", because moving a run to another weekday is
+ * the weekly pattern's job and doing it here would be undone by the next fill.
+ *
+ * Every session it changes stops following the weekly pattern, which is what
+ * keeps the edit from being undone by the next pattern save.
+ */
+export const updateSessionSeries = async (
+  sessionId: string,
+  scope: EditScope,
+  changes: {
+    date?: string;
+    startTime?: string;
+    durationMinutes?: number;
+    autoCloseMinutes?: number;
+    lateWindowMinutes?: number;
+    closesAtStart?: boolean;
+    graceMinutes?: number;
+    graceCountsLate?: boolean;
+  },
+): Promise<SeriesEditResult> => {
+  const { data, error } = await supabase.rpc("update_session_series", {
+    p_session_id: sessionId,
+    p_scope: scope,
+    p_date: changes.date ?? null,
+    p_start_time: changes.startTime ?? null,
+    p_duration_minutes: changes.durationMinutes ?? null,
+    p_auto_close_minutes: changes.autoCloseMinutes ?? null,
+    p_late_window_minutes: changes.lateWindowMinutes ?? null,
+    p_closes_at_start: changes.closesAtStart ?? null,
+    p_grace_minutes: changes.graceMinutes ?? null,
+    p_grace_counts_late: changes.graceCountsLate ?? null,
+  });
+  if (error) fail("Could not change the sessions", error);
+  return data as SeriesEditResult;
+};
+
+/** How many sessions each scope would reach, asked before anything changes. */
+export const countSessionSeries = async (
+  sessionId: string,
+): Promise<{ future: number; series: number }> => {
+  const { data, error } = await supabase.rpc("count_session_series", {
+    p_session_id: sessionId,
+  });
+  if (error) fail("Could not count the sessions in that run", error);
+  return data as { future: number; series: number };
+};
+
 /** Which stretch of the term a fill covers. */
 export type FillScope =
   /** From the start of term to the earliest session on record. */
