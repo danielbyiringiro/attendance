@@ -77,7 +77,21 @@ const Sessions = () => {
         </Card>
       )}
 
-      <Card className="border-2">
+      {/*
+        The weekly rule beside what it produces.
+        A slot used to be six controls on one line, which is why this was two
+        tabs: it could not share a screen with anything. The four that are set
+        once a term — length, sign-up, early open, shuts at start — now fold
+        away behind each meeting, and the two that get changed stay out. Under
+        xl the rail drops below the month, which is what the screen is opened
+        for.
+      */}
+      <div className="grid gap-4 xl:grid-cols-[24rem_1fr]">
+      <div className="order-2 xl:order-1">
+        <Schedule />
+      </div>
+
+      <Card className="order-1 border-2 xl:order-2">
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-1">
@@ -137,15 +151,7 @@ const Sessions = () => {
           )}
         </CardContent>
       </Card>
-
-      {/* The weekly rule, under what it produces.
-          Stacked rather than side by side: a slot is six controls wide — day,
-          time, length, sign-up, early open, shuts at start — and squeezing
-          that into a column would cost more than the glance saves. The month
-          stays on top because it is what the screen is opened for; the pattern
-          is edited about once a term, and now it is edited in front of the
-          calendar it rewrites instead of on a tab away from it. */}
-      <Schedule />
+      </div>
 
       <FillSessionsDialog
         open={fillOpen}

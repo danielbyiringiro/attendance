@@ -16,6 +16,10 @@
 --   so is a hand-moved one, and a cancelled one
 --   the three are counted separately, and never twice
 --   a backwards range is refused
+--   "this and every later one" stops at a register, and does not reach back
+--   "all of them" moves the whole run
+--   changing a date over a run is refused, and says to use the weekly pattern
+--   an unknown scope is refused rather than quietly meaning "one"
 --
 -- Wrapped in a transaction that is rolled back.
 -- ============================================================================
@@ -204,5 +208,209 @@ BEGIN
   RAISE NOTICE '053 ok: a range that runs backwards is refused';
 END;
 $backwards$;
+
+
+-- ------------------------------------ editing one session, or its whole run --
+-- The three scopes a calendar app offers. What makes them worth testing is not
+-- the arithmetic but the refusals: a bulk edit must not restamp a register,
+-- and must not pretend to move a weekday the weekly pattern still owns.
+DO $series$
+DECLARE
+  t         record;
+  v_first   uuid;
+  v_middle  uuid;
+  v_marked  uuid;
+  v_counts  jsonb;
+  v_out     jsonb;
+  v_time    time;
+  v_class   public.classes%ROWTYPE;
+  ok        boolean;
+  v_why     text;
+  n         integer;
+  v_expect  integer;
+BEGIN
+  SELECT * INTO t FROM t053;
+  SELECT * INTO v_class FROM public.classes WHERE id = t.class_id;
+
+  -- A fresh run: every week of the term, one cohort, one time.
+  PERFORM public.set_cohort_schedules(
+    ARRAY[t.cohort_id],
+    jsonb_build_array(jsonb_build_object(
+      'weekday', EXTRACT(DOW FROM CURRENT_DATE)::int,
+      'start_time', '09:00'))
+  );
+  PERFORM public.fill_sessions(t.class_id, NULL, NULL, true, false);
+
+  SELECT count(*) INTO n FROM public.class_sessions
+   WHERE cohort_id = t.cohort_id
+     AND (starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00';
+  IF n < 4 THEN
+    RAISE EXCEPTION '053: only % sessions in the run, too few to tell the scopes apart', n;
+  END IF;
+
+  SELECT id INTO v_first FROM public.class_sessions
+   WHERE cohort_id = t.cohort_id
+     AND (starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+   ORDER BY session_date LIMIT 1;
+
+  -- Unmarked on purpose. An earlier block in this file leaves a register on
+  -- one of the future sessions, and anchoring on that one would test nothing:
+  -- it is correctly skipped, so it would keep its old time and the assertion
+  -- below would read as a bug in the rule rather than a bug in the fixture.
+  SELECT id INTO v_middle FROM public.class_sessions s
+   WHERE s.cohort_id = t.cohort_id
+     AND (s.starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+     AND s.session_date > CURRENT_DATE
+     AND s.status = 'scheduled'
+     AND NOT EXISTS (SELECT 1 FROM public.attendance_records a
+                      WHERE a.session_id = s.id)
+   ORDER BY s.session_date LIMIT 1;
+
+  -- The counts the dialog shows before anything is chosen.
+  v_counts := public.count_session_series(v_middle);
+  IF (v_counts ->> 'series')::integer <> n THEN
+    RAISE EXCEPTION '053: the run has % sessions, counted %', n, v_counts ->> 'series';
+  END IF;
+  IF (v_counts ->> 'future')::integer >= (v_counts ->> 'series')::integer THEN
+    RAISE EXCEPTION
+      '053: "this and later" counted % of a run of % — it should be fewer',
+      v_counts ->> 'future', v_counts ->> 'series';
+  END IF;
+
+  -- A register on one of the later ones. It must survive every bulk edit.
+  -- Scheduled and unmarked to begin with: an earlier block cancelled one of
+  -- these, and putting the register on that would prove nothing, because a
+  -- cancelled session is skipped for its status before the register is ever
+  -- looked at.
+  SELECT id INTO v_marked FROM public.class_sessions s
+   WHERE s.cohort_id = t.cohort_id
+     AND (s.starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+     AND s.status = 'scheduled'
+     AND s.session_date > (SELECT session_date FROM public.class_sessions
+                            WHERE id = v_middle)
+     AND NOT EXISTS (SELECT 1 FROM public.attendance_records a
+                      WHERE a.session_id = s.id)
+   ORDER BY s.session_date LIMIT 1;
+  IF v_marked IS NULL THEN
+    RAISE EXCEPTION '053: no clean session after the anchor to put a register on';
+  END IF;
+  INSERT INTO public.attendance_records
+    (session_id, class_id, student_id, state, marked_at, marked_by_role)
+  VALUES (v_marked, t.class_id, 'S053A', 'present', now(), 'staff');
+
+  -- How many of the run from here on already carry a register. Counted from
+  -- the data rather than assumed to be the one just written: earlier blocks in
+  -- this file mark sessions too, and a hard-coded 1 made this assertion pass
+  -- or fail on which tests ran before it rather than on the rule.
+  SELECT count(*) INTO v_expect
+    FROM public.class_sessions s
+   WHERE s.cohort_id = t.cohort_id
+     AND (s.starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+     AND s.session_date >= (SELECT session_date FROM public.class_sessions
+                             WHERE id = v_middle)
+     AND s.status = 'scheduled'
+     AND EXISTS (SELECT 1 FROM public.attendance_records a
+                  WHERE a.session_id = s.id);
+  IF v_expect = 0 THEN
+    RAISE EXCEPTION '053: nothing in the run is marked, so the next check proves nothing';
+  END IF;
+
+  -- ---- this and every later one
+  v_out := public.update_session_series(
+    v_middle, 'future', NULL, TIME '11:00');
+
+  IF (v_out ->> 'skipped_marked')::integer <> v_expect THEN
+    RAISE EXCEPTION '053: % marked sessions skipped, expected %',
+      v_out ->> 'skipped_marked', v_expect;
+  END IF;
+  IF (v_out ->> 'updated')::integer = 0 THEN
+    RAISE EXCEPTION '053: "this and later" changed nothing';
+  END IF;
+
+  SELECT (starts_at AT TIME ZONE v_class.timezone)::time INTO v_time
+    FROM public.class_sessions WHERE id = v_marked;
+  IF v_time <> TIME '09:00' THEN
+    RAISE EXCEPTION '053: the register was restamped to %', v_time;
+  END IF;
+
+  SELECT (starts_at AT TIME ZONE v_class.timezone)::time INTO v_time
+    FROM public.class_sessions WHERE id = v_middle;
+  IF v_time <> TIME '11:00' THEN
+    RAISE EXCEPTION '053: the session edited from reads %', v_time;
+  END IF;
+
+  -- The earlier ones are untouched: "future" means from here on.
+  SELECT (starts_at AT TIME ZONE v_class.timezone)::time INTO v_time
+    FROM public.class_sessions WHERE id = v_first;
+  IF v_time <> TIME '09:00' THEN
+    RAISE EXCEPTION '053: "this and later" reached backwards and made the first %', v_time;
+  END IF;
+
+  RAISE NOTICE '053 ok: "this and every later one" stops at the register and at today''s edge';
+END;
+$series$;
+
+-- ---------------------------------------- a whole run, and the two refusals --
+DO $series_all$
+DECLARE
+  t       record;
+  v_any   uuid;
+  v_class public.classes%ROWTYPE;
+  v_out   jsonb;
+  v_left  integer;
+  ok      boolean;
+  v_why   text;
+BEGIN
+  SELECT * INTO t FROM t053;
+  SELECT * INTO v_class FROM public.classes WHERE id = t.class_id;
+
+  SELECT id INTO v_any FROM public.class_sessions
+   WHERE cohort_id = t.cohort_id
+     AND (starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+   ORDER BY session_date LIMIT 1;
+
+  -- Everything still at 09:00, whenever it is, including behind today.
+  v_out := public.update_session_series(v_any, 'series', NULL, TIME '08:00');
+
+  SELECT count(*) INTO v_left FROM public.class_sessions
+   WHERE cohort_id = t.cohort_id
+     AND (starts_at AT TIME ZONE v_class.timezone)::time = TIME '09:00'
+     AND status = 'scheduled'
+     AND NOT EXISTS (SELECT 1 FROM public.attendance_records a
+                      WHERE a.session_id = class_sessions.id);
+  IF v_left <> 0 THEN
+    RAISE EXCEPTION '053: "all of them" left % scheduled sessions behind', v_left;
+  END IF;
+
+  -- A date change is a single-session act, and says why.
+  BEGIN
+    PERFORM public.update_session_series(
+      v_any, 'future', CURRENT_DATE + 3, NULL);
+    ok := false;
+  EXCEPTION WHEN others THEN
+    ok := true;
+    v_why := SQLERRM;
+  END;
+  IF NOT ok THEN
+    RAISE EXCEPTION '053: a whole run was moved to another date';
+  END IF;
+  IF v_why NOT LIKE '%weekly pattern%' THEN
+    RAISE EXCEPTION '053: refused a date change without saying why: %', v_why;
+  END IF;
+
+  -- An unknown scope is refused rather than quietly meaning "one".
+  BEGIN
+    PERFORM public.update_session_series(v_any, 'everything', NULL, TIME '10:00');
+    ok := false;
+  EXCEPTION WHEN others THEN
+    ok := true;
+  END;
+  IF NOT ok THEN
+    RAISE EXCEPTION '053: an unknown scope was accepted';
+  END IF;
+
+  RAISE NOTICE '053 ok: a whole run moves, and a date change over one is refused';
+END;
+$series_all$;
 
 ROLLBACK;
