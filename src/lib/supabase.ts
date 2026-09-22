@@ -1,15 +1,40 @@
 import { createClient, processLock } from "@supabase/supabase-js";
 
-// Public (anon) credentials only. The anon key is safe to ship to the browser
-// ONLY when Row Level Security (RLS) is enabled on every table in Supabase.
+// Where the project lives, and the key the browser uses to reach it.
 //
-// SECURITY: Never put the service_role key in client code. It bypasses RLS and
-// would let anyone read, edit, or delete the entire database straight from the
-// browser console. If you need privileged access, do it from a trusted server
-// (e.g. a Supabase Edge Function) — never here.
-const supabaseUrl = "https://ostozdfvnjiamtuyjemh.supabase.co";
-const supabaseAnonKey =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zdG96ZGZ2bmppYW10dXlqZW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMTAzNzQsImV4cCI6MjA5NDY4NjM3NH0.vmYN_sSWfYkQzyWUk_mTaDzDBL6p2t50z6snVEt5ovI";
+// Both come from the environment rather than from this file. That is not about
+// keeping the anon key secret — it is published to every visitor by design, and
+// is safe to publish ONLY because row-level security is enabled on every table.
+// It is about being able to point the app at a different project, or take a new
+// key, by changing the host's settings and redeploying, without a code change.
+//
+// Vite only exposes variables prefixed VITE_, and inlines them at BUILD time, so
+// changing either one in the host's dashboard takes a fresh deploy to have any
+// effect. Setting it and waiting does nothing.
+//
+// SECURITY: only ever the anon key here. The service_role key bypasses row-level
+// security completely, and anything in this file ships to the browser. If you
+// need privileged access, do it from a trusted server (a Supabase Edge
+// Function), never from the client.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Fail loudly and immediately, naming what is missing. Every screen is a query,
+// so without these the choice is not between working and broken — it is between
+// a blank page and a blank page that says why. vite.config.ts refuses to BUILD
+// without them; this covers `npm run dev` without a .env.local.
+if (!supabaseUrl || !supabaseAnonKey) {
+  const missing = [
+    !supabaseUrl && "VITE_SUPABASE_URL",
+    !supabaseAnonKey && "VITE_SUPABASE_ANON_KEY",
+  ].filter(Boolean);
+  throw new Error(
+    `Supabase is not configured: ${missing.join(" and ")} ${
+      missing.length > 1 ? "are" : "is"
+    } not set. Set them in the host's environment variables and redeploy, or ` +
+      `copy .env.example to .env.local for local development.`,
+  );
+}
 
 /*
  * The auth lock is kept inside this tab.
