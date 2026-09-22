@@ -62,6 +62,9 @@ const SessionEditDialog = ({
   const [counts, setCounts] = useState<{ future: number; series: number } | null>(
     null,
   );
+  // Why the choices are missing, when they are. Hiding them silently left
+  // nobody able to tell "this session does not repeat" from "the check broke".
+  const [countError, setCountError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -87,15 +90,20 @@ const SessionEditDialog = ({
     // gets rewritten by accident.
     setScope("one");
     setCounts(null);
+    setCountError(null);
 
     let live = true;
     void countSessionSeries(session.id)
       .then((c) => {
         if (live) setCounts(c);
       })
-      .catch(() => {
-        // Without the counts the dialog still edits one session, which is all
-        // it ever did. It just does not offer the wider choices.
+      .catch((e) => {
+        // The dialog still edits one session, which is all it ever did. But it
+        // says why the wider choices are missing instead of just not showing
+        // them — the usual cause is a database without migration 053.
+        if (live) {
+          setCountError(e instanceof Error ? e.message : "Unexpected error.");
+        }
       });
     return () => {
       live = false;
@@ -180,6 +188,21 @@ const SessionEditDialog = ({
             )}
           </DialogDescription>
         </DialogHeader>
+
+        {countError && (
+          <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+            Could not check whether this session repeats, so only this session
+            can be changed. ({countError})
+          </p>
+        )}
+
+        {counts !== null && counts.series <= 1 && (
+          <p className="text-xs text-muted-foreground">
+            This session does not repeat — no other session for cohort{" "}
+            {cohortLabel} falls on this weekday at this time — so the change
+            applies to it alone.
+          </p>
+        )}
 
         {offersScope && counts && (
           <fieldset className="space-y-1.5">
