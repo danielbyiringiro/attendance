@@ -82,7 +82,31 @@ interface Slot {
   /** How long check-in lasts when this slot's session is opened late. */
   grace: string;
   graceCountsLate?: boolean;
+  /**
+   * 054: when this meeting starts and stops applying, "YYYY-MM-DD". Undefined
+   * is the whole term. Set when a run is moved to another day on the
+   * calendar — "Tuesdays until 29 Sep, Thursdays from 1 Oct" — and carried
+   * through every save, because dropping them brings the old day back.
+   */
+  effectiveFrom?: string;
+  effectiveUntil?: string;
 }
+
+/** "from Thu 1 Oct", "until Tue 29 Sep", or both — how a part-term meeting reads. */
+const rangeLabel = (from?: string, until?: string): string => {
+  const d = (x: string) =>
+    new Date(`${x}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  if (from && until) return `${d(from)} to ${d(until)}`;
+  if (from) return `from ${d(from)}`;
+  if (until) {
+    return until < todayStr() ? `ended ${d(until)}` : `until ${d(until)}`;
+  }
+  return "";
+};
 
 let nextKey = 0;
 const newSlot = (weekday = 2): Slot => ({
@@ -116,7 +140,15 @@ const sameSlots = (a: Slot[], b: Slot[]) => {
       slot.startTime === right[i].startTime &&
       slot.duration === right[i].duration &&
       slot.signup === right[i].signup &&
-      slot.early === right[i].early,
+      slot.early === right[i].early &&
+      // These four were missing: a change to any of them alone never counted
+      // as a change, so Save had nothing to save. The check-in rules fold
+      // away under each meeting now, which made that easy to hit.
+      slot.closesAtStart === right[i].closesAtStart &&
+      slot.grace === right[i].grace &&
+      slot.graceCountsLate === right[i].graceCountsLate &&
+      slot.effectiveFrom === right[i].effectiveFrom &&
+      slot.effectiveUntil === right[i].effectiveUntil,
   );
 };
 
@@ -176,6 +208,8 @@ const Schedule = () => {
           closesAtStart: r.closes_at_start ?? undefined,
           grace: r.grace_minutes ? String(r.grace_minutes) : "",
           graceCountsLate: r.grace_counts_late ?? undefined,
+          effectiveFrom: r.effective_from ?? undefined,
+          effectiveUntil: r.effective_until ?? undefined,
         });
       });
       setSlots(byCohort);
@@ -344,6 +378,8 @@ const Schedule = () => {
           closesAtStart: s.closesAtStart,
           graceMinutes: s.grace ? Number(s.grace) : undefined,
           graceCountsLate: s.graceCountsLate,
+          effectiveFrom: s.effectiveFrom,
+          effectiveUntil: s.effectiveUntil,
         }));
         await setCohortSchedules([cohort.id], payload);
       }
@@ -613,6 +649,40 @@ const Schedule = () => {
                             <p className="px-1 text-xs text-destructive">
                               same day and time as another row
                             </p>
+                          )}
+
+                          {/*
+                            054. A meeting that only applies for part of the
+                            term says so. After a run is moved on the calendar
+                            a cohort has "Tuesdays" and "Thursdays" both in its
+                            list, and without these words it reads as meeting
+                            twice a week.
+                          */}
+                          {(slot.effectiveFrom || slot.effectiveUntil) && (
+                            <div className="flex flex-wrap items-center gap-x-2 px-1 text-xs text-muted-foreground">
+                              <span
+                                className={
+                                  slot.effectiveUntil && slot.effectiveUntil < todayStr()
+                                    ? "line-through"
+                                    : undefined
+                                }
+                              >
+                                {rangeLabel(slot.effectiveFrom, slot.effectiveUntil)}
+                              </span>
+                              <button
+                                type="button"
+                                className="underline underline-offset-2 hover:text-foreground"
+                                title="Remove the dates, so this meeting applies to the whole term again"
+                                onClick={() =>
+                                  patch(cohort.id, slot.key, {
+                                    effectiveFrom: undefined,
+                                    effectiveUntil: undefined,
+                                  })
+                                }
+                              >
+                                make it all term
+                              </button>
+                            </div>
                           )}
 
                           {/*

@@ -583,6 +583,44 @@ export const updateSessionSeries = async (
   return data as SeriesEditResult;
 };
 
+/** What a drop on the calendar would do, or did (054). */
+export interface MovePlan {
+  scope: "one" | "future";
+  dry_run: boolean;
+  /** True when the weekly pattern was split at the new date. */
+  split: boolean;
+  moved: number;
+  /** Removed, because the new date is a day off or past the end of term. */
+  dropped: { day_off: number; past_term: number };
+  /** Left where they were, and why. */
+  kept: { marked: number; by_hand: number; running: number; clash: number };
+}
+
+/**
+ * Move a session to another date — alone, or with every later one in its run.
+ *
+ * "future" splits the weekly pattern at the new date, so the next fill does not
+ * bring the old day back. With `dryRun` the move is done, counted and rolled
+ * back, which is how the calendar shows what a drop will do before it happens.
+ * Refusals (a day off, the same weekday, a session with no pattern behind it)
+ * arrive as errors whose message says what to do instead.
+ */
+export const moveSessionTo = async (
+  sessionId: string,
+  newDate: string,
+  scope: "one" | "future",
+  dryRun = false,
+): Promise<MovePlan> => {
+  const { data, error } = await supabase.rpc("move_session_to", {
+    p_session_id: sessionId,
+    p_new_date: newDate,
+    p_scope: scope,
+    p_dry_run: dryRun,
+  });
+  if (error) fail("Could not move the session", error);
+  return data as MovePlan;
+};
+
 /** How many sessions each scope would reach, asked before anything changes. */
 export const countSessionSeries = async (
   sessionId: string,

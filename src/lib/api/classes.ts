@@ -214,6 +214,13 @@ export interface ScheduleSlot {
   graceMinutes?: number;
   /** Whether a mark inside that grace window is recorded late. */
   graceCountsLate?: boolean;
+  /**
+   * 054: the dates this meeting applies between, "YYYY-MM-DD". Omit for the
+   * whole term. Moving a run of sessions to another day splits the pattern
+   * with these, and a save that dropped them would put the old day back.
+   */
+  effectiveFrom?: string;
+  effectiveUntil?: string;
 }
 
 /**
@@ -244,6 +251,8 @@ export const setCohortSchedules = async (
       closes_at_start: s.closesAtStart ?? null,
       grace_minutes: s.graceMinutes ?? null,
       grace_counts_late: s.graceCountsLate ?? null,
+      effective_from: s.effectiveFrom ?? null,
+      effective_until: s.effectiveUntil ?? null,
     })),
   });
   if (error) fail("Could not save the schedule", error);

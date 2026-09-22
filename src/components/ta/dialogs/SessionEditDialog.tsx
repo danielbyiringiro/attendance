@@ -270,7 +270,7 @@ const SessionEditDialog = ({
             />
             {scope !== "one" && (
               <p className="text-xs text-muted-foreground">
-                To move a run to another day, change the weekly pattern.
+                To move a run to another day, drag it there on the calendar.
               </p>
             )}
           </div>
