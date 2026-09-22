@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
+import { HUE_CELL, hatchFor } from "@/components/ta/dayOffHues";
 import {
   DAY_TONES,
   TONE_LABEL,
@@ -148,6 +149,10 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
           const isToday = key === today;
           const onDay = byDate.get(key) ?? [];
           const tone = dayTone(onDay.map((e) => e.tone));
+          // The colour staff gave this day (052). The student is looking at the
+          // same date on the same term; it should not be a different colour
+          // here than it is on the calendar the day was declared from.
+          const offHue = onDay.find((e) => e.tone === "dayoff")?.hue;
           const words = onDay.map((e) => e.label ?? TONE_LABEL[e.tone]);
           const summary =
             onDay.length > 0
@@ -207,9 +212,14 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
           );
 
           const cell = `block min-h-[3.75rem] p-1 text-left sm:min-h-[4.5rem] ${
-            tone ? TONE_CELL[tone] : "bg-card"
+            tone === "dayoff" && offHue
+              ? HUE_CELL[offHue]
+              : tone
+                ? TONE_CELL[tone]
+                : "bg-card"
           } ${inMonth ? "" : "opacity-40"} ${isToday ? "ring-2 ring-inset ring-primary" : ""}`;
-          const style = tone === "dayoff" ? HATCH : undefined;
+          const style =
+            tone === "dayoff" ? (offHue ? hatchFor(offHue) : HATCH) : undefined;
 
           return tone && onDayClick ? (
             <button

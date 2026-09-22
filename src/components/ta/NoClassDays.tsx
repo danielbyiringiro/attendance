@@ -25,11 +25,15 @@ import {
   clearNoClassDay,
   listNoClassDays,
   setNoClassDay,
+  type NoClassDay,
+  type NoClassHue,
   type NoClassMode,
 } from "@/lib/api/sessions";
 import type { CohortRow } from "@/lib/api/types";
 import { todayStr } from "@/lib/dates";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import HuePicker from "@/components/ta/HuePicker";
+import { HUE_BG } from "@/components/ta/dayOffHues";
 
 const dateOf = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString(undefined, {
@@ -61,21 +65,14 @@ const NoClassDays = ({
   cohorts: CohortRow[];
 }) => {
   const { toast } = useToast();
-  const [days, setDays] = useState<
-    Array<{
-      id: string;
-      on_date: string;
-      mode: NoClassMode;
-      reason: string;
-      cohort_id: string | null;
-    }>
-  >([]);
+  const [days, setDays] = useState<NoClassDay[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const [adding, setAdding] = useState(false);
   const [date, setDate] = useState(todayStr());
   const [mode, setMode] = useState<NoClassMode>("exempt");
+  const [hue, setHue] = useState<NoClassHue>("amber");
   const [reason, setReason] = useState("");
   const [scope, setScope] = useState("all");
 
@@ -124,6 +121,7 @@ const NoClassDays = ({
         mode,
         reason.trim(),
         scope === "all" ? undefined : scope,
+        hue,
       );
       // Three outcomes worth telling apart, because "nothing happened" and
       // "four empty sessions were removed" look identical otherwise.
@@ -213,7 +211,11 @@ const NoClassDays = ({
               key={d.id}
               className="flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div className="min-w-0">
+              <span
+                aria-hidden
+                className={`h-8 w-1.5 shrink-0 rounded-full ${HUE_BG[d.hue]}`}
+              />
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-sm font-medium">
                     {dateOf(d.on_date)}
@@ -342,8 +344,16 @@ const NoClassDays = ({
                 onChange={(e) => setReason(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Shown on the student's own record, so it explains itself a term
-                later.
+                Shown on the student's own record, and on the calendar, so it
+                explains itself a term later.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <HuePicker value={hue} onChange={setHue} />
+              <p className="text-xs text-muted-foreground">
+                How the day is drawn on the calendar. Visual only — it changes
+                nothing about what the day counts for.
               </p>
             </div>
 

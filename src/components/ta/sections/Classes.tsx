@@ -193,7 +193,7 @@ const Classes = ({ onOpenClass }: ClassesProps) => {
         onSaved={async (classId) => {
           await refresh();
           setActiveClassId(classId);
-          onOpenClass("pattern");
+          onOpenClass("sessions");
         }}
       />
     </div>

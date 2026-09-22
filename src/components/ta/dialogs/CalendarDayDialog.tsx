@@ -23,23 +23,28 @@ import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import SessionActions from "@/components/ta/SessionActions";
 import {
   clearNoClassDay,
+  NO_CLASS_HUES,
   createAdHocSessions,
   describeAdd,
   setNoClassDay,
   untilFor,
   updateSession,
   type AddScope,
+  type NoClassDay,
+  type NoClassHue,
   type NoClassMode,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow } from "@/lib/api/types";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import HuePicker from "@/components/ta/HuePicker";
+import { HUE_BG } from "@/components/ta/dayOffHues";
 
-export interface DayOff {
-  on_date: string;
-  mode: NoClassMode;
-  reason: string;
-  cohort_id: string | null;
-}
+/**
+ * The declared day this dialog is looking at. The same row listNoClassDays
+ * returns, without its id — the dialog addresses a day off by its date, which
+ * is what set_no_class_day and clear_no_class_day both take.
+ */
+export type DayOff = Omit<NoClassDay, "id">;
 
 /**
  * One day of the calendar, and everything you can do to it.
@@ -92,6 +97,7 @@ const CalendarDayDialog = ({
   const [addUntil, setAddUntil] = useState("");
   const [declaring, setDeclaring] = useState(false);
   const [mode, setMode] = useState<NoClassMode>("exempt");
+  const [hue, setHue] = useState<NoClassHue>("amber");
   const [reason, setReason] = useState("");
 
   // Each day opens on the day itself, not on whichever form — adding a
@@ -114,6 +120,12 @@ const CalendarDayDialog = ({
       minute: "2-digit",
       timeZone: timezone,
     });
+
+  const weekday = date
+    ? new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+        weekday: "long",
+      })
+    : "";
 
   const pretty = date
     ? new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
@@ -169,15 +181,25 @@ const CalendarDayDialog = ({
     }
     setBusy("declare");
     try {
-      const r = await setNoClassDay(classId, date, mode, reason.trim());
+      const r = await setNoClassDay(classId, date, mode, reason.trim(), undefined, hue);
       const parts: string[] = [];
       if (r.removed > 0) parts.push(`${r.removed} empty session removed`);
       if (r.sessions > 0) parts.push(`${r.sessions} marked`);
       toast({
-        title: mode === "exempt" ? "Day off recorded" : "Day credited",
+        title: r.edited
+          ? "Day off updated"
+          : mode === "exempt"
+            ? "Day off recorded"
+            : "Day credited",
         description:
           parts.length === 0
-            ? "Nothing was scheduled, and nothing will be created here now."
+            ? // 052 returns zeroes for a words-only correction, which is a
+              // different fact from "nothing was scheduled here". Saying the
+              // wrong one would have people checking whether they lost a
+              // session they never had.
+              r.edited
+              ? "Only the wording and the colour changed. No attendance was touched."
+              : "Nothing was scheduled, and nothing will be created here now."
             : `${parts.join(", ")}. Regenerating will not put it back.`,
       });
       setDeclaring(false);
@@ -265,18 +287,38 @@ const CalendarDayDialog = ({
           </DialogDescription>
         </DialogHeader>
 
-        {dayOff && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">
-                {dayOff.mode === "exempt"
-                  ? "Declared off — does not count"
-                  : "Declared — counts as attended"}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                {dayOff.reason}
-              </p>
+        {dayOff && !declaring && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden
+                className={`h-8 w-1.5 shrink-0 rounded-full ${HUE_BG[dayOff.hue]}`}
+              />
+              <div className="min-w-0">
+                {/* The reason first: it is what the day IS. The mode second,
+                    because it is what the day DOES, and one does not imply the
+                    other — "field trip" says nothing about who got credit. */}
+                <p className="truncate text-sm font-medium">{dayOff.reason}</p>
+                <p className="text-xs text-muted-foreground">
+                  {dayOff.mode === "exempt"
+                    ? "Does not count — nobody is helped or harmed by it"
+                    : "Counts as attended — everybody is credited"}
+                </p>
+              </div>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setReason(dayOff.reason);
+                setMode(dayOff.mode);
+                setHue(dayOff.hue);
+                setDeclaring(true);
+              }}
+            >
+              <PencilLine className="mr-1 h-4 w-4" />
+              Edit
+            </Button>
             <ConfirmDelete
               label="Remove"
               confirmLabel="Yes, remove it"
@@ -318,11 +360,12 @@ const CalendarDayDialog = ({
                 {s.status === "scheduled" && (
                   <Button
                     size="sm"
-                    variant="ghost"
-                    title="Change the day or time"
+                    variant="outline"
+                    title="Change the time, length or check-in rules — for this session or its run"
                     onClick={() => onEdit(s)}
                   >
-                    <PencilLine className="h-4 w-4" />
+                    <PencilLine className="mr-1 h-4 w-4" />
+                    Edit
                   </Button>
                 )}
                 {s.status !== "cancelled" && (
@@ -417,9 +460,12 @@ const CalendarDayDialog = ({
             <div className="grid gap-1">
               {(
                 [
-                  ["day", "Just this date"],
-                  ["range", "Weekly, until a date I choose"],
-                  ["term", "Weekly, to the end of term"],
+                  // Worded the way a calendar app words it, with the day
+                  // named: "every Tuesday" is unambiguous where "weekly" left
+                  // people checking whether it meant every day of the week.
+                  ["day", "Does not repeat"],
+                  ["range", `Every ${weekday}, until a date I choose`],
+                  ["term", `Every ${weekday}, to the end of term`],
                 ] as Array<[AddScope, string]>
               ).map(([value, text]) => (
                 <button
@@ -488,9 +534,14 @@ const CalendarDayDialog = ({
               placeholder="Reason, e.g. public holiday"
               onChange={(e) => setReason(e.target.value)}
             />
+
+            <HuePicker value={hue} onChange={setHue} />
+
             <p className="text-xs text-muted-foreground">
-              Applies to every cohort. Check-ins already here are replaced. Students
-              see the reason in their history.
+              Applies to every cohort. The reason is what the calendar shows, so
+              write it for somebody reading the month at a glance. Check-ins
+              already here are replaced, and students see the reason in their
+              history.
             </p>
             <div className="flex gap-2">
               <Button
@@ -533,7 +584,12 @@ const CalendarDayDialog = ({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setDeclaring(true)}
+                onClick={() => {
+                  setReason("");
+                  setMode("exempt");
+                  setHue("amber");
+                  setDeclaring(true);
+                }}
               >
                 <CalendarOff className="mr-1 h-4 w-4" />
                 Set as a day off

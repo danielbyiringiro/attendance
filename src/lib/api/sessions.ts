@@ -35,6 +35,38 @@ export const listSessions = async (q: SessionQuery): Promise<SessionRow[]> => {
   return (data ?? []) as SessionRow[];
 };
 
+/**
+ * The first and last session this class has, whatever their status.
+ *
+ * Two small queries rather than reading the whole term: the fill dialog needs
+ * only these two dates, and a class with a term of sessions should not have to
+ * ship all of them to work out where its record starts.
+ */
+export const sessionDateRange = async (
+  classId: string,
+): Promise<{ first: string | null; last: string | null }> => {
+  const [firstRes, lastRes] = await Promise.all([
+    supabase
+      .from("class_sessions")
+      .select("session_date")
+      .eq("class_id", classId)
+      .order("session_date", { ascending: true })
+      .limit(1),
+    supabase
+      .from("class_sessions")
+      .select("session_date")
+      .eq("class_id", classId)
+      .order("session_date", { ascending: false })
+      .limit(1),
+  ]);
+  if (firstRes.error) fail("Could not read the session dates", firstRes.error);
+  if (lastRes.error) fail("Could not read the session dates", lastRes.error);
+  return {
+    first: firstRes.data?.[0]?.session_date ?? null,
+    last: lastRes.data?.[0]?.session_date ?? null,
+  };
+};
+
 /** The sessions a TA acts on today, across every cohort of the class. */
 export const listTodaySessions = async (
   classId: string,
@@ -279,6 +311,42 @@ export const describeAdd = (r: AddSessionsResult): string => {
   return bits.join(" ");
 };
 
+/**
+ * What colour a day off is drawn in (052). A name rather than a hex: the app
+ * renders in light and dark, so each of these resolves to two values, and a
+ * colour picked at noon still reads at night. Six, because an arbitrary picker
+ * produces days off nobody can see against a white cell.
+ */
+export type NoClassHue =
+  | "amber"
+  | "rose"
+  | "violet"
+  | "teal"
+  | "blue"
+  | "slate";
+
+/** In the order they are offered. amber is what every day off was before 052. */
+export const NO_CLASS_HUES: readonly NoClassHue[] = [
+  "amber",
+  "rose",
+  "violet",
+  "teal",
+  "blue",
+  "slate",
+];
+
+/** One declared date, as the calendar and the list both read it. */
+export interface NoClassDay {
+  id: string;
+  on_date: string;
+  mode: NoClassMode;
+  /** Never empty — 036 made it NOT NULL, so the calendar can always show it. */
+  reason: string;
+  hue: NoClassHue;
+  /** Null means the whole class, which is what a public holiday is. */
+  cohort_id: string | null;
+}
+
 /** What a no-class day does to the percentage. Two actions, not a toggle. */
 export type NoClassMode =
   /** The day leaves the calculation. Everyone exempted. A holiday. */
@@ -307,9 +375,18 @@ export const setNoClassDay = async (
   mode: NoClassMode,
   reason: string,
   cohortId?: string,
+  hue?: NoClassHue,
 ): Promise<{
   date: string;
   mode: NoClassMode;
+  reason: string;
+  hue: NoClassHue;
+  /**
+   * False when this declared the day, true when it corrected one already
+   * declared. A words-only correction returns zeroes below: since 052 the
+   * attendance rewrite runs only when the mode changed.
+   */
+  edited: boolean;
   /** Kept and marked, because something had already happened at them. */
   sessions: number;
   /**
@@ -329,11 +406,15 @@ export const setNoClassDay = async (
     p_mode: mode,
     p_reason: reason,
     p_cohort_id: cohortId ?? null,
+    p_hue: hue ?? null,
   });
   if (error) fail("Could not set the day", error);
   return data as {
     date: string;
     mode: NoClassMode;
+    reason: string;
+    hue: NoClassHue;
+    edited: boolean;
     sessions: number;
     removed: number;
     students: number;
@@ -364,28 +445,14 @@ export const clearNoClassDay = async (
 /** Every date this class has declared off, soonest first. */
 export const listNoClassDays = async (
   classId: string,
-): Promise<
-  Array<{
-    id: string;
-    on_date: string;
-    mode: NoClassMode;
-    reason: string;
-    cohort_id: string | null;
-  }>
-> => {
+): Promise<NoClassDay[]> => {
   const { data, error } = await supabase
     .from("no_class_days")
-    .select("id, on_date, mode, reason, cohort_id")
+    .select("id, on_date, mode, reason, hue, cohort_id")
     .eq("class_id", classId)
     .order("on_date", { ascending: true });
   if (error) fail("Could not load the days off", error);
-  return (data ?? []) as Array<{
-    id: string;
-    on_date: string;
-    mode: NoClassMode;
-    reason: string;
-    cohort_id: string | null;
-  }>;
+  return (data ?? []) as NoClassDay[];
 };
 
 export const cancelSession = async (
@@ -451,6 +518,145 @@ export const updateSession = async (
   });
   if (error) fail("Could not change the session", error);
   return data as SessionRow;
+};
+
+/**
+ * How far an edit reaches — the question a calendar app asks about a
+ * repeating event.
+ */
+export type EditScope =
+  /** This session alone. The only scope that can move a date. */
+  | "one"
+  /** This session and every later one in its run. */
+  | "future"
+  /** Every session in its run, earlier ones included. */
+  | "series";
+
+export interface SeriesEditResult {
+  scope: EditScope;
+  updated: number;
+  /** Left alone because somebody had been marked on them. */
+  skipped_marked: number;
+  /** Left alone because they are open, closed or cancelled. */
+  skipped_status: number;
+}
+
+/**
+ * Edit one session, or the run it belongs to (053).
+ *
+ * A run is the same cohort meeting on the same weekday at the same time —
+ * "every Tuesday at nine". The bulk scopes skip anything somebody has been
+ * marked on and anything no longer scheduled, and say how many; a date can
+ * only change with scope "one", because moving a run to another weekday is
+ * the weekly pattern's job and doing it here would be undone by the next fill.
+ *
+ * Every session it changes stops following the weekly pattern, which is what
+ * keeps the edit from being undone by the next pattern save.
+ */
+export const updateSessionSeries = async (
+  sessionId: string,
+  scope: EditScope,
+  changes: {
+    date?: string;
+    startTime?: string;
+    durationMinutes?: number;
+    autoCloseMinutes?: number;
+    lateWindowMinutes?: number;
+    closesAtStart?: boolean;
+    graceMinutes?: number;
+    graceCountsLate?: boolean;
+  },
+): Promise<SeriesEditResult> => {
+  const { data, error } = await supabase.rpc("update_session_series", {
+    p_session_id: sessionId,
+    p_scope: scope,
+    p_date: changes.date ?? null,
+    p_start_time: changes.startTime ?? null,
+    p_duration_minutes: changes.durationMinutes ?? null,
+    p_auto_close_minutes: changes.autoCloseMinutes ?? null,
+    p_late_window_minutes: changes.lateWindowMinutes ?? null,
+    p_closes_at_start: changes.closesAtStart ?? null,
+    p_grace_minutes: changes.graceMinutes ?? null,
+    p_grace_counts_late: changes.graceCountsLate ?? null,
+  });
+  if (error) fail("Could not change the sessions", error);
+  return data as SeriesEditResult;
+};
+
+/** How many sessions each scope would reach, asked before anything changes. */
+export const countSessionSeries = async (
+  sessionId: string,
+): Promise<{ future: number; series: number }> => {
+  const { data, error } = await supabase.rpc("count_session_series", {
+    p_session_id: sessionId,
+  });
+  if (error) fail("Could not count the sessions in that run", error);
+  return data as { future: number; series: number };
+};
+
+/** Which stretch of the term a fill covers. */
+export type FillScope =
+  /** From the start of term to the earliest session on record. */
+  | "gap"
+  /** The start of term through today. */
+  | "past"
+  /** Today to the end of term. */
+  | "future"
+  /** The whole thing. */
+  | "term";
+
+export interface FillPlan {
+  from: string;
+  to: string;
+  /** True when nothing was written — this is a preview. */
+  dry_run: boolean;
+  /** False when the range ends behind today, where nothing is ever removed. */
+  pruned: boolean;
+  created: number;
+  removed: number;
+  /**
+   * Standing although the pattern no longer names their date, and why. The
+   * number a TA needs when 11 moved and they expected 14.
+   */
+  kept: {
+    marked: number;
+    by_hand: number;
+    cancelled: number;
+  };
+}
+
+/**
+ * Create the sessions the weekly pattern wants across a range, and ahead of
+ * today remove the ones it no longer wants.
+ *
+ * With `dryRun` it does exactly that work, counts it, and rolls it back — so
+ * the plan a screen shows is produced by the code that will run, not by a
+ * second implementation that can drift from it. That is the whole reason this
+ * exists rather than a counting query: a preview that can be wrong about the
+ * action is worse than no preview, because it is believed.
+ *
+ * Pruning never reaches behind today, and never touches a session that is
+ * cancelled, moved by hand, or has anybody marked against it.
+ */
+export const fillSessions = async (
+  classId: string,
+  opts: {
+    from?: string;
+    to?: string;
+    /** Default true. False creates only, and removes nothing. */
+    prune?: boolean;
+    dryRun?: boolean;
+  } = {},
+): Promise<FillPlan> => {
+  const { data, error } = await supabase.rpc("fill_sessions", {
+    p_class_id: classId,
+    p_from: opts.from ?? null,
+    p_to: opts.to ?? null,
+    p_prune: opts.prune ?? true,
+    p_dry_run: opts.dryRun ?? false,
+  });
+  if (error) fail("Could not work out what to fill in", error);
+  return data as FillPlan;
 };
 
 export interface ApplyScheduleResult {

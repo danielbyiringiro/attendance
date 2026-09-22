@@ -33,6 +33,7 @@ import {
   tallyStates,
   type AttendanceTally,
 } from "@/lib/api/attendance";
+import type { NoClassHue } from "@/lib/api/sessions";
 import type { AttendanceState } from "@/lib/api/types";
 import { format, parseISO } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -277,6 +278,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
           cohort: string;
           mode: "exempt" | "present";
           reason: string;
+          /** 052. Absent from a payload served before that migration was run. */
+          hue?: NoClassHue;
         }>;
         flagged?: Array<{
           session_date: string;
@@ -358,6 +361,9 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
               className: d.class,
               mode: d.mode,
               reason: d.reason,
+              // 052. Absent on a payload from before that migration was run,
+              // and amber is exactly what those days already looked like.
+              hue: d.hue ?? "amber",
             }));
           const reasonOn = new Map(daysOff.map((d) => [d.date, d.reason]));
           const records = own

@@ -5,10 +5,12 @@ import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   listNoClassDays,
   listSessions,
+  type NoClassHue,
   type NoClassMode,
 } from "@/lib/api/sessions";
 import type { CohortRow, SessionRow, SessionStatus } from "@/lib/api/types";
 import { monthGrid, toDateStr, todayStr } from "@/lib/dates";
+import { HUE_CELL, HUE_TEXT, hatchFor } from "@/components/ta/dayOffHues";
 import CalendarDayDialog, {
   type DayOff,
 } from "@/components/ta/dialogs/CalendarDayDialog";
@@ -312,9 +314,11 @@ const SessionCalendar = ({
               type="button"
               key={key}
               onClick={() => setOpenDay(key)}
-              style={kind === "holiday" ? HATCH : undefined}
+              style={
+                off?.mode === "exempt" ? hatchFor(off.hue) : undefined
+              }
               className={`min-h-[4.5rem] cursor-pointer p-1 text-left transition-colors hover:brightness-95 sm:min-h-[6rem] ${
-                KIND_CELL[kind]
+                off ? HUE_CELL[off.hue] : KIND_CELL[kind]
               } ${inMonth ? "" : "opacity-40"} ${
                 isToday ? "ring-2 ring-inset ring-primary" : ""
               }`}
@@ -343,13 +347,21 @@ const SessionCalendar = ({
               {off && (
                 <p
                   className={`mt-0.5 truncate text-[0.65rem] font-medium leading-tight ${
-                    off.mode === "exempt"
-                      ? "text-muted-foreground"
-                      : "text-primary"
+                    HUE_TEXT[off.hue]
                   }`}
-                  title={off.reason}
+                  title={
+                    off.mode === "exempt"
+                      ? `${off.reason} — no class, and it counts against nobody`
+                      : `${off.reason} — counted present for everybody`
+                  }
                 >
-                  {off.mode === "exempt" ? "No class" : "Counted"}
+                  {off.reason}
+                  {/* The reason is what a person came here to read; the mode is
+                      what they need anyway. "Field trip" does not imply that
+                      everybody was credited for it. */}
+                  {off.mode === "present" && (
+                    <span className="font-normal opacity-80"> · counted</span>
+                  )}
                 </p>
               )}
 

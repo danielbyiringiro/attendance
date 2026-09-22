@@ -20,8 +20,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  CalendarPlus,
   Copy,
+  ChevronDown,
   CopyPlus,
   Loader2,
   Plus,
@@ -35,7 +35,7 @@ import {
   setCohortSchedules,
   type ScheduleSlot,
 } from "@/lib/api/classes";
-import { applyScheduleToFuture, generateSessions } from "@/lib/api/sessions";
+import { applyScheduleToFuture } from "@/lib/api/sessions";
 import { todayStr } from "@/lib/dates";
 import type { CohortScheduleRow } from "@/lib/api/types";
 
@@ -141,10 +141,20 @@ const Schedule = () => {
   const [slots, setSlots] = useState<Record<string, Slot[]>>({});
   const [saved, setSaved] = useState<Record<string, Slot[]>>({});
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * Which meetings have their check-in rules folded open. Held here rather
+   * than on the slot, because it is about what is on screen and not about
+   * what gets saved — a slot that is open must not read as edited.
+   */
+  const [openRules, setOpenRules] = useState<Set<string>>(new Set());
+
+  const toggleRules = (key: string) =>
+    setOpenRules((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   const [isSaving, setIsSaving] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [genFrom, setGenFrom] = useState("");
-  const [genTo, setGenTo] = useState("");
 
   const load = useCallback(async () => {
     if (!activeClass) return;
@@ -183,10 +193,6 @@ const Schedule = () => {
 
   useEffect(() => {
     void load();
-    if (activeClass) {
-      setGenFrom(activeClass.term_starts_on);
-      setGenTo(activeClass.term_ends_on);
-    }
   }, [activeClass, load]);
 
   const cohortName = (id: string) =>
@@ -381,32 +387,6 @@ const Schedule = () => {
     }
   };
 
-  const handleGenerate = async () => {
-    if (!activeClass) return;
-    setIsGenerating(true);
-    try {
-      const created = await generateSessions(activeClass.id, {
-        from: genFrom || undefined,
-        to: genTo || undefined,
-      });
-      toast({
-        title: created === 0 ? "Nothing new to create" : "Sessions created",
-        description:
-          created === 0
-            ? "Every scheduled day in that range already has a session."
-            : `${created} session${created === 1 ? "" : "s"} created. Days that already existed were left alone.`,
-      });
-    } catch (e) {
-      toast({
-        title: "Could not create the sessions",
-        description: e instanceof Error ? e.message : "Unexpected error.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
   if (classLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -482,18 +462,9 @@ const Schedule = () => {
                 </div>
 
                 <div className="space-y-1 rounded-md border p-2">
-                  {/* Two different lengths, so both are named. One unlabelled
-                      "min" box could not say which it governed. */}
-                  {rows.length > 0 && (
-                    <div className="hidden items-center gap-2 px-1 text-xs text-muted-foreground sm:flex">
-                      <span className="w-36">Day</span>
-                      <span className="w-32">Starts</span>
-                      <span className="w-[6.5rem]">Class runs</span>
-                      <span className="w-[6.5rem]">Sign-up open</span>
-                      <span className="w-[6.5rem]">Opens early</span>
-                      <span className="w-[8rem]">Shuts at start</span>
-                    </div>
-                  )}
+                  {/* No column header any more: each rule is named beside its
+                      own box, inside the fold. Two different lengths are in
+                      there, so both have to say which they govern. */}
                   {rows.length === 0 ? (
                     <p className="px-1 py-2 text-sm text-muted-foreground">
                       No days yet.
@@ -504,17 +475,15 @@ const Schedule = () => {
                         `${slot.weekday}-${slot.startTime}`,
                       );
                       return (
-                        <div
-                          key={slot.key}
-                          className="flex flex-wrap items-center gap-2"
-                        >
+                        <div key={slot.key} className="space-y-1">
+                          <div className="flex items-center gap-1.5">
                           <Select
                             value={String(slot.weekday)}
                             onValueChange={(v) =>
                               patch(cohort.id, slot.key, { weekday: Number(v) })
                             }
                           >
-                            <SelectTrigger className="w-36">
+                            <SelectTrigger className="w-[7.5rem]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -531,7 +500,7 @@ const Schedule = () => {
 
                           <Input
                             type="time"
-                            className={`w-32 ${clashes ? "border-destructive" : ""}`}
+                            className={`w-[6.5rem] ${clashes ? "border-destructive" : ""}`}
                             value={slot.startTime}
                             onChange={(e) =>
                               patch(cohort.id, slot.key, {
@@ -540,125 +509,20 @@ const Schedule = () => {
                             }
                           />
 
-                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
-                            {/* Visible only where the column header is not. */}
-                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
-                              Class runs
-                            </span>
-                            <Input
-                              type="number"
-                              min={1}
-                              className="w-[4.5rem]"
-                              title="How long the class runs"
-                              placeholder={String(
-                                activeClass.default_duration_minutes,
-                              )}
-                              value={slot.duration}
-                              onChange={(e) =>
-                                patch(cohort.id, slot.key, {
-                                  duration: e.target.value,
-                                })
-                              }
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="px-2"
+                            aria-expanded={openRules.has(slot.key)}
+                            title="Check-in rules for this meeting"
+                            onClick={() => toggleRules(slot.key)}
+                          >
+                            <ChevronDown
+                              className={`h-4 w-4 transition-transform ${
+                                openRules.has(slot.key) ? "rotate-180" : ""
+                              }`}
                             />
-                            <span className="text-xs text-muted-foreground">
-                              min
-                            </span>
-                          </div>
-
-                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
-                            {/* Visible only where the column header is not. */}
-                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
-                              Sign-up open
-                            </span>
-                            <Input
-                              type="number"
-                              min={1}
-                              className="w-[4.5rem]"
-                              title="How long check-in stays open after you open the session"
-                              placeholder={String(
-                                activeClass.default_auto_close_minutes,
-                              )}
-                              value={slot.signup}
-                              onChange={(e) =>
-                                patch(cohort.id, slot.key, {
-                                  signup: e.target.value,
-                                })
-                              }
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              min
-                            </span>
-                          </div>
-
-                          <div className="flex w-full items-center gap-1 sm:w-[6.5rem]">
-                            {/* Visible only where the column header is not. */}
-                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
-                              Opens early
-                            </span>
-                            <Input
-                              type="number"
-                              min={0}
-                              className="w-[4.5rem]"
-                              title="How long before the start time check-in may open. The sign-up window still counts from the class starting, so opening early does not shorten it."
-                              placeholder={String(
-                                activeClass.default_early_open_minutes,
-                              )}
-                              value={slot.early}
-                              onChange={(e) =>
-                                patch(cohort.id, slot.key, {
-                                  early: e.target.value,
-                                })
-                              }
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              early
-                            </span>
-                          </div>
-
-                          {/*
-                            048, per slot. A cohort's lecture can shut the door
-                            at the start while its lab keeps the sign-up window,
-                            which is the usual reason this differs inside one
-                            cohort at all.
-                          */}
-                          <div className="flex w-full items-center gap-1 sm:w-[8rem]">
-                            <span className="w-24 shrink-0 text-xs text-muted-foreground sm:hidden">
-                              Shuts at start
-                            </span>
-                            <label className="flex items-center gap-1">
-                              <input
-                                type="checkbox"
-                                title="Check-in shuts when this class starts, rather than staying open for the sign-up window."
-                                checked={slot.closesAtStart ?? false}
-                                onChange={(e) =>
-                                  patch(cohort.id, slot.key, {
-                                    closesAtStart: e.target.checked,
-                                  })
-                                }
-                              />
-                              <span className="text-xs text-muted-foreground">
-                                at start
-                              </span>
-                            </label>
-                            {slot.closesAtStart && (
-                              <Input
-                                type="number"
-                                min={1}
-                                max={30}
-                                className="w-[3.5rem]"
-                                title="If this session is opened after its class already started, how long check-in stays open. 1 to 30 minutes."
-                                placeholder={String(
-                                  activeClass.default_grace_minutes ?? 5,
-                                )}
-                                value={slot.grace}
-                                onChange={(e) =>
-                                  patch(cohort.id, slot.key, {
-                                    grace: e.target.value,
-                                  })
-                                }
-                              />
-                            )}
-                          </div>
+                          </Button>
 
                           {/*
                             Everything about this row except the day. A cohort
@@ -743,10 +607,140 @@ const Schedule = () => {
                             <X className="h-4 w-4" />
                           </Button>
 
+                          </div>
+
                           {clashes && (
-                            <span className="text-xs text-destructive">
+                            <p className="px-1 text-xs text-destructive">
                               same day and time as another row
+                            </p>
+                          )}
+
+                          {/*
+                            Folded away by default. These are set once a term
+                            and then not looked at, while the day and the time
+                            are what somebody opens this to change — and with
+                            all six on one line the pattern could not sit
+                            beside the calendar it rewrites.
+                          */}
+                          {openRules.has(slot.key) && (
+                            <div className="space-y-1.5 rounded-md bg-muted/40 p-2">
+                          <div className="flex w-full items-center gap-1 gap-2">
+                                                        <span className="w-[7.5rem] shrink-0 text-xs text-muted-foreground">
+                              Class runs
                             </span>
+                            <Input
+                              type="number"
+                              min={1}
+                              className="w-[4.5rem]"
+                              title="How long the class runs"
+                              placeholder={String(
+                                activeClass.default_duration_minutes,
+                              )}
+                              value={slot.duration}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  duration: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              min
+                            </span>
+                          </div>
+
+                          <div className="flex w-full items-center gap-1 gap-2">
+                                                        <span className="w-[7.5rem] shrink-0 text-xs text-muted-foreground">
+                              Sign-up open
+                            </span>
+                            <Input
+                              type="number"
+                              min={1}
+                              className="w-[4.5rem]"
+                              title="How long check-in stays open after you open the session"
+                              placeholder={String(
+                                activeClass.default_auto_close_minutes,
+                              )}
+                              value={slot.signup}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  signup: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              min
+                            </span>
+                          </div>
+
+                          <div className="flex w-full items-center gap-1 gap-2">
+                                                        <span className="w-[7.5rem] shrink-0 text-xs text-muted-foreground">
+                              Opens early
+                            </span>
+                            <Input
+                              type="number"
+                              min={0}
+                              className="w-[4.5rem]"
+                              title="How long before the start time check-in may open. The sign-up window still counts from the class starting, so opening early does not shorten it."
+                              placeholder={String(
+                                activeClass.default_early_open_minutes,
+                              )}
+                              value={slot.early}
+                              onChange={(e) =>
+                                patch(cohort.id, slot.key, {
+                                  early: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              early
+                            </span>
+                          </div>
+
+                          {/*
+                            048, per slot. A cohort's lecture can shut the door
+                            at the start while its lab keeps the sign-up window,
+                            which is the usual reason this differs inside one
+                            cohort at all.
+                          */}
+                          <div className="flex w-full items-center gap-1 gap-2">
+                            <span className="w-[7.5rem] shrink-0 text-xs text-muted-foreground">
+                              Shuts at start
+                            </span>
+                            <label className="flex items-center gap-1">
+                              <input
+                                type="checkbox"
+                                title="Check-in shuts when this class starts, rather than staying open for the sign-up window."
+                                checked={slot.closesAtStart ?? false}
+                                onChange={(e) =>
+                                  patch(cohort.id, slot.key, {
+                                    closesAtStart: e.target.checked,
+                                  })
+                                }
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                at start
+                              </span>
+                            </label>
+                            {slot.closesAtStart && (
+                              <Input
+                                type="number"
+                                min={1}
+                                max={30}
+                                className="w-[3.5rem]"
+                                title="If this session is opened after its class already started, how long check-in stays open. 1 to 30 minutes."
+                                placeholder={String(
+                                  activeClass.default_grace_minutes ?? 5,
+                                )}
+                                value={slot.grace}
+                                onChange={(e) =>
+                                  patch(cohort.id, slot.key, {
+                                    grace: e.target.value,
+                                  })
+                                }
+                              />
+                            )}
+                          </div>
+                            </div>
                           )}
                         </div>
                       );
@@ -805,52 +799,6 @@ const Schedule = () => {
         </CardContent>
       </Card>
 
-      <Card className="border-2">
-        <CardHeader>
-          <CardTitle className="text-base">Backfill earlier sessions</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid max-w-md grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="gen-from">From</Label>
-              <Input
-                id="gen-from"
-                type="date"
-                value={genFrom}
-                onChange={(e) => setGenFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="gen-to">To</Label>
-              <Input
-                id="gen-to"
-                type="date"
-                value={genTo}
-                onChange={(e) => setGenTo(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={handleGenerate}
-            disabled={isGenerating}
-          >
-            {isGenerating ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CalendarPlus className="mr-2 h-4 w-4" />
-            )}
-            Create sessions in this range
-          </Button>
-
-          <p className="text-xs text-muted-foreground">
-            Only needed for days already in the past — a class set up mid-term,
-            say. Saving the pattern above already handles everything from today
-            onward. Days that already have a session are left alone either way.
-          </p>
-        </CardContent>
-      </Card>
     </div>
   );
 };
