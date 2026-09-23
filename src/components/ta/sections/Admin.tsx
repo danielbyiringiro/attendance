@@ -36,6 +36,7 @@ import HelpAdmin from "@/components/ta/HelpAdmin";
 import FeedbackQueue from "@/components/ta/FeedbackQueue";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PauseTheApp from "@/components/ta/PauseTheApp";
+import AdminLog from "@/components/ta/AdminLog";
 
 /**
  * Approving accounts, and repairing a class nobody can reach.
@@ -693,8 +694,12 @@ const Admin = () => {
         <HelpAdmin />
       </TabsContent>
 
-      <TabsContent value="system" className="mt-0">
+      <TabsContent value="system" className="mt-0 space-y-4">
         <PauseTheApp />
+        {/* 057. Under the switch on purpose: pausing writes its own entry, so
+            the reason for tonight's pause is typed a few inches from the
+            button that caused it. */}
+        <AdminLog />
       </TabsContent>
     </Tabs>
   );

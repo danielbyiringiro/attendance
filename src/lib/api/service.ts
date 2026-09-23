@@ -73,3 +73,45 @@ export const adminSetServicePaused = async (
   if (error) fail(paused ? "Could not pause the app" : "Could not resume", error);
   return data as ServiceState;
 };
+
+// ---------------------------------------------------------------------------
+// The admin log (057)
+//
+// Admin to admin, and hidden from everyone else — not merely unrendered. The
+// table has row-level security with no policy, so these three functions are
+// the only way in and each refuses a non-admin. A TA who learns the table name
+// and queries it gets nothing.
+// ---------------------------------------------------------------------------
+
+export interface AdminLogEntry {
+  id: string;
+  /** "note" was typed by somebody; "event" was written by the app. */
+  kind: "note" | "event";
+  body: string;
+  /** The name as it was when written, so it survives the account being removed. */
+  author: string | null;
+  created_at: string;
+}
+
+export const adminLogList = async (limit = 100): Promise<AdminLogEntry[]> => {
+  const { data, error } = await supabase.rpc("admin_log_list", {
+    p_limit: limit,
+  });
+  if (error) fail("Could not read the log", error);
+  return (data ?? []) as AdminLogEntry[];
+};
+
+export const adminLogWrite = async (body: string): Promise<AdminLogEntry> => {
+  const { data, error } = await supabase.rpc("admin_log_write", {
+    p_body: body,
+    p_kind: "note",
+  });
+  if (error) fail("Could not save that", error);
+  return data as AdminLogEntry;
+};
+
+export const adminLogDelete = async (id: string): Promise<boolean> => {
+  const { data, error } = await supabase.rpc("admin_log_delete", { p_id: id });
+  if (error) fail("Could not remove that entry", error);
+  return Boolean(data);
+};
