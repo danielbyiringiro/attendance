@@ -501,12 +501,6 @@ const Index = () => {
     return <StudentDashboard onBack={() => setShowStudentDashboard(false)} />;
   }
 
-  // 055. In place of the check-in box, not beside it: a form that cannot work
-  // invites twenty attempts and a queue at the front of the room. Their own
-  // history stays reachable above — reading a record changes nothing.
-  if (service.paused) {
-    return <PausedNotice message={service.message} endsAt={service.ends_at} />;
-  }
 
   return (
     <div className="relative">
@@ -519,10 +513,23 @@ const Index = () => {
       )}
       <PauseWarningDialog service={service} />
 
-      <StudentLogin
-        openCount={openCount}
-        onMarkAttendance={handleStudentMarkAttendance}
-      />
+      {/*
+        055. The notice replaces the check-in box and NOTHING else.
+
+        It used to replace this whole screen, which took the corner controls
+        with it — including the gear, which is the only way to the staff
+        sign-in. A signed-out admin met a pause they could not undo and no way
+        to reach the switch. The one person who must always get in is the one
+        the notice locked out.
+      */}
+      {service.paused ? (
+        <PausedNotice message={service.message} endsAt={service.ends_at} />
+      ) : (
+        <StudentLogin
+          openCount={openCount}
+          onMarkAttendance={handleStudentMarkAttendance}
+        />
+      )}
 
       {/* Student History Button */}
       <Button
