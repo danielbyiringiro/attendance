@@ -1,7 +1,28 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import fs from "fs";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+
+/**
+ * `npm run dev:mig` must not quietly talk to the everyday project.
+ *
+ * Vite loads .env.local in every mode, and a mode file only overrides it when
+ * that file exists. So with no .env.migration, `--mode migration` starts
+ * happily against whatever .env.local points at — which is the live project,
+ * while the person running it believes they are testing another one. That is
+ * the one mistake this mode exists to prevent, so it stops instead.
+ */
+const requireMigrationEnv = () => {
+  if (!fs.existsSync(path.resolve(process.cwd(), ".env.migration"))) {
+    throw new Error(
+      "Cannot run in migration mode: .env.migration does not exist. " +
+        "Copy .env.migration.example to .env.migration and point it at the " +
+        "other project. Without it this would run against whatever .env.local " +
+        "points at, which is not what this mode is for.",
+    );
+  }
+};
 
 /**
  * Refuse to produce a build that cannot reach Supabase.
@@ -38,6 +59,7 @@ const requireSupabaseEnv = (mode: string) => {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
+  if (mode === "migration") requireMigrationEnv();
   if (command === "build") requireSupabaseEnv(mode);
 
   return {

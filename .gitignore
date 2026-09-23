@@ -48,3 +48,20 @@ cohort-checkin-dossier.html
 # somebody downloads one and forgets. Anything genuinely meant to be tracked
 # can still be added with `git add -f`, or put somewhere other than the root.
 /*.csv
+
+# Environment files. Only .env.example is tracked; everything else names a real
+# project and carries its key. `*.local` above catches .env.local but nothing
+# else, and a file like .env.migration would otherwise be committed by a plain
+# `git add .`.
+.env
+.env.*
+!.env.example
+!.env.migration.example
+
+# A downloaded copy of the database. It holds every student's name, ID and
+# attendance. Ignored by shape rather than by one filename, because the next one
+# will be called something else.
+*-export*.json
+*-export*.sql
+/data-export/
+.codegraphy/*
