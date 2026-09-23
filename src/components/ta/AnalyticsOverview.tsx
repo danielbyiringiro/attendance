@@ -36,6 +36,14 @@ interface AnalyticsOverviewProps {
   termEndsOn: string;
   /** The class's own clock, so session times read as the room saw them. */
   timezone: string;
+  /**
+   * The day these numbers are for, or null for the whole term.
+   *
+   * Reported so the student list below can answer for the same day. It lives
+   * here because the date picker does, and a second copy of "which day are we
+   * looking at" is a second thing to keep in step.
+   */
+  onScopeChange?: (day: string | null) => void;
 }
 
 type Scope = { mode: "day"; date: string } | { mode: "term" };
@@ -70,6 +78,7 @@ const AnalyticsOverview = ({
   termStartsOn,
   termEndsOn,
   timezone,
+  onScopeChange,
 }: AnalyticsOverviewProps) => {
   const { toast } = useToast();
   const [scope, setScope] = useState<Scope>({ mode: "day", date: todayStr() });
@@ -125,6 +134,13 @@ const AnalyticsOverview = ({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Told upwards so the student list below these numbers can answer for the
+  // same day. Without it that list showed everybody's whole term, which is the
+  // Students tab's job, and the two screens said the same thing twice.
+  useEffect(() => {
+    onScopeChange?.(scope.mode === "day" ? scope.date : null);
+  }, [scope, onScopeChange]);
 
   const stats = useMemo(() => {
     if (!log) return null;

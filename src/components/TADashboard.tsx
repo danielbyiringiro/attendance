@@ -85,6 +85,7 @@ import StudentRoster, {
   type StudentStanding,
 } from "@/components/ta/StudentRoster";
 import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
+import StudentPickerList from "@/components/ta/StudentPickerList";
 import AnalyticsOverview from "@/components/ta/AnalyticsOverview";
 import RosterUpload from "@/components/ta/RosterUpload";
 import WeeklyAbsenceThreshold from "@/components/ta/WeeklyAbsenceThreshold";
@@ -146,6 +147,8 @@ interface TADashboardProps {
   onHelpRead?: () => void;
   /** 055: only an admin can resume a paused app, so only they are told how. */
   isAdmin?: boolean;
+  /** 059: the feedback form says whose name is going with the report. */
+  yourName?: string | null;
   onLogout: () => void;
 }
 
@@ -190,9 +193,27 @@ const TADashboard = ({
   onNavigate,
   onHelpRead,
   isAdmin = false,
+  yourName = null,
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
+  /*
+   * Searching today's two lists.
+   *
+   * The roster has had a search for a while, and the list a TA actually stands
+   * in front of — who is here, who is not — did not. In a class of forty,
+   * answering "is Ama in?" meant reading the whole column.
+   *
+   * One box over both tabs on purpose: the question is about a person, and
+   * which list they are in is the answer, not part of the question.
+   */
+  const [todayQuery, setTodayQuery] = useState("");
+  /*
+   * Which day Analytics is showing, so the list under it can answer for that
+   * day rather than for the whole term — which is what the Students tab
+   * answers, and made the two screens duplicates.
+   */
+  const [analyticsDay, setAnalyticsDay] = useState<string | null>(todayStr());
   const { toast } = useToast();
 
   // The roster is the active class's enrolments, not every student in the
@@ -511,7 +532,6 @@ const TADashboard = ({
   // A cohort label of the active class, not one of three fixed letters.
   const [addStudentCohort, setAddStudentCohort] = useState("");
   const [showRemoveStudentDialog, setShowRemoveStudentDialog] = useState(false);
-  const [removeSearchQuery, setRemoveSearchQuery] = useState("");
   const [studentToRemove, setStudentToRemove] = useState<{
     student_id: string;
     cohort: "A" | "B" | "C";
@@ -527,7 +547,6 @@ const TADashboard = ({
 
   // Excused absence ("absent with permission") state
   const [showExcusedDialog, setShowExcusedDialog] = useState(false);
-  const [excusedSearchQuery, setExcusedSearchQuery] = useState("");
   const [excusedStudent, setExcusedStudent] = useState<{
     student_id: string;
     cohort: "A" | "B" | "C" | string;
@@ -651,25 +670,43 @@ const TADashboard = ({
     ).values(),
   );
 
-  const filteredPresentStudents =
+  /** The roster's name for an ID, when it has one. */
+  const nameOf = (id: string) =>
+    roster.find((r) => r.student_id === id)?.name ?? "";
+
+  // Name or ID, either way round, ignoring case — a TA reading a name off a
+  // screen and a TA reading an ID off a card are the same search.
+  const matchesToday = (id: string, name?: string | null) => {
+    const q = todayQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      id.toLowerCase().includes(q) || (name ?? "").toLowerCase().includes(q)
+    );
+  };
+
+  const filteredPresentStudents = (
     selectedCohort === "all"
       ? validPresentStudents
       : validPresentStudents.filter(
           (student) => student.cohort === selectedCohort,
-        );
+        )
+  ).filter((student) => matchesToday(student.id, student.name));
 
   const presentStudentIds = validPresentStudents.map((s) => s.id);
   const absentStudents = allStudents.filter(
     (id) => !presentStudentIds.includes(id),
   );
-  const filteredAbsentStudents =
+  const filteredAbsentStudents = (
     selectedCohort === "all"
       ? absentStudents
       : absentStudents.filter((id) => {
           const rosterEntry = roster.find((r) => r.student_id === id);
           const cohort = rosterEntry ? rosterEntry.cohort : cohortOf(id);
           return cohort === selectedCohort;
-        });
+        })
+  ).filter((id) =>
+    matchesToday(id, roster.find((r) => r.student_id === id)?.name),
+  );
 
   // Per-cohort report settings (lecturer + FI), for the active class.
   //
@@ -830,7 +867,6 @@ const TADashboard = ({
     });
 
     setStudentToRemove(null);
-    setRemoveSearchQuery("");
     setShowRemoveStudentDialog(false);
   };
 
@@ -906,7 +942,6 @@ const TADashboard = ({
 
       setShowExcusedDialog(false);
       setExcusedStudent(null);
-      setExcusedSearchQuery("");
       setExcusedStartDate(undefined);
       setExcusedEndDate(undefined);
       setExcusedReason("");
@@ -1113,17 +1148,6 @@ const TADashboard = ({
       });
     }
   };
-
-  const filteredRosterForRemoval = removeSearchQuery.trim()
-    ? roster.filter(
-        (r) =>
-          r.student_id
-            .toLowerCase()
-            .includes(removeSearchQuery.toLowerCase()) ||
-          (r.name &&
-            r.name.toLowerCase().includes(removeSearchQuery.toLowerCase())),
-      )
-    : roster;
 
   /**
    * Mark a student present, by hand, at today's session for their cohort.
@@ -1352,7 +1376,7 @@ const TADashboard = ({
           />
         )}
         {isAdminSection && <Admin service={service} />}
-        {isHelpSection && <Help onRead={onHelpRead} />}
+        {isHelpSection && <Help onRead={onHelpRead} yourName={yourName} />}
 
         {/*
           What this screen can do, above what it is showing.
@@ -1438,7 +1462,6 @@ const TADashboard = ({
                 <Button
                   onClick={() => {
                     setShowRemoveStudentDialog(true);
-                    setRemoveSearchQuery("");
                     setStudentToRemove(null);
                   }}
                   variant="outline"
@@ -1450,7 +1473,6 @@ const TADashboard = ({
                 <Button
                   onClick={() => {
                     setShowExcusedDialog(true);
-                    setExcusedSearchQuery("");
                     setExcusedStudent(null);
                     setExcusedStartDate(undefined);
                     setExcusedEndDate(undefined);
@@ -1494,15 +1516,23 @@ const TADashboard = ({
                 termStartsOn={activeClass.term_starts_on}
                 termEndsOn={activeClass.term_ends_on}
                 timezone={activeClass.timezone}
+                onScopeChange={setAnalyticsDay}
               />
             )}
 
-            {/* Per-student standing. Was reachable only by opening a dialog,
-                typing a name and pressing a button, which could not show you
-                the class. */}
+            {/* The same students, answering for whatever the numbers above are
+                showing: one day, or the term. Reachable only through a dialog
+                before, which could not show you the class at all. */}
             <Card className="border-2">
               <CardHeader>
-                <CardTitle className="text-base">Students</CardTitle>
+                <CardTitle className="text-base">
+                  {analyticsDay
+                    ? `Students on ${new Date(`${analyticsDay}T00:00:00`).toLocaleDateString(
+                        undefined,
+                        { weekday: "long", day: "numeric", month: "long" },
+                      )}`
+                    : "Students this term"}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {activeClass && (
@@ -1514,6 +1544,7 @@ const TADashboard = ({
                     presentIds={new Set(validPresentStudents.map((p) => p.id))}
                     requirement={requirementOf(activeClass)}
                     onRosterChanged={() => void loadRoster()}
+                    dayFocus={analyticsDay}
                   />
                 )}
               </CardContent>
@@ -1835,6 +1866,20 @@ const TADashboard = ({
                     </div>
                   </CardHeader>
                   <CardContent>
+                    <div className="relative mb-3">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <Input
+                        id="today-search"
+                        value={todayQuery}
+                        placeholder="Find a student by name or ID"
+                        className="pl-9"
+                        onChange={(e) => setTodayQuery(e.target.value)}
+                      />
+                    </div>
+
                     <Tabs defaultValue="absent" className="w-full">
                       <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger
@@ -1866,7 +1911,7 @@ const TADashboard = ({
                                 // The whole row opens the student's record.
                                 role="button"
                                 tabIndex={0}
-                                aria-label={`Open the record for ${student.id}`}
+                                aria-label={`Open the record for ${nameOf(student.id) || student.id}`}
                                 aria-busy={openingStudentId === student.id}
                                 onClick={() =>
                                   void openStudentDetail(student.id, student.cohort)
@@ -1878,19 +1923,25 @@ const TADashboard = ({
                                 }
                                 className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-success/20 bg-success/10 hover:bg-success/20"
                               >
-                                {/* Left Side: ID and Name */}
+                                {/* Name first, ID under it — the same way
+                                    round as the roster on Analytics. Somebody
+                                    looking a student up has a name in their
+                                    head; the ID is what they check once they
+                                    have found the row. */}
                                 <div className="flex min-w-0 flex-col">
                                   <span className="flex items-center gap-2 font-medium">
-                                    {student.id}
+                                    <span className="truncate">
+                                      {nameOf(student.id) || student.id}
+                                    </span>
                                     {openingStudentId === student.id && (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
                                     )}
                                   </span>
-                                  <span className="text-sm text-muted-foreground mt-1">
-                                    {roster.find(
-                                      (r) => r.student_id === student.id,
-                                    )?.name || "Unknown Student"}
-                                  </span>
+                                  {nameOf(student.id) && (
+                                    <span className="mt-1 text-sm text-muted-foreground">
+                                      {student.id}
+                                    </span>
+                                  )}
                                 </div>
 
                                 {/* Right Side: Cohort and Timestamp stacked vertically */}
@@ -1930,7 +1981,7 @@ const TADashboard = ({
                                   // Mark Present stops its own click reaching it.
                                   role="button"
                                   tabIndex={0}
-                                  aria-label={`Open the record for ${studentId}`}
+                                  aria-label={`Open the record for ${studentName || studentId}`}
                                   aria-busy={openingStudentId === studentId}
                                   onClick={() =>
                                     void openStudentDetail(studentId, cohort)
@@ -1944,22 +1995,24 @@ const TADashboard = ({
                                 >
                                   <div className="flex min-w-0 flex-col">
                                     <span className="flex items-center gap-2">
-                                      <span className="font-medium">
-                                        {studentId}
+                                      <span className="truncate font-medium">
+                                        {studentName || studentId}
                                       </span>
                                       <Badge
                                         variant="outline"
-                                        className="text-xs"
+                                        className="shrink-0 text-xs"
                                       >
                                         Cohort {cohort}
                                       </Badge>
                                       {openingStudentId === studentId && (
-                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
                                       )}
                                     </span>
-                                    <span className="text-sm text-muted-foreground mt-1">
-                                      {studentName}
-                                    </span>
+                                    {studentName && (
+                                      <span className="mt-1 text-sm text-muted-foreground">
+                                        {studentId}
+                                      </span>
+                                    )}
                                   </div>
                                   <Button
                                     size="sm"
@@ -2217,65 +2270,19 @@ const TADashboard = ({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Search Student</label>
-              <Input
-                placeholder="Search by student ID or name..."
-                value={removeSearchQuery}
-                onChange={(e) => {
-                  setRemoveSearchQuery(e.target.value);
-                  setStudentToRemove(null);
-                }}
-              />
-            </div>
-
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {filteredRosterForRemoval.length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">
-                  No students found.
-                </p>
-              ) : (
-                filteredRosterForRemoval.map((student) => (
-                  <div
-                    key={student.student_id}
-                    className={cn(
-                      "flex items-center justify-between p-2 rounded-lg cursor-pointer border transition-colors",
-                      studentToRemove?.student_id === student.student_id
-                        ? "bg-destructive/10 border-destructive/40"
-                        : "bg-muted/50 border-transparent hover:bg-muted",
-                    )}
-                    onClick={() =>
-                      setStudentToRemove({
-                        student_id: student.student_id,
-                        cohort: student.cohort as "A" | "B" | "C",
-                        name: student.name,
-                      })
-                    }
-                  >
-                    <div className="flex flex-col">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium">
-                          {student.student_id}
-                        </span>
-                        <Badge variant="outline" className="text-xs">
-                          Cohort {student.cohort}
-                        </Badge>
-                      </div>
-                      {student.name && (
-                        <span className="text-sm text-muted-foreground mt-1">
-                          {student.name}
-                        </span>
-                      )}
-                    </div>
-                    {studentToRemove?.student_id === student.student_id && (
-                      <Badge variant="destructive" className="text-xs">
-                        Selected
-                      </Badge>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
+            <StudentPickerList
+              students={roster}
+              selectedId={studentToRemove?.student_id ?? null}
+              tone="destructive"
+              label="Search student"
+              onSelect={(student) =>
+                setStudentToRemove({
+                  student_id: student.student_id,
+                  cohort: student.cohort as "A" | "B" | "C",
+                  name: student.name ?? undefined,
+                })
+              }
+            />
 
             {studentToRemove && (
               <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
@@ -2295,7 +2302,6 @@ const TADashboard = ({
               variant="outline"
               onClick={() => {
                 setShowRemoveStudentDialog(false);
-                setRemoveSearchQuery("");
                 setStudentToRemove(null);
               }}
             >
@@ -2332,87 +2338,18 @@ const TADashboard = ({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Student</label>
-              <Input
-                placeholder="Search by student ID or name..."
-                value={excusedSearchQuery}
-                onChange={(e) => {
-                  setExcusedSearchQuery(e.target.value);
-                  setExcusedStudent(null);
-                }}
-              />
-            </div>
-
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {(excusedSearchQuery.trim()
-                ? roster.filter(
-                    (r) =>
-                      r.student_id
-                        .toLowerCase()
-                        .includes(excusedSearchQuery.toLowerCase()) ||
-                      (r.name &&
-                        r.name
-                          .toLowerCase()
-                          .includes(excusedSearchQuery.toLowerCase())),
-                  )
-                : roster
-              ).length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">
-                  No students found.
-                </p>
-              ) : (
-                (excusedSearchQuery.trim()
-                  ? roster.filter(
-                      (r) =>
-                        r.student_id
-                          .toLowerCase()
-                          .includes(excusedSearchQuery.toLowerCase()) ||
-                        (r.name &&
-                          r.name
-                            .toLowerCase()
-                            .includes(excusedSearchQuery.toLowerCase())),
-                    )
-                  : roster
-                ).map((student) => (
-                  <div
-                    key={student.student_id}
-                    className={cn(
-                      "flex items-center justify-between p-2 rounded-lg cursor-pointer border transition-colors",
-                      excusedStudent?.student_id === student.student_id
-                        ? "bg-primary/10 border-primary/40"
-                        : "bg-muted/50 border-transparent hover:bg-muted",
-                    )}
-                    onClick={() =>
-                      setExcusedStudent({
-                        student_id: student.student_id,
-                        cohort: student.cohort,
-                        name: student.name,
-                      })
-                    }
-                  >
-                    <div className="flex flex-col">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium">
-                          {student.student_id}
-                        </span>
-                        <Badge variant="outline" className="text-xs">
-                          Cohort {student.cohort}
-                        </Badge>
-                      </div>
-                      {student.name && (
-                        <span className="text-sm text-muted-foreground mt-1">
-                          {student.name}
-                        </span>
-                      )}
-                    </div>
-                    {excusedStudent?.student_id === student.student_id && (
-                      <Badge className="text-xs">Selected</Badge>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
+            <StudentPickerList
+              students={roster}
+              selectedId={excusedStudent?.student_id ?? null}
+              label="Student"
+              onSelect={(student) =>
+                setExcusedStudent({
+                  student_id: student.student_id,
+                  cohort: student.cohort,
+                  name: student.name ?? undefined,
+                })
+              }
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">

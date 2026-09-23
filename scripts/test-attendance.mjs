@@ -78,6 +78,7 @@ const {
   tallyStates,
   sessionStatesFor,
   sessionWasHeld,
+  dayStateFor,
 } = mod;
 
 // ---------------------------------------------------------------------------
@@ -666,6 +667,56 @@ eq("countdown reads in minutes and seconds", countdown(125_000), "2m 05s");
 eq("and in hours when it is long", countdown(3_900_000), "1h 05m");
 eq("and says now at zero", countdown(0), "now");
 
+
+// ---------------------------------------------------------------------------
+// dayStateFor — what one student's record says about one day
+//
+// Analytics answers for a day, and the list beneath it has to answer for the
+// same day. The distinctions are the ones migration 004 exists to keep: a day
+// the cohort did not meet is not a day anybody missed, and a session nobody has
+// marked is not an absence. Getting either wrong turns a Sunday into a room
+// full of absentees.
+// ---------------------------------------------------------------------------
+
+console.log("\ndayStateFor");
+
+const dayLog = await attendanceLog(CLASS);
+
+eq("present on the day", dayStateFor(dayLog, "stu-1", "A", "2026-05-19"), "present");
+eq("an absence is an absence", dayStateFor(dayLog, "stu-2", "A", "2026-05-19"), "absent");
+eq("excused is not absent", dayStateFor(dayLog, "stu-3", "A", "2026-05-19"), "excused");
+eq("late is its own answer", dayStateFor(dayLog, "stu-4", "B", "2026-05-19"), "late");
+eq(
+  "somebody the register never mentioned is not marked, which is not an absence",
+  dayStateFor(dayLog, "stu-9", "A", "2026-05-19"),
+  "unmarked",
+);
+eq(
+  "a day the cohort does not meet at all",
+  dayStateFor(dayLog, "stu-1", "A", "2026-05-21"),
+  "no-class",
+);
+eq(
+  "the other cohort's day is not this student's day",
+  dayStateFor(dayLog, "stu-1", "A", "2026-05-26"),
+  "no-class",
+);
+eq(
+  "a cancelled session is no class, not an absence — even with a mark on it",
+  dayStateFor(dayLog, "stu-1", "A", "2026-05-20"),
+  "no-class",
+);
+eq(
+  "a declared day off reads as exempt for the students it exempted",
+  dayStateFor(dayLog, "stu-5", "B", "2026-05-26"),
+  "exempt",
+);
+eq(
+  "and as not marked for somebody it never wrote a record for — the log cannot invent one",
+  dayStateFor(dayLog, "stu-4", "B", "2026-05-26"),
+  "unmarked",
+);
+eq("no log at all is no class", dayStateFor(null, "stu-1", "A", "2026-05-19"), "no-class");
 
 // ---------------------------------------------------------------------------
 // sessionWasHeld — a day declared off is not a session nobody attended

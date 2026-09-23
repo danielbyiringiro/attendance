@@ -561,6 +561,57 @@ export const tallyStates = (
  *
  * A session with no records at all is held — it may simply not be closed yet.
  */
+/**
+ * What the record says about one student on one day.
+ *
+ * Analytics shows its numbers for a chosen day, and the list beneath them has
+ * to answer for the same day rather than for the term. The distinctions are
+ * the ones migration 004 exists to keep: a day the cohort did not meet is not
+ * a day anybody missed, and a session nobody has marked yet is not an absence.
+ *
+ * Two sessions in a day resolve to the best of them. A student who attended
+ * the lecture and missed the lab was there; the lab's own absence is still in
+ * the record and still counts in their term standing.
+ */
+export type DayState =
+  | "present"
+  | "late"
+  | "absent"
+  | "excused"
+  | "exempt"
+  | "unmarked"
+  | "no-class";
+
+export const dayStateFor = (
+  log: AttendanceLog | null,
+  studentId: string,
+  cohortLabel: string,
+  date: string,
+): DayState => {
+  if (!log) return "no-class";
+
+  const theirs = log.sessions.filter(
+    (s) => s.session_date === date && s.cohort_label === cohortLabel,
+  );
+  if (theirs.length === 0) return "no-class";
+  // Every session that day called off: no class, not an absence.
+  if (theirs.every((s) => s.status === "cancelled")) return "no-class";
+
+  const ids = new Set(
+    theirs.filter((s) => s.status !== "cancelled").map((s) => s.session_id),
+  );
+  const marks = (log.byStudent.get(studentId) ?? []).filter((m) =>
+    ids.has(m.session_id),
+  );
+  if (marks.length === 0) return "unmarked";
+
+  if (marks.some((m) => m.state === "present")) return "present";
+  if (marks.some((m) => m.state === "late")) return "late";
+  if (marks.some((m) => m.state === "excused")) return "excused";
+  if (marks.some((m) => m.state === "unexcused")) return "absent";
+  return "exempt";
+};
+
 export const sessionWasHeld = (
   log: AttendanceLog,
   sessionId: string,
