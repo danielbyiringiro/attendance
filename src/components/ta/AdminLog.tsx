@@ -24,14 +24,37 @@ import {
   type AdminLogEntry,
 } from "@/lib/api/service";
 
+/** Within a day, only the clock matters — the date is on the rule above. */
 const when = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
+  new Date(iso).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
   });
+
+const dayKey = (iso: string) => new Date(iso).toDateString();
+
+/**
+ * "Today", "Yesterday", or the date written out.
+ *
+ * The two recent days are named rather than dated because that is how somebody
+ * reading a log thinks about them — "what happened this morning" — and a date
+ * makes them do the arithmetic to find out whether it was today.
+ */
+const dayLabel = (iso: string) => {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(d.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  });
+};
 
 const AdminLog = () => {
   const { toast } = useToast();
@@ -137,9 +160,22 @@ const AdminLog = () => {
           </p>
         ) : (
           <div className="space-y-2">
-            {entries.map((e) => (
+            {entries.map((e, i) => (
+              <div key={e.id} className="space-y-2">
+                {/* A rule between days. The list is newest first, so a new day
+                    starts wherever this entry's date differs from the one
+                    above it — and the first entry always opens one. */}
+                {(i === 0 ||
+                  dayKey(entries[i - 1].created_at) !== dayKey(e.created_at)) && (
+                  <div className="flex items-center gap-3 pt-2 first:pt-0">
+                    <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                      {dayLabel(e.created_at)}
+                    </span>
+                    <hr className="min-w-0 flex-1 border-t" />
+                  </div>
+                )}
+
               <div
-                key={e.id}
                 className={`flex flex-col gap-1 rounded-lg border px-3 py-2 sm:flex-row sm:items-start sm:justify-between ${
                   e.kind === "event" ? "bg-muted/40" : ""
                 }`}
@@ -167,6 +203,7 @@ const AdminLog = () => {
                   resetKey={e.id}
                   onConfirm={() => void remove(e.id)}
                 />
+              </div>
               </div>
             ))}
           </div>
