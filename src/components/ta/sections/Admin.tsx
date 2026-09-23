@@ -35,6 +35,7 @@ import ConfirmDelete from "@/components/ta/ConfirmDelete";
 import HelpAdmin from "@/components/ta/HelpAdmin";
 import FeedbackQueue from "@/components/ta/FeedbackQueue";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import PauseTheApp from "@/components/ta/PauseTheApp";
 
 /**
  * Approving accounts, and repairing a class nobody can reach.
@@ -175,6 +176,14 @@ const Admin = () => {
   }
 
   return (
+    <div className="space-y-4">
+      {/*
+        055. Above the tabs, because it is not a fifth job of the same kind —
+        it stops every one of them, and every class in the installation. Buried
+        under a tab it would be found by accident more often than on purpose.
+      */}
+      <PauseTheApp />
+
     /*
       050. Four jobs that were one long scroll: approvals, feedback, class
       repair and what staff see on Help. Ordered by how often each is actually
@@ -689,6 +698,7 @@ const Admin = () => {
         <HelpAdmin />
       </TabsContent>
     </Tabs>
+    </div>
   );
 };
 

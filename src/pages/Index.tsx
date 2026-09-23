@@ -6,6 +6,8 @@ import AccessibilitySettings from "@/components/AccessibilitySettings";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
+import PausedNotice from "@/components/PausedNotice";
+import { useServiceState } from "@/lib/useServiceState";
 import ClassSwitcher from "@/components/ta/ClassSwitcher";
 import {
   restoreNavigation,
@@ -147,6 +149,9 @@ const Index = () => {
   // an account can exist, be signed in, and still be waiting for an admin —
   // `isTA = !!session` would let a pending account straight into the dashboard.
   const [isTA, setIsTA] = useState(false);
+  // 055. Asked here rather than inside StudentLogin: the notice replaces that
+  // whole screen, and a hook has to run before the early returns below.
+  const service = useServiceState();
   const [identity, setIdentity] = useState<StaffIdentity | null>(null);
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
   /*
@@ -471,6 +476,13 @@ const Index = () => {
 
   if (showStudentDashboard) {
     return <StudentDashboard onBack={() => setShowStudentDashboard(false)} />;
+  }
+
+  // 055. In place of the check-in box, not beside it: a form that cannot work
+  // invites twenty attempts and a queue at the front of the room. Their own
+  // history stays reachable above — reading a record changes nothing.
+  if (service.paused) {
+    return <PausedNotice message={service.message} />;
   }
 
   return (

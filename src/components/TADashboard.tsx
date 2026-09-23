@@ -119,6 +119,7 @@ import {
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import PausedBanner from "@/components/ta/PausedBanner";
 
 interface Student {
   id: string;
@@ -1217,6 +1218,9 @@ const TADashboard = ({
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="max-w-6xl mx-auto space-y-6">
+        {/* 055. Above the header: a TA who cannot open a session needs the
+            reason before they try, not after it fails. */}
+        <PausedBanner />
         {/*
           Header.
 
