@@ -1351,7 +1351,7 @@ const TADashboard = ({
             onOpenAllClasses={() => onNavigate("classes")}
           />
         )}
-        {isAdminSection && <Admin />}
+        {isAdminSection && <Admin service={service} />}
         {isHelpSection && <Help onRead={onHelpRead} />}
 
         {/*

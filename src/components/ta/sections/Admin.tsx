@@ -36,6 +36,7 @@ import HelpAdmin from "@/components/ta/HelpAdmin";
 import FeedbackQueue from "@/components/ta/FeedbackQueue";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PauseTheApp from "@/components/ta/PauseTheApp";
+import type { ServiceState } from "@/lib/api/service";
 import AdminLog from "@/components/ta/AdminLog";
 
 /**
@@ -50,7 +51,20 @@ import AdminLog from "@/components/ta/AdminLog";
  * settled that you see a class if you are on it, and 020 did not reopen it.
  * Admin can see that a class exists and who manages it, and can change that.
  */
-const Admin = () => {
+const Admin = ({ service }: { service?: ServiceState }) => {
+  /*
+   * 055. While paused, System is the only part of Admin that does anything.
+   *
+   * The rest is greyed rather than hidden, and its tabs stay clickable: an
+   * admin may well want to READ the approval queue while the app is down, and
+   * a tab that vanishes mid-pause looks like a fault.
+   *
+   * Two things are never touched, because between them they are the only way
+   * back: the System tab itself, and the sidebar entry that reaches Admin.
+   * Everything here is inside Admin, which is live whenever a pause is on.
+   */
+  const paused = service?.paused ?? false;
+  const [tab, setTab] = useState(paused ? "system" : "accounts");
   const { toast } = useToast();
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [classes, setClasses] = useState<AdminClassRow[]>([]);
@@ -183,7 +197,7 @@ const Admin = () => {
       used — the approval queue daily, class repair almost never — and the
       pending count sits on the tab so it is visible without opening it.
     */
-    <Tabs defaultValue="accounts" className="space-y-4">
+    <Tabs value={tab} onValueChange={setTab} className="space-y-4">
       <TabsList>
         <TabsTrigger value="accounts">
           Accounts
@@ -199,7 +213,24 @@ const Admin = () => {
         <TabsTrigger value="system">System</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="accounts" className="mt-0 space-y-4">
+      {paused && tab !== "system" && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 border-warning bg-warning/10 px-4 py-3 text-sm"
+        >
+          <span className="min-w-0">
+            <span className="font-medium">The app is paused.</span> Nothing on
+            this tab can be changed while it is. Approvals are the one thing
+            that still would — and doing that now is how somebody ends up
+            approved into an app that is down.
+          </span>
+          <Button size="sm" onClick={() => setTab("system")}>
+            Go to System
+          </Button>
+        </div>
+      )}
+
+      <TabsContent value="accounts" className={`mt-0 space-y-4 ${paused ? "pointer-events-none select-none opacity-50" : ""}`} aria-hidden={paused || undefined}>
       {/* Waiting for a decision */}
       <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
         <CardHeader>
@@ -496,11 +527,11 @@ const Admin = () => {
 
       </TabsContent>
 
-      <TabsContent value="feedback" className="mt-0">
+      <TabsContent value="feedback" className={`mt-0 ${paused ? "pointer-events-none select-none opacity-50" : ""}`} aria-hidden={paused || undefined}>
         <FeedbackQueue />
       </TabsContent>
 
-      <TabsContent value="classes" className="mt-0 space-y-4">
+      <TabsContent value="classes" className={`mt-0 space-y-4 ${paused ? "pointer-events-none select-none opacity-50" : ""}`} aria-hidden={paused || undefined}>
       {/* Class repair */}
       <Card className="border-2">
         <CardHeader>
@@ -690,7 +721,7 @@ const Admin = () => {
       )}
       </TabsContent>
 
-      <TabsContent value="content" className="mt-0">
+      <TabsContent value="content" className={`mt-0 ${paused ? "pointer-events-none select-none opacity-50" : ""}`} aria-hidden={paused || undefined}>
         <HelpAdmin />
       </TabsContent>
 
