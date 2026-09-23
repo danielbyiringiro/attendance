@@ -269,18 +269,29 @@ BEGIN
 END;
 $after$;
 
--- ------------------------------- the switch is not reachable as a table --
--- 027's rule, applied to the new table: the functions are the only way in.
-DO $no_table$
-DECLARE v_rows integer;
+-- ------------------------------- the switch is not WRITABLE as a table --
+-- This asserted that a TA could not READ it either, until 058 gave staff a
+-- read so a pause could be streamed to open dashboards — a stream is a read,
+-- and there is no way to have one without the other. What has to stay true is
+-- that only the admin function can change it: a TA who finds the table can
+-- look, and can do nothing.
+DO $no_table_writes$
+DECLARE
+  v_changed integer;
 BEGIN
-  SELECT count(*) INTO v_rows FROM public.service_state;
-  IF v_rows <> 0 THEN
+  -- An UPDATE that row-level security blocks does not raise: it matches no
+  -- rows and reports success. So the assertion is on the effect — nothing
+  -- changed — not on an exception that never comes.
+  UPDATE public.service_state SET paused = true WHERE id;
+  GET DIAGNOSTICS v_changed = ROW_COUNT;
+
+  IF v_changed <> 0 OR (public.get_service_state() ->> 'paused')::boolean THEN
     RAISE EXCEPTION
-      '055: a signed-in TA read % rows of service_state directly', v_rows;
+      '%: a TA paused the app by writing service_state directly (% rows)',
+      '055', v_changed;
   END IF;
-  RAISE NOTICE '055 ok: the switch is reached through its functions, not the table';
+  RAISE NOTICE '055 ok: the switch is changed through its function, not the table';
 END;
-$no_table$;
+$no_table_writes$;
 
 ROLLBACK;
