@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CheckCircle2, Clock, Loader2 } from "lucide-react";
+import { CheckCircle2, Clock, History, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Logo from "@/components/Logo";
 import SoundToggle from "@/components/SoundToggle";
@@ -32,6 +32,15 @@ export interface MarkResult {
 }
 
 interface StudentLoginProps {
+  /**
+   * Opens this student's own attendance history.
+   *
+   * It has a button in the corner of the page as well, which is the only one
+   * left when a pause replaces this card — but a corner button on a screen
+   * whose whole job is one form is easy to never look at. This one sits under
+   * the thing they came to do.
+   */
+  onShowHistory?: () => void;
   /**
    * How many check-in windows are open anywhere, for the status line only.
    * It is never a gate: with several classes running, "a window is open" is
@@ -76,7 +85,11 @@ interface StudentLoginProps {
  * form, and remembered on the phone. The submit tap is what browsers require
  * before a page may make sound, so it is primed there, before the request.
  */
-const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
+const StudentLogin = ({
+  openCount,
+  onMarkAttendance,
+  onShowHistory,
+}: StudentLoginProps) => {
   const [studentId, setStudentId] = useState("");
   /*
    * The code from the address when the student arrived by scanning the QR on
@@ -356,6 +369,18 @@ const StudentLogin = ({ openCount, onMarkAttendance }: StudentLoginProps) => {
                 )}
               </Button>
             </form>
+
+            {onShowHistory && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4 h-11 w-full"
+                onClick={onShowHistory}
+              >
+                <History className="mr-2 h-4 w-4" />
+                See my attendance history
+              </Button>
+            )}
 
             <p className="mt-4 text-center text-xs text-muted-foreground">
               The code decides which class you are marking, so you can use this

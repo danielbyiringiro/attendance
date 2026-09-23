@@ -528,6 +528,7 @@ const Index = () => {
         <StudentLogin
           openCount={openCount}
           onMarkAttendance={handleStudentMarkAttendance}
+          onShowHistory={() => setShowStudentDashboard(true)}
         />
       )}
 
@@ -536,7 +537,7 @@ const Index = () => {
         onClick={() => setShowStudentDashboard(true)}
         variant="outline"
         size="sm"
-        className="fixed top-4 left-4 opacity-70 hover:opacity-100 transition-opacity"
+        className="fixed left-4 top-4 shadow-sm"
       >
         <History className="h-4 w-4 mr-2" />
         History

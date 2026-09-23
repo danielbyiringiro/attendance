@@ -193,6 +193,17 @@ const TADashboard = ({
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
+  /*
+   * Searching today's two lists.
+   *
+   * The roster has had a search for a while, and the list a TA actually stands
+   * in front of — who is here, who is not — did not. In a class of forty,
+   * answering "is Ama in?" meant reading the whole column.
+   *
+   * One box over both tabs on purpose: the question is about a person, and
+   * which list they are in is the answer, not part of the question.
+   */
+  const [todayQuery, setTodayQuery] = useState("");
   const { toast } = useToast();
 
   // The roster is the active class's enrolments, not every student in the
@@ -651,25 +662,39 @@ const TADashboard = ({
     ).values(),
   );
 
-  const filteredPresentStudents =
+  // Name or ID, either way round, ignoring case — a TA reading a name off a
+  // screen and a TA reading an ID off a card are the same search.
+  const matchesToday = (id: string, name?: string | null) => {
+    const q = todayQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      id.toLowerCase().includes(q) || (name ?? "").toLowerCase().includes(q)
+    );
+  };
+
+  const filteredPresentStudents = (
     selectedCohort === "all"
       ? validPresentStudents
       : validPresentStudents.filter(
           (student) => student.cohort === selectedCohort,
-        );
+        )
+  ).filter((student) => matchesToday(student.id, student.name));
 
   const presentStudentIds = validPresentStudents.map((s) => s.id);
   const absentStudents = allStudents.filter(
     (id) => !presentStudentIds.includes(id),
   );
-  const filteredAbsentStudents =
+  const filteredAbsentStudents = (
     selectedCohort === "all"
       ? absentStudents
       : absentStudents.filter((id) => {
           const rosterEntry = roster.find((r) => r.student_id === id);
           const cohort = rosterEntry ? rosterEntry.cohort : cohortOf(id);
           return cohort === selectedCohort;
-        });
+        })
+  ).filter((id) =>
+    matchesToday(id, roster.find((r) => r.student_id === id)?.name),
+  );
 
   // Per-cohort report settings (lecturer + FI), for the active class.
   //
@@ -1835,6 +1860,20 @@ const TADashboard = ({
                     </div>
                   </CardHeader>
                   <CardContent>
+                    <div className="relative mb-3">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <Input
+                        id="today-search"
+                        value={todayQuery}
+                        placeholder="Find a student by name or ID"
+                        className="pl-9"
+                        onChange={(e) => setTodayQuery(e.target.value)}
+                      />
+                    </div>
+
                     <Tabs defaultValue="absent" className="w-full">
                       <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger
