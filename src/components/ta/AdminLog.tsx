@@ -14,6 +14,16 @@ import { Download, Loader2, NotebookPen, Send } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
@@ -66,6 +76,10 @@ const AdminLog = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [scope, setScope] = useState<"all" | "day" | "range">("all");
+  const [from, setFrom] = useState(todayStr());
+  const [to, setTo] = useState(todayStr());
 
   const load = async () => {
     setIsLoading(true);
@@ -106,20 +120,52 @@ const AdminLog = () => {
   };
 
   /**
-   * The whole log as a file, not the part on screen.
+   * Some or all of the log, as a file.
    *
-   * Asked for again rather than exported from `entries`: that list is capped
-   * at 200, and an export that silently stops at the two hundredth entry is
+   * Asked for from the server rather than taken from `entries`: that list is
+   * capped at 200, and an export that silently stops at the two hundredth is
    * worse than no export — it looks complete.
    *
-   * The file holds admin-only writing, so it belongs wherever the rest of this
-   * installation's private paperwork lives, not a shared drive.
+   * Dates are matched on the day the entry was written in THIS browser's
+   * clock, which is the day shown beside it on screen. Matching on UTC instead
+   * would drop late-evening entries out of the day somebody saw them in.
    */
-  const exportAll = async () => {
+  const runExport = async () => {
+    if (scope === "range" && from > to) {
+      toast({
+        title: "Those dates run backwards",
+        description: "The first date has to come before the second.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setExporting(true);
     try {
       const all = await adminLogList(10_000);
-      const rows = all.map((e) => {
+
+      const dayOf = (iso: string) => {
+        const d = new Date(iso);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      const wanted = all.filter((e) => {
+        const day = dayOf(e.created_at);
+        if (scope === "all") return true;
+        if (scope === "day") return day === from;
+        return day >= from && day <= to;
+      });
+
+      if (wanted.length === 0) {
+        toast({
+          title: "Nothing written in that time",
+          description:
+            "No file was saved — an empty one would look like the log had been lost.",
+        });
+        return;
+      }
+
+      const rows = wanted.map((e) => {
         const at = new Date(e.created_at);
         return [
           at.toLocaleDateString(),
@@ -129,12 +175,18 @@ const AdminLog = () => {
           e.body,
         ];
       });
-      downloadCsv(
-        toCsv(["Date", "Time", "Source", "Author", "Entry"], rows),
-        `admin-log-${todayStr()}.csv`,
-      );
+
+      const name =
+        scope === "all"
+          ? `admin-log-all-${todayStr()}.csv`
+          : scope === "day"
+            ? `admin-log-${from}.csv`
+            : `admin-log-${from}-to-${to}.csv`;
+
+      downloadCsv(toCsv(["Date", "Time", "Source", "Author", "Entry"], rows), name);
+      setExportOpen(false);
       toast({
-        title: `${all.length} entr${all.length === 1 ? "y" : "ies"} exported`,
+        title: `${wanted.length} entr${wanted.length === 1 ? "y" : "ies"} exported`,
         description: "The file holds admin-only writing — keep it somewhere private.",
       });
     } catch (e) {
@@ -172,14 +224,10 @@ const AdminLog = () => {
           <Button
             size="sm"
             variant="outline"
-            disabled={exporting || isLoading || entries.length === 0}
-            onClick={() => void exportAll()}
+            disabled={isLoading || entries.length === 0}
+            onClick={() => setExportOpen(true)}
           >
-            {exporting ? (
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-1 h-4 w-4" />
-            )}
+            <Download className="mr-1 h-4 w-4" />
             Export
           </Button>
         </div>
@@ -209,6 +257,85 @@ const AdminLog = () => {
             </Button>
           </div>
         </div>
+
+        <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Export the log</DialogTitle>
+              <DialogDescription>
+                A spreadsheet of what was written, when, and by whom. Dates are
+                the days shown in this list.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-1.5">
+              {(
+                [
+                  ["all", "Everything"],
+                  ["day", "One day"],
+                  ["range", "Between two dates"],
+                ] as Array<["all" | "day" | "range", string]>
+              ).map(([value, label]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    scope === value
+                      ? "border-primary bg-primary/5"
+                      : "hover:border-primary/40"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="log-export-scope"
+                    value={value}
+                    checked={scope === value}
+                    onChange={() => setScope(value)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            {scope !== "all" && (
+              <div className={scope === "range" ? "grid grid-cols-2 gap-2" : ""}>
+                <div className="space-y-1">
+                  <Label htmlFor="log-from">
+                    {scope === "day" ? "Date" : "From"}
+                  </Label>
+                  <Input
+                    id="log-from"
+                    type="date"
+                    value={from}
+                    max={todayStr()}
+                    onChange={(e) => setFrom(e.target.value)}
+                  />
+                </div>
+                {scope === "range" && (
+                  <div className="space-y-1">
+                    <Label htmlFor="log-to">To</Label>
+                    <Input
+                      id="log-to"
+                      type="date"
+                      value={to}
+                      max={todayStr()}
+                      onChange={(e) => setTo(e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button variant="ghost" onClick={() => setExportOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={exporting} onClick={() => void runExport()}>
+                {exporting && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                Save the file
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {isLoading ? (
           <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
