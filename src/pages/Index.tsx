@@ -486,6 +486,7 @@ const Index = () => {
               activeSection={taTab}
               classTab={classTab}
               isAdmin={identity?.is_admin ?? false}
+              yourName={identity?.display_name ?? identity?.email ?? null}
               onNavigate={handleSetTaTab}
               onHelpRead={() => setUnreadHelp(0)}
               onLogout={handleTALogout}

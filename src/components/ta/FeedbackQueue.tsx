@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Check, Loader2, MessageSquare, RotateCcw } from "lucide-react";
+import { Bug, Check, Lightbulb, Loader2, MessageSquare, RotateCcw, UserX } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
 import {
@@ -10,7 +10,22 @@ import {
   adminListFeedback,
   adminSetFeedbackHandled,
   type FeedbackItem,
+  type FeedbackKind,
 } from "@/lib/api/feedback";
+
+/** 059. Faults read as urgent, ideas as neutral — that is the whole sort. */
+const KIND = {
+  bug: {
+    label: "Bug",
+    icon: Bug,
+    className: "border-destructive/30 bg-destructive/10 text-destructive",
+  },
+  idea: {
+    label: "Idea",
+    icon: Lightbulb,
+    className: "border-primary/30 bg-primary/10 text-primary",
+  },
+} satisfies Record<FeedbackKind, { label: string; icon: typeof Bug; className: string }>;
 
 /**
  * What staff have reported, and what has been done about it.
@@ -27,6 +42,14 @@ const FeedbackQueue = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showHandled, setShowHandled] = useState(false);
+  /*
+   * Which kind is being read, or all of them.
+   *
+   * Split in the browser rather than asked of the server: the tabs carry a
+   * count each, and a count of the bucket you are not looking at means the
+   * other rows had to be fetched anyway.
+   */
+  const [kindFilter, setKindFilter] = useState<FeedbackKind | "all">("all");
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -82,7 +105,13 @@ const FeedbackQueue = () => {
 
   const open = items.filter((f) => !f.handled);
   const done = items.filter((f) => f.handled);
-  const shown = showHandled ? done : open;
+  const inTab = showHandled ? done : open;
+  const shown =
+    kindFilter === "all" ? inTab : inTab.filter((f) => f.kind === kindFilter);
+
+  // Counted within the open/handled tab being read, so a number never promises
+  // rows that switching the kind would not actually show.
+  const countOf = (k: FeedbackKind) => inTab.filter((f) => f.kind === k).length;
 
   const sentOn = (iso: string) =>
     new Date(iso).toLocaleDateString(undefined, {
@@ -91,8 +120,16 @@ const FeedbackQueue = () => {
       year: "numeric",
     });
 
+  /*
+   * Three different people, and the screen must not blur them (059):
+   * somebody who signed it, somebody who chose not to, and somebody who signed
+   * it and has since had their account removed (050). The middle one is a
+   * decision to respect; the last one is a report worth keeping anyway.
+   */
   const who = (f: FeedbackItem) =>
-    f.from_name || f.from_email || "an account since removed";
+    f.anonymous
+      ? "Sent anonymously"
+      : f.from_name || f.from_email || "an account since removed";
 
   return (
     <Card className="border-2">
@@ -121,6 +158,22 @@ const FeedbackQueue = () => {
       </CardHeader>
 
       <CardContent className="space-y-2">
+        <div className="flex flex-wrap gap-1">
+          {(["all", "bug", "idea"] as const).map((k) => (
+            <Button
+              key={k}
+              size="sm"
+              variant={kindFilter === k ? "secondary" : "ghost"}
+              aria-pressed={kindFilter === k}
+              onClick={() => setKindFilter(k)}
+            >
+              {k === "all"
+                ? `All (${inTab.length})`
+                : `${KIND[k].label}s (${countOf(k)})`}
+            </Button>
+          ))}
+        </div>
+
         {isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -128,15 +181,23 @@ const FeedbackQueue = () => {
           </div>
         ) : shown.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">
-            {showHandled
-              ? "Nothing has been marked handled yet."
-              : "Nothing open. Staff can send this from Help."}
+            {kindFilter !== "all"
+              ? `No ${KIND[kindFilter].label.toLowerCase()}s ${showHandled ? "have been handled" : "are open"}.`
+              : showHandled
+                ? "Nothing has been marked handled yet."
+                : "Nothing open. Staff can send this from Help."}
           </p>
         ) : (
           shown.map((f) => (
             <div key={f.id} className="space-y-2 rounded-lg border px-3 py-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium">
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  {f.anonymous && (
+                    <UserX
+                      className="h-4 w-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                  )}
                   {who(f)}
                   {f.from_email && f.from_name && (
                     <span className="text-muted-foreground">
@@ -146,6 +207,12 @@ const FeedbackQueue = () => {
                   )}
                 </p>
                 <span className="text-xs text-muted-foreground tabular-nums">
+                  <Badge
+                    variant="outline"
+                    className={`mr-2 text-xs ${KIND[f.kind].className}`}
+                  >
+                    {KIND[f.kind].label}
+                  </Badge>
                   {f.page && (
                     <Badge variant="outline" className="mr-2 text-xs">
                       {f.page}

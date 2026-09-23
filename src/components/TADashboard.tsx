@@ -146,6 +146,8 @@ interface TADashboardProps {
   onHelpRead?: () => void;
   /** 055: only an admin can resume a paused app, so only they are told how. */
   isAdmin?: boolean;
+  /** 059: the feedback form says whose name is going with the report. */
+  yourName?: string | null;
   onLogout: () => void;
 }
 
@@ -190,6 +192,7 @@ const TADashboard = ({
   onNavigate,
   onHelpRead,
   isAdmin = false,
+  yourName = null,
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
@@ -1383,7 +1386,7 @@ const TADashboard = ({
           />
         )}
         {isAdminSection && <Admin service={service} />}
-        {isHelpSection && <Help onRead={onHelpRead} />}
+        {isHelpSection && <Help onRead={onHelpRead} yourName={yourName} />}
 
         {/*
           What this screen can do, above what it is showing.

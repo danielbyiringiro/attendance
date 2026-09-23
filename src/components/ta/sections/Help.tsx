@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Loader2, Megaphone, MessageSquare, PlayCircle, Send } from "lucide-react";
+import { Bug, ExternalLink, Lightbulb, Loader2, Megaphone, MessageSquare, PlayCircle, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getHelp, markAnnouncementsRead, type HelpContent } from "@/lib/api/help";
-import { sendFeedback } from "@/lib/api/feedback";
+import { sendFeedback, type FeedbackKind } from "@/lib/api/feedback";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 /**
@@ -20,13 +22,45 @@ import { Textarea } from "@/components/ui/textarea";
  * them rather than a reason to hide it. Opening this screen marks them read,
  * which is what clears the dot in the sidebar.
  */
-const Help = ({ onRead }: { onRead?: () => void }) => {
+/*
+ * What the box asks for, per kind (059).
+ *
+ * The placeholder is the whole point of splitting these: "what happened
+ * instead?" is the wrong question to be asked when what you have is an idea,
+ * and being asked it is how somebody decides their idea does not belong here.
+ */
+const KINDS: Record<
+  FeedbackKind,
+  { label: string; placeholder: string; icon: typeof Bug }
+> = {
+  bug: {
+    label: "Something is wrong",
+    placeholder: "What were you trying to do, and what happened instead?",
+    icon: Bug,
+  },
+  idea: {
+    label: "An idea",
+    placeholder: "What would you like it to do, and when would that help?",
+    icon: Lightbulb,
+  },
+};
+
+const Help = ({
+  onRead,
+  yourName,
+}: {
+  onRead?: () => void;
+  /** Shown on the form so it is obvious what is being attached (059). */
+  yourName?: string | null;
+}) => {
   const { toast } = useToast();
   const [content, setContent] = useState<HelpContent | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // 051. Kept here rather than in a dialog: somebody who has just been confused
   // by a screen should not have to find a second one to say so.
   const [report, setReport] = useState("");
+  const [kind, setKind] = useState<FeedbackKind>("bug");
+  const [anon, setAnon] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const load = useCallback(async () => {
@@ -70,11 +104,14 @@ const Help = ({ onRead }: { onRead?: () => void }) => {
   const send = async () => {
     setIsSending(true);
     try {
-      await sendFeedback(report.trim(), "help");
+      await sendFeedback(report.trim(), { page: "help", kind, anonymous: anon });
       setReport("");
+      setAnon(false);
       toast({
         title: "Sent",
-        description: "Thank you — an admin sees this with your name on it.",
+        description: anon
+          ? "Thank you — it went without your name, so nobody can reply."
+          : "Thank you — an admin sees this with your name on it.",
       });
     } catch (e) {
       toast({
@@ -201,19 +238,66 @@ const Help = ({ onRead }: { onRead?: () => void }) => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <MessageSquare className="h-5 w-5" />
-            Tell us what is wrong
+            Tell us what you think
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
+          {/* Asked before the box, not after: it changes what the box asks
+              for, and a question that arrives after the answer is written is
+              one somebody has to go back and re-read. */}
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(KINDS) as FeedbackKind[]).map((k) => {
+              const Icon = KINDS[k].icon;
+              return (
+                <Button
+                  key={k}
+                  type="button"
+                  size="sm"
+                  variant={kind === k ? "secondary" : "outline"}
+                  aria-pressed={kind === k}
+                  onClick={() => setKind(k)}
+                >
+                  <Icon className="mr-1 h-4 w-4" />
+                  {KINDS[k].label}
+                </Button>
+              );
+            })}
+          </div>
+
           <Textarea
             rows={3}
             value={report}
-            placeholder="What were you trying to do, and what happened instead?"
+            placeholder={KINDS[kind].placeholder}
             onChange={(e) => setReport(e.target.value)}
           />
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="feedback-anon"
+              checked={anon}
+              onCheckedChange={(v) => setAnon(v === true)}
+            />
+            <Label
+              htmlFor="feedback-anon"
+              className="text-xs font-normal leading-snug text-muted-foreground"
+            >
+              Send this without my name
+            </Label>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">
-              Sent with your name, so an admin can come back to you about it.
+            {/* Said plainly both ways round. "Anonymous" is a promise, and the
+                one thing worse than not offering it is offering it vaguely:
+                the server never stores a name on these, so there is nothing to
+                look up afterwards, and nothing to reply to either. */}
+            <p className="max-w-prose text-xs text-muted-foreground">
+              {anon
+                ? kind === "bug"
+                  ? "Your name is not stored, so nobody can ask you which class or screen this was about — say so above if it matters."
+                  : "Your name is not stored. Nobody can tell it was you, and nobody can come back to you about it."
+                : yourName
+                  ? `Sent as ${yourName}, so an admin can come back to you about it.`
+                  : "Sent with your name, so an admin can come back to you about it."}
             </p>
             <Button
               size="sm"
