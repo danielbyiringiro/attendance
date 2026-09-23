@@ -7,8 +7,10 @@ import ClearRosterDialog from "@/components/ta/dialogs/ClearRosterDialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   attendanceLog,
+  dayStateFor,
   studentTotals,
   type AttendanceLog,
+  type DayState,
 } from "@/lib/api/attendance";
 import type { CohortRow } from "@/lib/api/types";
 import StudentDetailDialog from "@/components/ta/StudentDetailDialog";
@@ -62,6 +64,17 @@ interface StudentRosterProps {
    */
   canClearRoster?: boolean;
   /**
+   * A date to answer for, instead of the term.
+   *
+   * Analytics shows the numbers for one day; without this the list beneath
+   * them answered a different question — everyone's standing across the whole
+   * term — which is what the Students tab is for, and made the two screens
+   * duplicates of each other. Given a date, each row says what the record
+   * holds for that student on that date, and the people who were not there
+   * come first.
+   */
+  dayFocus?: string | null;
+  /**
    * Re-read the roster itself.
    *
    * `load` below only re-reads attendance. Names, cohorts and IDs come from
@@ -98,6 +111,37 @@ const toStanding = (s: StudentStanding) => ({
  * before showing anything, and neither of which could show you the roster. The
  * list is the screen; the modal is for one student's detail.
  */
+const DAY_LABEL: Record<DayState, string> = {
+  present: "present",
+  late: "late",
+  absent: "absent",
+  excused: "excused",
+  exempt: "exempt",
+  unmarked: "not marked",
+  "no-class": "no class",
+};
+
+const DAY_BADGE: Record<DayState, string> = {
+  present: "bg-success/15 text-success border-success/30",
+  late: "bg-warning/15 text-warning border-warning/30",
+  absent: "bg-destructive/15 text-destructive border-destructive/30",
+  excused: "bg-primary/10 text-primary border-primary/30",
+  exempt: "bg-muted text-muted-foreground",
+  unmarked: "bg-muted text-muted-foreground",
+  "no-class": "bg-muted/50 text-muted-foreground",
+};
+
+/** Absent first: on a day view, the people who were not there are the point. */
+const DAY_ORDER: Record<DayState, number> = {
+  absent: 0,
+  unmarked: 1,
+  late: 2,
+  excused: 3,
+  present: 4,
+  exempt: 5,
+  "no-class": 6,
+};
+
 const StudentRoster = ({
   classId,
   classCode,
@@ -109,6 +153,7 @@ const StudentRoster = ({
   canClearRoster = false,
   onRosterChanged,
   onVisibleChange,
+  dayFocus = null,
 }: StudentRosterProps) => {
   const { toast } = useToast();
   const [log, setLog] = useState<AttendanceLog | null>(null);
@@ -161,6 +206,17 @@ const StudentRoster = ({
     [roster, log, cohortIdOf],
   );
 
+  /**
+   * Each student's state on the day Analytics is showing, when it is showing
+   * one. Read from the same log the standings come from, so the list and the
+   * numbers above it cannot disagree.
+   */
+  const dayStateOf = useCallback(
+    (studentId: string, cohortLabel: string): DayState =>
+      dayFocus ? dayStateFor(log, studentId, cohortLabel, dayFocus) : "no-class",
+    [dayFocus, log],
+  );
+
   const absenceFloor = Math.max(1, Number(minAbsences) || 1);
 
   const shown = useMemo(() => {
@@ -182,7 +238,17 @@ const StudentRoster = ({
           s.student_id.toLowerCase().includes(needle) ||
           (s.name ?? "").toLowerCase().includes(needle),
       )
-      .sort((a, b) => a.rate - b.rate || a.student_id.localeCompare(b.student_id));
+      .sort((a, b) => {
+        // On a day view the question is "who was not here", so that is what
+        // the top of the list answers. Term view keeps worst-standing first.
+        if (dayFocus) {
+          const byDay =
+            DAY_ORDER[dayStateOf(a.student_id, a.cohort)] -
+            DAY_ORDER[dayStateOf(b.student_id, b.cohort)];
+          if (byDay !== 0) return byDay;
+        }
+        return a.rate - b.rate || a.student_id.localeCompare(b.student_id);
+      });
   }, [
     standings,
     query,
@@ -190,6 +256,8 @@ const StudentRoster = ({
     risk,
     absenceFloor,
     requirement,
+    dayFocus,
+    dayStateOf,
   ]);
 
   // Switching class clears the filters.
@@ -359,6 +427,7 @@ const StudentRoster = ({
         <div className="max-h-[32rem] space-y-1 overflow-y-auto">
           {shown.map((s) => {
             const isPresent = presentIds?.has(s.student_id) ?? false;
+            const day = dayFocus ? dayStateOf(s.student_id, s.cohort) : null;
             return (
               <div
                 key={s.student_id}
@@ -381,10 +450,22 @@ const StudentRoster = ({
                     <Badge variant="outline" className="text-xs">
                       {s.cohort}
                     </Badge>
-                    {isPresent && (
-                      <Badge variant="secondary" className="text-xs">
-                        here today
+                    {/* On a day view, that day's answer replaces "here today":
+                        two badges about attendance, one of them about a
+                        different date, is how somebody misreads a register. */}
+                    {day ? (
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${DAY_BADGE[day]}`}
+                      >
+                        {DAY_LABEL[day]}
                       </Badge>
+                    ) : (
+                      isPresent && (
+                        <Badge variant="secondary" className="text-xs">
+                          here today
+                        </Badge>
+                      )
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">

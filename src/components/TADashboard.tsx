@@ -204,6 +204,12 @@ const TADashboard = ({
    * which list they are in is the answer, not part of the question.
    */
   const [todayQuery, setTodayQuery] = useState("");
+  /*
+   * Which day Analytics is showing, so the list under it can answer for that
+   * day rather than for the whole term — which is what the Students tab
+   * answers, and made the two screens duplicates.
+   */
+  const [analyticsDay, setAnalyticsDay] = useState<string | null>(todayStr());
   const { toast } = useToast();
 
   // The roster is the active class's enrolments, not every student in the
@@ -1519,15 +1525,23 @@ const TADashboard = ({
                 termStartsOn={activeClass.term_starts_on}
                 termEndsOn={activeClass.term_ends_on}
                 timezone={activeClass.timezone}
+                onScopeChange={setAnalyticsDay}
               />
             )}
 
-            {/* Per-student standing. Was reachable only by opening a dialog,
-                typing a name and pressing a button, which could not show you
-                the class. */}
+            {/* The same students, answering for whatever the numbers above are
+                showing: one day, or the term. Reachable only through a dialog
+                before, which could not show you the class at all. */}
             <Card className="border-2">
               <CardHeader>
-                <CardTitle className="text-base">Students</CardTitle>
+                <CardTitle className="text-base">
+                  {analyticsDay
+                    ? `Students on ${new Date(`${analyticsDay}T00:00:00`).toLocaleDateString(
+                        undefined,
+                        { weekday: "long", day: "numeric", month: "long" },
+                      )}`
+                    : "Students this term"}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {activeClass && (
@@ -1539,6 +1553,7 @@ const TADashboard = ({
                     presentIds={new Set(validPresentStudents.map((p) => p.id))}
                     requirement={requirementOf(activeClass)}
                     onRosterChanged={() => void loadRoster()}
+                    dayFocus={analyticsDay}
                   />
                 )}
               </CardContent>
