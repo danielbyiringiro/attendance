@@ -20,10 +20,13 @@ const RUNNING: ServiceState = {
   since: null,
 };
 
-export const useServiceState = (): ServiceState => {
+export const useServiceState = (enabled = true): ServiceState => {
   const [state, setState] = useState<ServiceState>(RUNNING);
 
   useEffect(() => {
+    // A component given the state by its parent passes false, so one screen
+    // asks once rather than each component asking for the same answer.
+    if (!enabled) return;
     let live = true;
 
     const check = () =>
@@ -44,7 +47,7 @@ export const useServiceState = (): ServiceState => {
       live = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [enabled]);
 
   return state;
 };

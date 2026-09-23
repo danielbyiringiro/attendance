@@ -8,9 +8,16 @@
 import { PauseCircle } from "lucide-react";
 import { useServiceState } from "@/lib/useServiceState";
 import { PauseWarningDialog, PauseWarningStrip } from "@/components/PauseWarning";
+import type { ServiceState } from "@/lib/api/service";
 
-const PausedBanner = () => {
-  const service = useServiceState();
+/**
+ * Takes the state when its parent already has it, so one screen polls once.
+ * Two components each calling the hook would ask the server twice a minute for
+ * the same answer and could disagree about it in between.
+ */
+const PausedBanner = ({ service: given }: { service?: ServiceState }) => {
+  const polled = useServiceState(given === undefined);
+  const service = given ?? polled;
   const { paused, message } = service;
 
   // Not yet: a strip saying when, and a dialog once it is close. A TA about to

@@ -107,24 +107,40 @@ const TANav = ({
   tabs,
   active,
   unreadHelp = 0,
+  frozen = false,
   onSelect,
 }: {
   tabs: typeof TA_TABS;
   active: TATab;
   /** 049: announcements this account has not read. 0 shows nothing. */
   unreadHelp?: number;
+  /**
+   * 055: the app is paused. Every section but Admin is inert, because none of
+   * them can do anything — and leaving them live makes a deliberate pause look
+   * like a broken app.
+   */
+  frozen?: boolean;
   onSelect: (tab: TATab) => void;
 }) => {
   const { isMobile, setOpenMobile } = useSidebar();
 
   return (
     <SidebarMenu>
-      {tabs.map(({ id, label, icon: Icon }) => (
+      {tabs.map(({ id, label, icon: Icon }) => {
+        const blocked = frozen && id !== "admin";
+        return (
         <SidebarMenuItem key={id}>
-          <SidebarMenuButton asChild isActive={active === id} tooltip={label}>
+          <SidebarMenuButton
+            asChild
+            isActive={active === id}
+            tooltip={blocked ? `${label} — paused` : label}
+          >
             <button
               type="button"
+              disabled={blocked}
+              className={blocked ? "cursor-not-allowed opacity-40" : undefined}
               onClick={() => {
+                if (blocked) return;
                 onSelect(id);
                 if (isMobile) setOpenMobile(false);
               }}
@@ -141,7 +157,8 @@ const TANav = ({
             </button>
           </SidebarMenuButton>
         </SidebarMenuItem>
-      ))}
+        );
+      })}
     </SidebarMenu>
   );
 };
@@ -454,6 +471,7 @@ const Index = () => {
                   )}
                   active={taTab}
                   unreadHelp={unreadHelp}
+                  frozen={service.paused}
                   onSelect={handleSetTaTab}
                 />
               </SidebarGroupContent>
@@ -467,6 +485,7 @@ const Index = () => {
             <TADashboard
               activeSection={taTab}
               classTab={classTab}
+              isAdmin={identity?.is_admin ?? false}
               onNavigate={handleSetTaTab}
               onHelpRead={() => setUnreadHelp(0)}
               onLogout={handleTALogout}
