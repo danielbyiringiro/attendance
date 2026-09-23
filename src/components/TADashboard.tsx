@@ -1237,7 +1237,7 @@ const TADashboard = ({
       <div className="max-w-6xl mx-auto space-y-6">
         {/* 055. Above the header: a TA who cannot open a session needs the
             reason before they try, not after it fails. */}
-        <PausedBanner service={service} />
+        <PausedBanner service={service} isAdmin={isAdmin} />
 
         {!isAdminSection && (
           <PausedInterrupt

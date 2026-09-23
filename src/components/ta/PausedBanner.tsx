@@ -15,7 +15,18 @@ import type { ServiceState } from "@/lib/api/service";
  * Two components each calling the hook would ask the server twice a minute for
  * the same answer and could disagree about it in between.
  */
-const PausedBanner = ({ service: given }: { service?: ServiceState }) => {
+const PausedBanner = ({
+  service: given,
+  isAdmin = false,
+}: {
+  service?: ServiceState;
+  /**
+   * Only an admin is told where the switch is. Telling everybody "an admin can
+   * resume it under Admin" hands a TA an instruction they cannot carry out and
+   * a door they cannot open — and reads as though they were expected to.
+   */
+  isAdmin?: boolean;
+}) => {
   const polled = useServiceState(given === undefined);
   const service = given ?? polled;
   const { paused, message } = service;
@@ -39,9 +50,14 @@ const PausedBanner = ({ service: given }: { service?: ServiceState }) => {
       <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
       <p className="min-w-0">
         <span className="font-medium">The app is paused.</span>{" "}
-        {message ?? "An admin has paused it for maintenance."} Students cannot
-        check in, and nothing can be marked, opened, closed or edited until it
-        is resumed. An admin can resume it under Admin.
+        {message ?? "It has been paused for maintenance."} Students cannot check
+        in, and nothing can be marked, opened, closed or edited until it is
+        resumed.{" "}
+        {isAdmin
+          ? "You can resume it under Admin → System."
+          : service.ends_at
+            ? "It should be back shortly."
+            : ""}
       </p>
     </div>
   );
