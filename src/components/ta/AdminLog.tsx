@@ -1,0 +1,405 @@
+// The log admins keep for each other (057).
+//
+// Not a feature for staff with a permission check bolted on: a TA cannot read
+// this even if they find the URL, because the reading happens in a function
+// that refuses them. This screen is only ever shown inside Admin, which is
+// itself admin-only, so the check here is about what to render, not security.
+//
+// Entries the app wrote (a pause, a resume) sit in the same list as the ones
+// people type, marked so they read as different things. The evening the app
+// was paused for two hours is exactly the evening somebody will ask about.
+
+import { useEffect, useState } from "react";
+import { Download, Loader2, NotebookPen, Send } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import { toCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/attendanceExport";
+import { todayStr } from "@/lib/dates";
+import {
+  adminLogDelete,
+  adminLogList,
+  adminLogWrite,
+  type AdminLogEntry,
+} from "@/lib/api/service";
+
+/** Within a day, only the clock matters — the date is on the rule above. */
+const when = (iso: string) =>
+  new Date(iso).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const dayKey = (iso: string) => new Date(iso).toDateString();
+
+/**
+ * "Today", "Yesterday", or the date written out.
+ *
+ * The two recent days are named rather than dated because that is how somebody
+ * reading a log thinks about them — "what happened this morning" — and a date
+ * makes them do the arithmetic to find out whether it was today.
+ */
+const dayLabel = (iso: string) => {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(d.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  });
+};
+
+const AdminLog = () => {
+  const { toast } = useToast();
+  const [entries, setEntries] = useState<AdminLogEntry[]>([]);
+  const [body, setBody] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [scope, setScope] = useState<"all" | "day" | "range">("all");
+  const [from, setFrom] = useState(todayStr());
+  const [to, setTo] = useState(todayStr());
+
+  const load = async () => {
+    setIsLoading(true);
+    try {
+      setEntries(await adminLogList(200));
+    } catch (e) {
+      toast({
+        title: "Could not read the log",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const post = async () => {
+    if (!body.trim()) return;
+    setBusy(true);
+    try {
+      const entry = await adminLogWrite(body.trim());
+      setEntries((prev) => [entry, ...prev]);
+      setBody("");
+    } catch (e) {
+      toast({
+        title: "Could not save that",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Some or all of the log, as a file.
+   *
+   * Asked for from the server rather than taken from `entries`: that list is
+   * capped at 200, and an export that silently stops at the two hundredth is
+   * worse than no export — it looks complete.
+   *
+   * Dates are matched on the day the entry was written in THIS browser's
+   * clock, which is the day shown beside it on screen. Matching on UTC instead
+   * would drop late-evening entries out of the day somebody saw them in.
+   */
+  const runExport = async () => {
+    if (scope === "range" && from > to) {
+      toast({
+        title: "Those dates run backwards",
+        description: "The first date has to come before the second.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const all = await adminLogList(10_000);
+
+      const dayOf = (iso: string) => {
+        const d = new Date(iso);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      const wanted = all.filter((e) => {
+        const day = dayOf(e.created_at);
+        if (scope === "all") return true;
+        if (scope === "day") return day === from;
+        return day >= from && day <= to;
+      });
+
+      if (wanted.length === 0) {
+        toast({
+          title: "Nothing written in that time",
+          description:
+            "No file was saved — an empty one would look like the log had been lost.",
+        });
+        return;
+      }
+
+      const rows = wanted.map((e) => {
+        const at = new Date(e.created_at);
+        return [
+          at.toLocaleDateString(),
+          at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+          e.kind === "event" ? "app" : "written",
+          e.author ?? "",
+          e.body,
+        ];
+      });
+
+      const name =
+        scope === "all"
+          ? `admin-log-all-${todayStr()}.csv`
+          : scope === "day"
+            ? `admin-log-${from}.csv`
+            : `admin-log-${from}-to-${to}.csv`;
+
+      downloadCsv(toCsv(["Date", "Time", "Source", "Author", "Entry"], rows), name);
+      setExportOpen(false);
+      toast({
+        title: `${wanted.length} entr${wanted.length === 1 ? "y" : "ies"} exported`,
+        description: "The file holds admin-only writing — keep it somewhere private.",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not export the log",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await adminLogDelete(id);
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+    } catch (e) {
+      toast({
+        title: "Could not remove that entry",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <Card className="border-2">
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <NotebookPen className="h-4 w-4" />
+            Admin log
+          </CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isLoading || entries.length === 0}
+            onClick={() => setExportOpen(true)}
+          >
+            <Download className="mr-1 h-4 w-4" />
+            Export
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Textarea
+            id="admin-log-body"
+            value={body}
+            rows={3}
+            placeholder="What happened, and why. Only other admins can read this — not staff, not students."
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              For the installation as a whole. A note about one class belongs on
+              that class's session.
+            </p>
+            <Button size="sm" disabled={busy || !body.trim()} onClick={() => void post()}>
+              {busy ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="mr-1 h-4 w-4" />
+              )}
+              Save
+            </Button>
+          </div>
+        </div>
+
+        <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Export the log</DialogTitle>
+              <DialogDescription>
+                A spreadsheet of what was written, when, and by whom. Dates are
+                the days shown in this list.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-1.5">
+              {(
+                [
+                  ["all", "Everything"],
+                  ["day", "One day"],
+                  ["range", "Between two dates"],
+                ] as Array<["all" | "day" | "range", string]>
+              ).map(([value, label]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    scope === value
+                      ? "border-primary bg-primary/5"
+                      : "hover:border-primary/40"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="log-export-scope"
+                    value={value}
+                    checked={scope === value}
+                    onChange={() => setScope(value)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            {scope !== "all" && (
+              <div className={scope === "range" ? "grid grid-cols-2 gap-2" : ""}>
+                <div className="space-y-1">
+                  <Label htmlFor="log-from">
+                    {scope === "day" ? "Date" : "From"}
+                  </Label>
+                  <Input
+                    id="log-from"
+                    type="date"
+                    value={from}
+                    max={todayStr()}
+                    onChange={(e) => setFrom(e.target.value)}
+                  />
+                </div>
+                {scope === "range" && (
+                  <div className="space-y-1">
+                    <Label htmlFor="log-to">To</Label>
+                    <Input
+                      id="log-to"
+                      type="date"
+                      value={to}
+                      max={todayStr()}
+                      onChange={(e) => setTo(e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button variant="ghost" onClick={() => setExportOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={exporting} onClick={() => void runExport()}>
+                {exporting && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                Save the file
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {isLoading ? (
+          <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading…
+          </p>
+        ) : entries.length === 0 ? (
+          <p className="py-2 text-sm text-muted-foreground">
+            Nothing written yet. Pausing and resuming the app add their own
+            entries.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {entries.map((e, i) => (
+              <div key={e.id} className="space-y-2">
+                {/* A rule between days. The list is newest first, so a new day
+                    starts wherever this entry's date differs from the one
+                    above it — and the first entry always opens one. */}
+                {(i === 0 ||
+                  dayKey(entries[i - 1].created_at) !== dayKey(e.created_at)) && (
+                  <div className="flex items-center gap-3 pt-2 first:pt-0">
+                    <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                      {dayLabel(e.created_at)}
+                    </span>
+                    <hr className="min-w-0 flex-1 border-t" />
+                  </div>
+                )}
+
+              <div
+                className={`flex flex-col gap-1 rounded-lg border px-3 py-2 sm:flex-row sm:items-start sm:justify-between ${
+                  e.kind === "event" ? "bg-muted/40" : ""
+                }`}
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <p className="whitespace-pre-wrap break-words text-sm">
+                    {e.body}
+                  </p>
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {e.kind === "event" && (
+                      <Badge variant="secondary" className="text-[0.65rem]">
+                        by the app
+                      </Badge>
+                    )}
+                    <span>{when(e.created_at)}</span>
+                    {e.author && <span>· {e.author}</span>}
+                  </p>
+                </div>
+
+                <ConfirmDelete
+                  label="Remove"
+                  confirmLabel="Yes, remove it"
+                  warning="This entry is gone for every admin, and nothing keeps a copy."
+                  size="sm"
+                  resetKey={e.id}
+                  onConfirm={() => void remove(e.id)}
+                />
+              </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default AdminLog;

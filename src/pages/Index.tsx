@@ -6,6 +6,12 @@ import AccessibilitySettings from "@/components/AccessibilitySettings";
 import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
+import PausedNotice from "@/components/PausedNotice";
+import {
+  PauseWarningDialog,
+  PauseWarningStrip,
+} from "@/components/PauseWarning";
+import { useServiceState } from "@/lib/useServiceState";
 import ClassSwitcher from "@/components/ta/ClassSwitcher";
 import {
   restoreNavigation,
@@ -101,24 +107,40 @@ const TANav = ({
   tabs,
   active,
   unreadHelp = 0,
+  frozen = false,
   onSelect,
 }: {
   tabs: typeof TA_TABS;
   active: TATab;
   /** 049: announcements this account has not read. 0 shows nothing. */
   unreadHelp?: number;
+  /**
+   * 055: the app is paused. Every section but Admin is inert, because none of
+   * them can do anything — and leaving them live makes a deliberate pause look
+   * like a broken app.
+   */
+  frozen?: boolean;
   onSelect: (tab: TATab) => void;
 }) => {
   const { isMobile, setOpenMobile } = useSidebar();
 
   return (
     <SidebarMenu>
-      {tabs.map(({ id, label, icon: Icon }) => (
+      {tabs.map(({ id, label, icon: Icon }) => {
+        const blocked = frozen && id !== "admin";
+        return (
         <SidebarMenuItem key={id}>
-          <SidebarMenuButton asChild isActive={active === id} tooltip={label}>
+          <SidebarMenuButton
+            asChild
+            isActive={active === id}
+            tooltip={blocked ? `${label} — paused` : label}
+          >
             <button
               type="button"
+              disabled={blocked}
+              className={blocked ? "cursor-not-allowed opacity-40" : undefined}
               onClick={() => {
+                if (blocked) return;
                 onSelect(id);
                 if (isMobile) setOpenMobile(false);
               }}
@@ -135,7 +157,8 @@ const TANav = ({
             </button>
           </SidebarMenuButton>
         </SidebarMenuItem>
-      ))}
+        );
+      })}
     </SidebarMenu>
   );
 };
@@ -147,6 +170,9 @@ const Index = () => {
   // an account can exist, be signed in, and still be waiting for an admin —
   // `isTA = !!session` would let a pending account straight into the dashboard.
   const [isTA, setIsTA] = useState(false);
+  // 055. Asked here rather than inside StudentLogin: the notice replaces that
+  // whole screen, and a hook has to run before the early returns below.
+  const service = useServiceState();
   const [identity, setIdentity] = useState<StaffIdentity | null>(null);
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
   /*
@@ -445,6 +471,7 @@ const Index = () => {
                   )}
                   active={taTab}
                   unreadHelp={unreadHelp}
+                  frozen={service.paused}
                   onSelect={handleSetTaTab}
                 />
               </SidebarGroupContent>
@@ -458,6 +485,7 @@ const Index = () => {
             <TADashboard
               activeSection={taTab}
               classTab={classTab}
+              isAdmin={identity?.is_admin ?? false}
               onNavigate={handleSetTaTab}
               onHelpRead={() => setUnreadHelp(0)}
               onLogout={handleTALogout}
@@ -473,12 +501,35 @@ const Index = () => {
     return <StudentDashboard onBack={() => setShowStudentDashboard(false)} />;
   }
 
+
   return (
     <div className="relative">
-      <StudentLogin
-        openCount={openCount}
-        onMarkAttendance={handleStudentMarkAttendance}
-      />
+      {/* 056. A pause that is coming, not one that has arrived: the check-in
+          box still works, and saying so early is the whole point. */}
+      {service.state === "scheduled" && (
+        <div className="mx-auto max-w-md px-4 pt-4">
+          <PauseWarningStrip service={service} />
+        </div>
+      )}
+      <PauseWarningDialog service={service} />
+
+      {/*
+        055. The notice replaces the check-in box and NOTHING else.
+
+        It used to replace this whole screen, which took the corner controls
+        with it — including the gear, which is the only way to the staff
+        sign-in. A signed-out admin met a pause they could not undo and no way
+        to reach the switch. The one person who must always get in is the one
+        the notice locked out.
+      */}
+      {service.paused ? (
+        <PausedNotice message={service.message} endsAt={service.ends_at} />
+      ) : (
+        <StudentLogin
+          openCount={openCount}
+          onMarkAttendance={handleStudentMarkAttendance}
+        />
+      )}
 
       {/* Student History Button */}
       <Button

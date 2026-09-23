@@ -1,0 +1,66 @@
+// What staff see while the app is paused (055).
+//
+// A strip across the top of the dashboard rather than a dialog: a TA mid-class
+// should not have to dismiss something to see their register. It says what is
+// stopped, because "paused" alone reads as "slow" and the next thing they do
+// is try to open a session and wonder why it failed.
+
+import { PauseCircle } from "lucide-react";
+import { useServiceState } from "@/lib/useServiceState";
+import { PauseWarningDialog, PauseWarningStrip } from "@/components/PauseWarning";
+import type { ServiceState } from "@/lib/api/service";
+
+/**
+ * Takes the state when its parent already has it, so one screen polls once.
+ * Two components each calling the hook would ask the server twice a minute for
+ * the same answer and could disagree about it in between.
+ */
+const PausedBanner = ({
+  service: given,
+  isAdmin = false,
+}: {
+  service?: ServiceState;
+  /**
+   * Only an admin is told where the switch is. Telling everybody "an admin can
+   * resume it under Admin" hands a TA an instruction they cannot carry out and
+   * a door they cannot open — and reads as though they were expected to.
+   */
+  isAdmin?: boolean;
+}) => {
+  const polled = useServiceState(given === undefined);
+  const service = given ?? polled;
+  const { paused, message } = service;
+
+  // Not yet: a strip saying when, and a dialog once it is close. A TA about to
+  // open a session needs to know before they start it, not after it refuses.
+  if (!paused) {
+    return (
+      <>
+        <PauseWarningStrip service={service} />
+        <PauseWarningDialog service={service} />
+      </>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2 rounded-lg border-2 border-warning bg-warning/10 px-4 py-3 text-sm"
+    >
+      <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+      <p className="min-w-0">
+        <span className="font-medium">The app is paused.</span>{" "}
+        {message ?? "It has been paused for maintenance."} Students cannot check
+        in, and nothing can be marked, opened, closed or edited until it is
+        resumed.{" "}
+        {isAdmin
+          ? "You can resume it under Admin → System."
+          : service.ends_at
+            ? "It should be back shortly."
+            : ""}
+      </p>
+    </div>
+  );
+};
+
+export default PausedBanner;

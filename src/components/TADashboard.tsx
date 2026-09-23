@@ -119,6 +119,9 @@ import {
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import PausedBanner from "@/components/ta/PausedBanner";
+import PausedInterrupt from "@/components/ta/PausedInterrupt";
+import { useServiceState } from "@/lib/useServiceState";
 
 interface Student {
   id: string;
@@ -141,6 +144,8 @@ interface TADashboardProps {
   onNavigate: (tab: TATab, classTab?: ClassTab) => void;
   /** 049: Help has been opened, so the sidebar's unread dot can clear. */
   onHelpRead?: () => void;
+  /** 055: only an admin can resume a paused app, so only they are told how. */
+  isAdmin?: boolean;
   onLogout: () => void;
 }
 
@@ -184,6 +189,7 @@ const TADashboard = ({
   classTab,
   onNavigate,
   onHelpRead,
+  isAdmin = false,
   onLogout,
 }: TADashboardProps) => {
   const [selectedCohort, setSelectedCohort] = useState("all");
@@ -1177,6 +1183,18 @@ const TADashboard = ({
   // 049. Like Classes, Class and Admin, this is not about one class, so it must
   // not sit under the "no class selected" notice below.
   const isHelpSection = activeSection === "help";
+
+  /*
+   * 055. While paused, everything but Admin is greyed and inert.
+   *
+   * The banner alone left every screen looking usable, so a deliberate pause
+   * read as a broken app — worst of all to an admin, who is the one person who
+   * can undo it. Admin stays live because that is where the switch is, and the
+   * database agrees: 055 leaves the staff tables and the switch writable for
+   * exactly this reason.
+   */
+  const service = useServiceState();
+  const frozen = service.paused && !isAdminSection;
   const isClassesSection = activeSection === "classes";
   // A lookup rather than a five-deep ternary: adding a section to the nested
   // version meant threading a branch into two of them and leaving a dead arm
@@ -1217,6 +1235,17 @@ const TADashboard = ({
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
       <div className="max-w-6xl mx-auto space-y-6">
+        {/* 055. Above the header: a TA who cannot open a session needs the
+            reason before they try, not after it fails. */}
+        <PausedBanner service={service} isAdmin={isAdmin} />
+
+        {!isAdminSection && (
+          <PausedInterrupt
+            service={service}
+            isAdmin={isAdmin}
+            onGoToAdmin={() => onNavigate("admin")}
+          />
+        )}
         {/*
           Header.
 
@@ -1254,6 +1283,24 @@ const TADashboard = ({
             </Button>
           </div>
         </div>
+
+        {/*
+          055. Greyed and inert while paused, except Admin — which is not
+          inside this wrapper — and Logout, which is in the header above it.
+
+          pointer-events-none rather than disabling each control: there are
+          dozens, they are added to constantly, and one missed would be a
+          button that looks live, does nothing, and says nothing. Dialogs
+          are portalled to the body, so anything already open stays usable.
+        */}
+        <div
+          className={
+            frozen
+              ? "pointer-events-none select-none opacity-50"
+              : undefined
+          }
+          aria-hidden={frozen || undefined}
+        >
 
         {/* Every count below is of one class's roster, so say when there isn't
             one and when it is still arriving — an empty roster otherwise reads
@@ -1304,7 +1351,7 @@ const TADashboard = ({
             onOpenAllClasses={() => onNavigate("classes")}
           />
         )}
-        {isAdminSection && <Admin />}
+        {isAdminSection && <Admin service={service} />}
         {isHelpSection && <Help onRead={onHelpRead} />}
 
         {/*
@@ -1941,6 +1988,7 @@ const TADashboard = ({
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {activeClass && (
