@@ -11,7 +11,14 @@ import { getServiceState, type ServiceState } from "@/lib/api/service";
 
 const EVERY_MS = 60_000;
 
-const RUNNING: ServiceState = { paused: false, message: null, since: null };
+const RUNNING: ServiceState = {
+  state: "running",
+  paused: false,
+  message: null,
+  starts_at: null,
+  ends_at: null,
+  since: null,
+};
 
 export const useServiceState = (): ServiceState => {
   const [state, setState] = useState<ServiceState>(RUNNING);

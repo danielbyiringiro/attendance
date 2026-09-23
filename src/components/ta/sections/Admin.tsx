@@ -176,14 +176,6 @@ const Admin = () => {
   }
 
   return (
-    <div className="space-y-4">
-      {/*
-        055. Above the tabs, because it is not a fifth job of the same kind —
-        it stops every one of them, and every class in the installation. Buried
-        under a tab it would be found by accident more often than on purpose.
-      */}
-      <PauseTheApp />
-
     /*
       050. Four jobs that were one long scroll: approvals, feedback, class
       repair and what staff see on Help. Ordered by how often each is actually
@@ -201,6 +193,9 @@ const Admin = () => {
         <TabsTrigger value="feedback">Feedback</TabsTrigger>
         <TabsTrigger value="classes">Classes</TabsTrigger>
         <TabsTrigger value="content">Content</TabsTrigger>
+        {/* 055, 056. Last, and on its own: pausing is not one more thing to
+            administer, it is the switch that stops all of them. */}
+        <TabsTrigger value="system">System</TabsTrigger>
       </TabsList>
 
       <TabsContent value="accounts" className="mt-0 space-y-4">
@@ -697,8 +692,11 @@ const Admin = () => {
       <TabsContent value="content" className="mt-0">
         <HelpAdmin />
       </TabsContent>
+
+      <TabsContent value="system" className="mt-0">
+        <PauseTheApp />
+      </TabsContent>
     </Tabs>
-    </div>
   );
 };
 

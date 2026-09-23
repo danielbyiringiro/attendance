@@ -7,10 +7,22 @@
 
 import { PauseCircle } from "lucide-react";
 import { useServiceState } from "@/lib/useServiceState";
+import { PauseWarningDialog, PauseWarningStrip } from "@/components/PauseWarning";
 
 const PausedBanner = () => {
-  const { paused, message } = useServiceState();
-  if (!paused) return null;
+  const service = useServiceState();
+  const { paused, message } = service;
+
+  // Not yet: a strip saying when, and a dialog once it is close. A TA about to
+  // open a session needs to know before they start it, not after it refuses.
+  if (!paused) {
+    return (
+      <>
+        <PauseWarningStrip service={service} />
+        <PauseWarningDialog service={service} />
+      </>
+    );
+  }
 
   return (
     <div

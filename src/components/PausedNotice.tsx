@@ -10,7 +10,21 @@
 import { PauseCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
-const PausedNotice = ({ message }: { message: string | null }) => (
+const time = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+const PausedNotice = ({
+  message,
+  endsAt,
+}: {
+  message: string | null;
+  endsAt?: string | null;
+}) => (
   <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4">
     <Card className="w-full max-w-md border-2">
       <CardContent className="space-y-3 pt-6 text-center">
@@ -20,6 +34,11 @@ const PausedNotice = ({ message }: { message: string | null }) => (
           {message ??
             "Attendance is paused for maintenance. Nothing you do now would be recorded, so there is nothing to type yet."}
         </p>
+        {endsAt && (
+          <p className="text-sm">
+            Expected back by <span className="font-medium">{time(endsAt)}</span>.
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">
           This page checks again every minute. If your class is being held now,
           tell your TA — they can mark you once it is back.

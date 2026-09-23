@@ -7,6 +7,10 @@ import TADashboard from "@/components/TADashboard";
 import TALogin from "@/components/TALogin";
 import StudentDashboard from "@/components/StudentDashboard";
 import PausedNotice from "@/components/PausedNotice";
+import {
+  PauseWarningDialog,
+  PauseWarningStrip,
+} from "@/components/PauseWarning";
 import { useServiceState } from "@/lib/useServiceState";
 import ClassSwitcher from "@/components/ta/ClassSwitcher";
 import {
@@ -482,11 +486,20 @@ const Index = () => {
   // invites twenty attempts and a queue at the front of the room. Their own
   // history stays reachable above — reading a record changes nothing.
   if (service.paused) {
-    return <PausedNotice message={service.message} />;
+    return <PausedNotice message={service.message} endsAt={service.ends_at} />;
   }
 
   return (
     <div className="relative">
+      {/* 056. A pause that is coming, not one that has arrived: the check-in
+          box still works, and saying so early is the whole point. */}
+      {service.state === "scheduled" && (
+        <div className="mx-auto max-w-md px-4 pt-4">
+          <PauseWarningStrip service={service} />
+        </div>
+      )}
+      <PauseWarningDialog service={service} />
+
       <StudentLogin
         openCount={openCount}
         onMarkAttendance={handleStudentMarkAttendance}
