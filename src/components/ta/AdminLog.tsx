@@ -10,13 +10,16 @@
 // was paused for two hours is exactly the evening somebody will ask about.
 
 import { useEffect, useState } from "react";
-import { Loader2, NotebookPen, Send } from "lucide-react";
+import { Download, Loader2, NotebookPen, Send } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import { toCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/attendanceExport";
+import { todayStr } from "@/lib/dates";
 import {
   adminLogDelete,
   adminLogList,
@@ -62,6 +65,7 @@ const AdminLog = () => {
   const [body, setBody] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = async () => {
     setIsLoading(true);
@@ -101,6 +105,49 @@ const AdminLog = () => {
     }
   };
 
+  /**
+   * The whole log as a file, not the part on screen.
+   *
+   * Asked for again rather than exported from `entries`: that list is capped
+   * at 200, and an export that silently stops at the two hundredth entry is
+   * worse than no export — it looks complete.
+   *
+   * The file holds admin-only writing, so it belongs wherever the rest of this
+   * installation's private paperwork lives, not a shared drive.
+   */
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const all = await adminLogList(10_000);
+      const rows = all.map((e) => {
+        const at = new Date(e.created_at);
+        return [
+          at.toLocaleDateString(),
+          at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+          e.kind === "event" ? "app" : "written",
+          e.author ?? "",
+          e.body,
+        ];
+      });
+      downloadCsv(
+        toCsv(["Date", "Time", "Source", "Author", "Entry"], rows),
+        `admin-log-${todayStr()}.csv`,
+      );
+      toast({
+        title: `${all.length} entr${all.length === 1 ? "y" : "ies"} exported`,
+        description: "The file holds admin-only writing — keep it somewhere private.",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not export the log",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const remove = async (id: string) => {
     try {
       await adminLogDelete(id);
@@ -117,10 +164,25 @@ const AdminLog = () => {
   return (
     <Card className="border-2">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <NotebookPen className="h-4 w-4" />
-          Admin log
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <NotebookPen className="h-4 w-4" />
+            Admin log
+          </CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting || isLoading || entries.length === 0}
+            onClick={() => void exportAll()}
+          >
+            {exporting ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-1 h-4 w-4" />
+            )}
+            Export
+          </Button>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
