@@ -13,6 +13,7 @@ import { CalendarClock, Loader2, Pause, Play } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -48,6 +49,8 @@ const PauseTheApp = () => {
   const [message, setMessage] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  // Cleared after every change: it describes that act, not the next one.
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = () =>
@@ -75,8 +78,10 @@ const PauseTheApp = () => {
           ? new Date(startAt).toISOString()
           : undefined,
         paused && endAt ? new Date(endAt).toISOString() : undefined,
+        note.trim() || undefined,
       );
       setState(next);
+      setNote("");
       toast({
         title:
           next.state === "scheduled"
@@ -167,6 +172,20 @@ const PauseTheApp = () => {
                 placeholder="Back shortly — we're doing some maintenance"
                 onChange={(e) => setMessage(e.target.value)}
               />
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="pause-note">Note for the admin log</Label>
+              <Textarea
+                id="pause-note"
+                rows={2}
+                value={note}
+                placeholder="Why, for whoever reads this later. Students never see this."
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Saved with this pause in the log below. Only admins can read it.
+              </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">

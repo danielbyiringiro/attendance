@@ -63,12 +63,19 @@ export const adminSetServicePaused = async (
   message?: string,
   startsAt?: string,
   endsAt?: string,
+  /**
+   * Admin-only, and never shown to a student: it joins the log entry this
+   * writes and goes nowhere else. The public message and the reason are rarely
+   * the same sentence.
+   */
+  logNote?: string,
 ): Promise<ServiceState> => {
   const { data, error } = await supabase.rpc("admin_set_service_paused", {
     p_paused: paused,
     p_message: message ?? null,
     p_starts_at: startsAt ?? null,
     p_ends_at: endsAt ?? null,
+    p_log_note: logNote ?? null,
   });
   if (error) fail(paused ? "Could not pause the app" : "Could not resume", error);
   return data as ServiceState;

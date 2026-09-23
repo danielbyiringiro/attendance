@@ -25,6 +25,15 @@
 -- learns the table name and queries it directly gets nothing, exactly as they
 -- get nothing from service_state (055) and from any other table 027 covers.
 --
+-- TWO KINDS OF WORDS ABOUT ONE PAUSE
+--
+-- The message on a pause is public: it is what a student reads instead of the
+-- check-in box. The note is not, and the two are rarely the same sentence.
+-- "Back shortly, we are doing some maintenance" is for the student; "copying
+-- the database to the new project, Daniel rotating the key straight after" is
+-- for whoever reads this in March. So pausing takes both, and only one of them
+-- leaves this table.
+--
 -- ENTRIES NOBODY TYPED
 --
 -- Pausing and resuming write their own entry. A log that only holds what
@@ -174,11 +183,21 @@ GRANT EXECUTE ON FUNCTION public.admin_log_delete(uuid) TO authenticated;
 -- two hours is exactly the one somebody will ask about later, and it should
 -- not depend on whoever paused it also remembering to write a note.
 -- ----------------------------------------------------------------------------
+-- The four-argument version from 056 is dropped rather than left beside this
+-- one: with the note defaulted, a four-argument call would match both and
+-- Postgres would refuse it as ambiguous.
+DROP FUNCTION IF EXISTS
+  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz);
+
 CREATE OR REPLACE FUNCTION public.admin_set_service_paused(
   p_paused    boolean,
   p_message   text        DEFAULT NULL,
   p_starts_at timestamptz DEFAULT NULL,
-  p_ends_at   timestamptz DEFAULT NULL
+  p_ends_at   timestamptz DEFAULT NULL,
+  -- Admin-only, and never shown to a student: it goes to the log and nowhere
+  -- else. service_state does not carry it, so there is no path by which it
+  -- could reach get_service_state and out to the check-in page.
+  p_log_note  text        DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -219,7 +238,12 @@ BEGIN
       WHEN 'paused' THEN 'App paused'
       ELSE 'App resumed'
     END
-    || COALESCE(' — ' || NULLIF(btrim(COALESCE(p_message, '')), ''), ''),
+    || COALESCE(' — ' || NULLIF(btrim(COALESCE(p_message, '')), ''), '')
+    -- The private half, on its own line, in the same entry: the reason and the
+    -- act belong together, and splitting them across two entries is how a
+    -- reader ends up with one and not the other.
+    || COALESCE(E'
+' || NULLIF(btrim(COALESCE(p_log_note, '')), ''), ''),
     'event');
 
   RETURN v_state;
@@ -227,8 +251,14 @@ END;
 $fn$;
 
 REVOKE ALL ON FUNCTION
-  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz)
+  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz, text)
   FROM public;
 GRANT EXECUTE ON FUNCTION
-  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz)
+  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz, text)
   TO authenticated;
+
+COMMENT ON FUNCTION
+  public.admin_set_service_paused(boolean, text, timestamptz, timestamptz, text) IS
+  'Pause now, schedule one, or resume. p_message is public — students read it '
+  'instead of the check-in box. p_log_note is admin-only and goes to the log '
+  'with the event, never to service_state.';

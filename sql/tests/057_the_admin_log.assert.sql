@@ -12,6 +12,7 @@
 --   an ordinary TA cannot read, cannot write, and cannot reach the table
 --   an empty note is refused
 --   pausing writes its own entry, without anybody typing one
+--   a private note on a pause reaches the log and NOT the student's notice
 --   an entry can be removed
 --   an entry outlives its author's account
 --
@@ -103,6 +104,43 @@ BEGIN
   RAISE NOTICE '057 ok: pausing and resuming write their own entries';
 END;
 $event$;
+
+-- -------------------- the private note lands in the log, and only there --
+-- The whole point of having two boxes: one sentence is for the student and one
+-- is for whoever reads this in March. A note that leaked into the public
+-- message would be worse than having no note at all.
+DO $private_note$
+DECLARE
+  v_state jsonb;
+  v_hits  integer;
+BEGIN
+  v_state := public.admin_set_service_paused(
+    true, 'Back shortly', NULL, NULL,
+    'Copying to the new project; key rotates straight after.');
+
+  SELECT count(*) INTO v_hits
+  FROM jsonb_array_elements(public.admin_log_list(10)) e
+  WHERE e ->> 'kind' = 'event'
+    AND e ->> 'body' LIKE '%Back shortly%'
+    AND e ->> 'body' LIKE '%key rotates straight after%';
+  IF v_hits <> 1 THEN
+    RAISE EXCEPTION '057: the note did not reach the log with its pause';
+  END IF;
+
+  IF (v_state ->> 'message') <> 'Back shortly' THEN
+    RAISE EXCEPTION
+      '057: students would be shown "%" — the private note leaked into the public message',
+      v_state ->> 'message';
+  END IF;
+
+  IF (public.get_service_state() ->> 'message') LIKE '%key rotates%' THEN
+    RAISE EXCEPTION '057: the private note is readable from the student-facing state';
+  END IF;
+
+  PERFORM public.admin_set_service_paused(false);
+  RAISE NOTICE '057 ok: a pause note reaches the log and never the student';
+END;
+$private_note$;
 
 -- ------------------------------------------- an ordinary TA reaches none of it --
 RESET ROLE;
