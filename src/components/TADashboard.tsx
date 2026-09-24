@@ -2097,7 +2097,7 @@ const TADashboard = ({
 
       {/* Flagged Records Dialog */}
       <Dialog open={showFlaggedDialog} onOpenChange={setShowFlaggedDialog}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Flagged Attendance Records</DialogTitle>
             <DialogDescription>
@@ -2261,7 +2261,7 @@ const TADashboard = ({
         open={showRemoveStudentDialog}
         onOpenChange={setShowRemoveStudentDialog}
       >
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Remove Student</DialogTitle>
             <DialogDescription>
@@ -2329,7 +2329,7 @@ const TADashboard = ({
 
       {/* Excused Absence Dialog */}
       <Dialog open={showExcusedDialog} onOpenChange={setShowExcusedDialog}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Add Excused Absence</DialogTitle>
             <DialogDescription>
@@ -2466,7 +2466,7 @@ const TADashboard = ({
         open={showWeeklyAbsenceDialog}
         onOpenChange={setShowWeeklyAbsenceDialog}
       >
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>
