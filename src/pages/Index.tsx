@@ -427,7 +427,7 @@ const Index = () => {
 
   if (isTA && identityError && !isResolvingIdentity) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-6">
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6">
         <div className="max-w-md space-y-3 text-center">
           <p className="text-lg font-semibold">
             Could not check your account
@@ -508,7 +508,7 @@ const Index = () => {
       {/* 056. A pause that is coming, not one that has arrived: the check-in
           box still works, and saying so early is the whole point. */}
       {service.state === "scheduled" && (
-        <div className="mx-auto max-w-md px-4 pt-4">
+        <div className="mx-auto max-w-md px-4 pt-4 sm:px-6 sm:pt-6">
           <PauseWarningStrip service={service} />
         </div>
       )}

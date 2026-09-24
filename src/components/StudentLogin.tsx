@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -207,7 +208,7 @@ const StudentLogin = ({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-md space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
@@ -233,7 +234,7 @@ const StudentLogin = ({
               : "border-border bg-card"
           }`}
         >
-          <CardContent className="flex items-center justify-center gap-3 py-4">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "flex items-center justify-center gap-3")}>
             <Clock
               className={`h-5 w-5 ${openCount > 0 ? "text-success" : "text-muted-foreground"}`}
             />
@@ -261,7 +262,7 @@ const StudentLogin = ({
         */}
         {marked && (
           <Card className="border-2 border-success/40 bg-success/5 shadow-medium">
-            <CardContent className="space-y-2 py-4 text-center">
+            <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-2 text-center")}>
               <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
 
               <p className="text-sm font-medium">

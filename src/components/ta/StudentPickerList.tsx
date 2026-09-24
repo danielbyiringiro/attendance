@@ -119,7 +119,7 @@ const StudentPickerList = ({
                   }
                 }}
                 className={cn(
-                  "flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isSelected
                     ? tone === "destructive"
                       ? "border-destructive/40 bg-destructive/10"

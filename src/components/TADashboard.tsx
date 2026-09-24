@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import SessionWindowBadge, {
   SessionWindowNote,
@@ -1257,7 +1257,7 @@ const TADashboard = ({
     SECTION_COPY[activeSection] ?? SECTION_COPY.attendance;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* 055. Above the header: a TA who cannot open a session needs the
             reason before they try, not after it fails. */}
@@ -1332,7 +1332,7 @@ const TADashboard = ({
         {!isClassesSection && !isClassSection &&
           !isAdminSection && !isHelpSection && !activeClass && (
           <Card className="border-2 border-dashed">
-            <CardContent className="pt-6 text-center">
+            <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
               <p className="font-medium">No class selected</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Choose one in the class switcher, or create one from All classes.
@@ -1921,7 +1921,7 @@ const TADashboard = ({
                                     void openStudentDetail(student.id, student.cohort),
                                   )
                                 }
-                                className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-success/20 bg-success/10 hover:bg-success/20"
+                                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-success/20 bg-success/10 px-3 py-2 transition-colors hover:bg-success/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               >
                                 {/* Name first, ID under it — the same way
                                     round as the roster on Analytics. Somebody
@@ -1991,7 +1991,7 @@ const TADashboard = ({
                                       void openStudentDetail(studentId, cohort),
                                     )
                                   }
-                                  className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-destructive/20 bg-destructive/10 hover:bg-destructive/20"
+                                  className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 >
                                   <div className="flex min-w-0 flex-col">
                                     <span className="flex items-center gap-2">

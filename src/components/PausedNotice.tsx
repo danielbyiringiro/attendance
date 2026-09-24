@@ -8,7 +8,8 @@
 // and a pause is not a reason to hide somebody's own attendance from them.
 
 import { PauseCircle } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 const time = (iso: string | null) =>
   iso
@@ -25,9 +26,9 @@ const PausedNotice = ({
   message: string | null;
   endsAt?: string | null;
 }) => (
-  <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4">
+  <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6">
     <Card className="w-full max-w-md border-2">
-      <CardContent className="space-y-3 pt-6 text-center">
+      <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-3 text-center")}>
         <PauseCircle className="mx-auto h-10 w-10 text-warning" aria-hidden />
         <h1 className="text-xl font-semibold">Check-in is paused</h1>
         <p className="text-sm text-muted-foreground">
