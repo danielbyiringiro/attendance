@@ -141,6 +141,29 @@ export const setAttendanceState = async (
 };
 
 /**
+ * Write, change or clear the note on one student's session (062).
+ *
+ * Never changes their state: a note is not a judgement about whether they were
+ * there. On a session nobody has marked yet — including one that has not
+ * happened — the server writes a row in `pending` to hold it, and clearing the
+ * note takes that row away again.
+ *
+ * An empty string clears it, which is what a cleared input sends.
+ */
+export const setAttendanceNote = async (
+  sessionId: string,
+  studentId: string,
+  note: string,
+): Promise<void> => {
+  const { error } = await supabase.rpc("set_attendance_note", {
+    p_session_id: sessionId,
+    p_student_id: studentId,
+    p_note: note.trim() || null,
+  });
+  if (error) fail("Could not save the note", error);
+};
+
+/**
  * Excuse one student from every session their cohort holds in a date range.
  *
  * One call, because the server does the whole range in one transaction (060).

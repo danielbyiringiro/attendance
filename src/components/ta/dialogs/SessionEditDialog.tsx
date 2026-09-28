@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,13 @@ const SessionEditDialog = ({
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [duration, setDuration] = useState("");
+  /*
+   * What happened on this day (002's notes column, unused by the app until
+   * now). Deliberately about THIS session and never the run: "fire alarm, cut
+   * short" and "guest lecturer" are facts about one date, and applying one to
+   * a whole term would be nonsense.
+   */
+  const [notes, setNotes] = useState("");
   const [signup, setSignup] = useState("");
   // 048, for this session alone: the pattern it came from is left as it is.
   const [closesAtStart, setClosesAtStart] = useState(false);
@@ -82,6 +90,7 @@ const SessionEditDialog = ({
       }),
     );
     setDuration(String(session.duration_minutes));
+    setNotes(session.notes ?? "");
     setSignup(String(session.auto_close_minutes));
     setClosesAtStart(session.closes_at_start ?? false);
     setGrace(String(session.grace_minutes ?? 5));
@@ -129,16 +138,28 @@ const SessionEditDialog = ({
       // 053's function — so a client deployed before that migration is run
       // loses the new choices (they are not offered: the count fails too) and
       // keeps the edit it always had, rather than losing every edit at once.
+      const noteChanged = notes.trim() !== (session.notes ?? "").trim();
+
       const r: SeriesEditResult =
         scope === "one"
           ? (await updateSession(session.id, {
               ...changes,
               date: date || undefined,
+              // "" rather than undefined when cleared: the server reads null as
+              // "leave it alone", so undefined could never erase a note.
+              ...(noteChanged ? { notes: notes.trim() } : {}),
             }),
             { scope: "one", updated: 1, skipped_marked: 0, skipped_status: 0 })
           : // A run cannot change its date: that is the weekly pattern's job,
             // and the server refuses it. Not sent, rather than sent and refused.
             await updateSessionSeries(session.id, scope, changes);
+
+      // A note belongs to this day even when the edit above was about the run,
+      // so it goes on separately. update_session leaves every field it is not
+      // given alone, so this changes nothing else.
+      if (scope !== "one" && noteChanged) {
+        await updateSession(session.id, { notes: notes.trim() });
+      }
       const skipped = r.skipped_marked + r.skipped_status;
       const why = [
         r.skipped_marked > 0 && `${r.skipped_marked} already had attendance taken`,
@@ -314,6 +335,32 @@ const SessionEditDialog = ({
                 : "How long check-in stays open once you open it."}
             </p>
           </div>
+        </div>
+
+        {/*
+          What happened on this day.
+
+          The column has existed since 002 and nothing in the app has ever
+          written to it, so every session has been carrying an empty field
+          nobody could fill. This is where "guest lecturer", "fire alarm, cut
+          short" or "moved to the lab" goes — about the class, not about any
+          one student, which is the note on their own record instead.
+        */}
+        <div className="space-y-1">
+          <Label htmlFor="edit-notes">Note on this session</Label>
+          <Textarea
+            id="edit-notes"
+            rows={2}
+            value={notes}
+            maxLength={500}
+            placeholder="Guest lecturer. Room changed to Lab 2."
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Always this one session, even when the change above covers a run —
+            what happened on a day did not happen every week. Everyone on the
+            class can read it.
+          </p>
         </div>
 
         {/*

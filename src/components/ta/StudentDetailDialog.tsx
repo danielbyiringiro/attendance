@@ -23,12 +23,14 @@ import {
   Loader2,
   Pencil,
   ShieldCheck,
+  StickyNote,
   X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import {
   excuseRange,
+  setAttendanceNote,
   setAttendanceState,
   stateLabel,
   type AttendanceLog,
@@ -129,6 +131,16 @@ const StudentDetailDialog = ({
     reason: string;
   } | null>(null);
   const [isExcusing, setIsExcusing] = useState(false);
+  /*
+   * Writing on one day (062).
+   *
+   * Editing happens in the row itself rather than a dialog: a note is one
+   * line, and the day it belongs to is the thing you are looking at. Which row
+   * is open is held by session id, so opening a second closes the first — two
+   * open editors with one Save each is how the wrong day gets annotated.
+   */
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
   /*
    * One date out of a term.
    *
@@ -293,6 +305,27 @@ const StudentDetailDialog = ({
    * insult that sends people back to the other dialog. With nothing in focus
    * it opens on today, which is the other thing people mean.
    */
+  const saveNote = async (sessionId: string) => {
+    if (!student) return;
+    setSavingId(sessionId);
+    try {
+      await setAttendanceNote(sessionId, student.student_id, noteText);
+      setNoteFor(null);
+      // The list behind this reads from the log, so it has to be re-read for
+      // the note to show. Nothing is said in a toast: the note appearing on
+      // the row is the confirmation, and a toast per line of typing is noise.
+      onChanged();
+    } catch (e) {
+      toast({
+        title: "Could not save the note",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const startExcusing = () => {
     const day = onDate || new Date().toISOString().slice(0, 10);
     setExcuse({ from: day, to: day, reason: "" });
@@ -793,30 +826,56 @@ const StudentDetailDialog = ({
                           : "No check-in"}
                       </p>
                       {/*
-                        060. The reason somebody was excused, where the
-                        question is actually asked — on the day itself.
+                        What was written about this day (060, 062).
 
-                        Only for an excused day: a note is a thing staff write
-                        when they excuse somebody, so "no reason recorded" on
-                        every present row would be noise about nothing.
-
-                        Excuses recorded before 060 have no reason and never
-                        will. They are shown as missing rather than backfilled
-                        with a stand-in, because a stand-in written by a
-                        migration is indistinguishable from one a TA typed, and
-                        somebody reading this next term should be able to tell
-                        "nobody wrote one down" from "the reason was X".
+                        Any state can carry one now: "arrived 9.40, bus",
+                        "left early with permission", "did the work on paper".
+                        An excused day with nothing written says so, because
+                        there the absence of a reason is itself worth seeing —
+                        excuses from before 060 have none and never will, and a
+                        stand-in written by a migration would be
+                        indistinguishable from one a TA typed.
                       */}
-                      {m.state === "excused" &&
-                        (m.note ? (
-                          <p className="text-xs text-muted-foreground">
-                            <span className="italic">{m.note}</span>
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground/70">
-                            No reason recorded
-                          </p>
-                        ))}
+                      {noteFor === m.session_id ? (
+                        <div className="mt-1 flex items-center gap-1">
+                          <Input
+                            autoFocus
+                            className="h-8 text-xs"
+                            value={noteText}
+                            maxLength={500}
+                            placeholder="Arrived late, bus"
+                            onChange={(e) => setNoteText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void saveNote(m.session_id);
+                              if (e.key === "Escape") setNoteFor(null);
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-8 px-2"
+                            disabled={savingId === m.session_id}
+                            onClick={() => void saveNote(m.session_id)}
+                          >
+                            <Check className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            onClick={() => setNoteFor(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : m.note ? (
+                        <p className="text-xs italic text-muted-foreground">
+                          {m.note}
+                        </p>
+                      ) : m.state === "excused" ? (
+                        <p className="text-xs text-muted-foreground/70">
+                          No reason recorded
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
@@ -827,6 +886,27 @@ const StudentDetailDialog = ({
                       >
                         {stateLabel(m.state)}
                       </span>
+                      {/* 062. Writing on the day, from the day's own row. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2 text-muted-foreground"
+                        title={m.note ? "Change the note" : "Add a note"}
+                        aria-label={
+                          m.note
+                            ? `Change the note on ${m.session_date}`
+                            : `Add a note on ${m.session_date}`
+                        }
+                        onClick={() => {
+                          setNoteFor(m.session_id);
+                          setNoteText(m.note ?? "");
+                        }}
+                      >
+                        <StickyNote
+                          className={`h-4 w-4 ${m.note ? "text-primary" : ""}`}
+                        />
+                      </Button>
+
                       {savingId === m.session_id ? (
                         <Loader2 className="h-4 w-4 animate-spin opacity-60" />
                       ) : (
