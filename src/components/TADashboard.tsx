@@ -1257,8 +1257,8 @@ const TADashboard = ({
     SECTION_COPY[activeSection] ?? SECTION_COPY.attendance;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6 lg:p-10">
+      <div className="mx-auto max-w-6xl space-y-6 lg:space-y-8">
         {/* 055. Above the header: a TA who cannot open a session needs the
             reason before they try, not after it fails. */}
         <PausedBanner service={service} isAdmin={isAdmin} />

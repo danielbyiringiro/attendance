@@ -475,8 +475,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6 lg:p-10">
+      <div className="mx-auto max-w-4xl space-y-6 lg:space-y-8">
         <div className="mb-4 flex items-center justify-between">
           <Button variant="ghost" onClick={onBack}>
             <ArrowLeft className="mr-2 h-4 w-4" />
