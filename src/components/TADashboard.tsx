@@ -1327,11 +1327,24 @@ const TADashboard = ({
           are portalled to the body, so anything already open stays usable.
         */}
         <div
-          className={
-            frozen
-              ? "pointer-events-none select-none opacity-50"
-              : undefined
-          }
+          className={cn(
+            /*
+              The stack spacing lives here as well as on the parent, and that
+              is not a duplicate.
+
+              This wrapper is ONE child of the page's space-y stack, so the
+              stack puts a gap between the header and this div and then has
+              nothing further to say: space-y only spaces its own direct
+              children. Everything on every screen below the header is inside
+              here, so from the day this wrapper was added for the pause
+              (055) the whole app rendered with no vertical rhythm at all —
+              buttons flush against cards, cards flush against each other.
+              Nothing looked broken enough to name, which is why it survived
+              this long.
+            */
+            "space-y-6 lg:space-y-8",
+            frozen && "pointer-events-none select-none opacity-50",
+          )}
           aria-hidden={frozen || undefined}
         >
 
