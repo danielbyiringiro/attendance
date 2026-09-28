@@ -140,6 +140,45 @@ export const setAttendanceState = async (
   return data as AttendanceRecordRow;
 };
 
+/**
+ * Excuse one student from every session their cohort holds in a date range.
+ *
+ * This is the whole of "excusing somebody", and it lives here because there
+ * are now two ways in — the Excused Absence dialog on the attendance tab, and
+ * the button on a student's own record — and two copies would drift the way
+ * the six date-walking loops below did.
+ *
+ * It sets state on the sessions that EXIST rather than expanding the range by
+ * a weekday rule. The rule version excused people for days their cohort never
+ * met and missed any session the rule failed to predict. A cancelled session
+ * is skipped: nobody needs excusing from a class that did not happen.
+ *
+ * Returns how many sessions were changed, which is what the caller should say
+ * out loud — "excused for 3 sessions" is checkable, "saved" is not.
+ */
+export const excuseRange = async (
+  classId: string,
+  studentId: string,
+  range: { from: string; to: string; cohortId?: string },
+): Promise<number> => {
+  const log = await attendanceLog(classId, {
+    from: range.from,
+    to: range.to,
+    cohortId: range.cohortId,
+  });
+
+  const sessions = log.sessions.filter((s) => s.status !== "cancelled");
+
+  // Sequential rather than Promise.all: every one of these is a correction the
+  // database logs, and firing forty writes at once to save a second is not
+  // worth the half-applied mess when one of them is refused.
+  for (const s of sessions) {
+    await setAttendanceState(s.session_id, studentId, "excused");
+  }
+
+  return sessions.length;
+};
+
 // ---------------------------------------------------------------------------
 // The attendance log — one read, replacing six derivations
 // ---------------------------------------------------------------------------

@@ -102,6 +102,7 @@ import {
 } from "@/lib/api/enrolment";
 import {
   attendanceLog,
+  excuseRange,
   isAbsentState,
   isPresentState,
   setAttendanceState,
@@ -910,14 +911,17 @@ const TADashboard = ({
         roster.find((r) => r.student_id === excusedStudent.student_id)?.cohort ??
           "",
       );
-      const log = await attendanceLog(activeClassId, {
-        from: toDateStr(excusedStartDate),
-        to: toDateStr(excusedEndDate),
-        cohortId,
-      });
+      const count = await excuseRange(
+        activeClassId,
+        excusedStudent.student_id,
+        {
+          from: toDateStr(excusedStartDate),
+          to: toDateStr(excusedEndDate),
+          cohortId,
+        },
+      );
 
-      const sessions = log.sessions.filter((sn) => sn.status !== "cancelled");
-      if (sessions.length === 0) {
+      if (count === 0) {
         toast({
           title: "No Sessions",
           description:
@@ -927,17 +931,9 @@ const TADashboard = ({
         return;
       }
 
-      for (const sn of sessions) {
-        await setAttendanceState(
-          sn.session_id,
-          excusedStudent.student_id,
-          "excused",
-        );
-      }
-
       toast({
         title: "Excused Absence Saved",
-        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${sessions.length} session${sessions.length > 1 ? "s" : ""}.`,
+        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${count} session${count > 1 ? "s" : ""}.`,
       });
 
       setShowExcusedDialog(false);
