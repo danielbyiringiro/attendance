@@ -164,7 +164,13 @@ const AttendanceCalendar = ({ entries, onDayClick }: AttendanceCalendarProps) =>
                   .map((e) =>
                     e.tone === "dayoff" && e.label
                       ? `${TONE_LABEL.dayoff} (${e.label})`
-                      : TONE_LABEL[e.tone],
+                      : // 060. Same shape as a day off's reason: the word, then
+                        // why in brackets. An excused day whose reason is only
+                        // visible in the list is one somebody has to go looking
+                        // for to understand the colour.
+                        e.note
+                        ? `${TONE_LABEL[e.tone]} (${e.note})`
+                        : TONE_LABEL[e.tone],
                   )
                   .join(", ")}`
               : undefined;

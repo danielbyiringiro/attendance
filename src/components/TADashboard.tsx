@@ -918,6 +918,9 @@ const TADashboard = ({
           from: toDateStr(excusedStartDate),
           to: toDateStr(excusedEndDate),
           cohortId,
+          // Typed into this dialog since it was built and thrown away every
+          // time until 060 gave it somewhere to go.
+          reason: excusedReason,
         },
       );
 

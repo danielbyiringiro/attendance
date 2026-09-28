@@ -123,9 +123,11 @@ const StudentDetailDialog = ({
    * because this writes to every session in between and is not undoable in one
    * step.
    */
-  const [excuse, setExcuse] = useState<{ from: string; to: string } | null>(
-    null,
-  );
+  const [excuse, setExcuse] = useState<{
+    from: string;
+    to: string;
+    reason: string;
+  } | null>(null);
   const [isExcusing, setIsExcusing] = useState(false);
   /*
    * One date out of a term.
@@ -233,7 +235,7 @@ const StudentDetailDialog = ({
     const stateOn = new Map(
       (log.byStudent.get(student.student_id) ?? []).map((m) => [
         m.session_id,
-        m.state,
+        m,
       ]),
     );
     const sessions: StudentSession[] = log.sessions
@@ -247,7 +249,8 @@ const StudentDetailDialog = ({
         date: s.session_date,
         className: "",
         status: s.status,
-        state: stateOn.get(s.session_id) ?? null,
+        state: stateOn.get(s.session_id)?.state ?? null,
+        note: stateOn.get(s.session_id)?.note ?? null,
       }));
     return studentCalendar(sessions, own?.daysOff ?? [], false);
   }, [student, log, cohorts, facts]);
@@ -292,7 +295,7 @@ const StudentDetailDialog = ({
    */
   const startExcusing = () => {
     const day = onDate || new Date().toISOString().slice(0, 10);
-    setExcuse({ from: day, to: day });
+    setExcuse({ from: day, to: day, reason: "" });
   };
 
   const saveExcuse = async () => {
@@ -314,6 +317,7 @@ const StudentDetailDialog = ({
         from: excuse.from,
         to: excuse.to,
         cohortId,
+        reason: excuse.reason,
       });
 
       if (count === 0) {
@@ -545,11 +549,35 @@ const StudentDetailDialog = ({
                   </div>
                 </div>
 
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="excuse-reason"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    Reason (optional)
+                  </label>
+                  <Input
+                    id="excuse-reason"
+                    className="h-9"
+                    placeholder="e.g. medical, family emergency"
+                    value={excuse.reason}
+                    onChange={(e) =>
+                      setExcuse({ ...excuse, reason: e.target.value })
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Kept on the record and in the correction log, so the
+                    question "why is this person excused for a fortnight in
+                    March" has an answer next term.
+                  </p>
+                </div>
+
                 <p className="text-xs text-muted-foreground">
                   Every session this student's cohort held between those dates,
                   inclusive, becomes excused — which takes it out of their rate
                   rather than counting it against them. Cancelled sessions are
-                  left alone. Each change is logged as a correction.
+                  left alone, and it is all one change: either every day is
+                  excused or none is.
                 </p>
 
                 <div className="flex justify-end gap-2">
@@ -764,6 +792,31 @@ const StudentDetailDialog = ({
                           ? `Marked ${format(new Date(m.marked_at), "h:mm a")}`
                           : "No check-in"}
                       </p>
+                      {/*
+                        060. The reason somebody was excused, where the
+                        question is actually asked — on the day itself.
+
+                        Only for an excused day: a note is a thing staff write
+                        when they excuse somebody, so "no reason recorded" on
+                        every present row would be noise about nothing.
+
+                        Excuses recorded before 060 have no reason and never
+                        will. They are shown as missing rather than backfilled
+                        with a stand-in, because a stand-in written by a
+                        migration is indistinguishable from one a TA typed, and
+                        somebody reading this next term should be able to tell
+                        "nobody wrote one down" from "the reason was X".
+                      */}
+                      {m.state === "excused" &&
+                        (m.note ? (
+                          <p className="text-xs text-muted-foreground">
+                            <span className="italic">{m.note}</span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground/70">
+                            No reason recorded
+                          </p>
+                        ))}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">

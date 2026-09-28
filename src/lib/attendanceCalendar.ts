@@ -59,6 +59,13 @@ export interface CalendarEntry {
    * teaches people not to trust either half.
    */
   hue?: NoClassHue;
+  /**
+   * Why staff set this state, when they wrote it down (060). Carried so the
+   * reason for an excuse is readable from the month view, the way a day off's
+   * reason already is — otherwise the only way to find out what a colour means
+   * is to switch to the list.
+   */
+  note?: string;
 }
 
 /** The colour a recorded state gets. A cancelled class is "no class" whatever is stored. */
@@ -150,6 +157,8 @@ export interface HistoryRecord {
   date: string;
   className: string;
   tone: DayTone;
+  /** Why this state was set, when staff said (060). */
+  note?: string;
 }
 
 /** A day off from get_student_attendance (migration 045, colour added in 052). */
@@ -200,6 +209,7 @@ export const historyEntries = (
       date: r.date,
       tone: r.tone,
       label: nameClasses ? r.className : undefined,
+      note: r.note,
     });
   });
 
@@ -228,6 +238,8 @@ export interface StudentSession {
   status: string;
   /** The student's state on it, or null when nothing is recorded. */
   state: AttendanceState | null;
+  /** Why staff set that state, when they wrote a reason (060). */
+  note?: string | null;
 }
 
 /**
@@ -259,7 +271,9 @@ export const studentCalendar = (
   historyEntries(
     sessions.flatMap((s) => {
       const tone = sessionTone(s);
-      return tone ? [{ date: s.date, className: s.className, tone }] : [];
+      return tone
+        ? [{ date: s.date, className: s.className, tone, note: s.note ?? undefined }]
+        : [];
     }),
     daysOff,
     nameClasses,
