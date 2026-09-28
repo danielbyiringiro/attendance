@@ -121,6 +121,7 @@ import {
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import AnnouncementNudge from "@/components/ta/AnnouncementNudge";
 import PausedBanner from "@/components/ta/PausedBanner";
 import PausedInterrupt from "@/components/ta/PausedInterrupt";
 import { useServiceState } from "@/lib/useServiceState";
@@ -1269,6 +1270,15 @@ const TADashboard = ({
             onGoToAdmin={() => onNavigate("admin")}
           />
         )}
+
+        {/* 061. Announcements that were posted to insist. Held back while the
+            app is paused: that notice is the more urgent of the two, and two
+            stacked modals is how both get clicked away unread. */}
+        <AnnouncementNudge
+          enabled={!service.paused}
+          onRead={() => onHelpRead?.()}
+        />
+
         {/*
           Header.
 
