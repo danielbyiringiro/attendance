@@ -111,7 +111,7 @@ const SessionRosterDialog = ({
 
   return (
     <Dialog open={session !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Cohort {cohortLabel}</DialogTitle>
           <DialogDescription>

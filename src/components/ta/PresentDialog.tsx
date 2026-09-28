@@ -50,7 +50,7 @@ const PresentDialog = ({
         onOpenChange(open);
       }}
     >
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Show the code</DialogTitle>
           <DialogDescription>

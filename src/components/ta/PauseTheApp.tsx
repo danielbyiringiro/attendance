@@ -112,7 +112,7 @@ const PauseTheApp = () => {
 
   return (
     <Card className={`border-2 ${running ? "" : "border-warning"}`}>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-3 sm:pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           {status === "paused" ? (
             <Pause className="h-4 w-4 text-warning" />

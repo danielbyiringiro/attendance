@@ -325,7 +325,7 @@ const StudentDetailDialog = ({
 
   return (
     <Dialog open={student !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         {student && (
           <>
             <DialogHeader>
