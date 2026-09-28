@@ -16,10 +16,21 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CalendarDays, Check, List, Loader2, Pencil, X } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  List,
+  Loader2,
+  Pencil,
+  ShieldCheck,
+  StickyNote,
+  X,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useResetOnOpen } from "@/lib/useResetOnOpen";
 import {
+  excuseRange,
+  setAttendanceNote,
   setAttendanceState,
   stateLabel,
   type AttendanceLog,
@@ -101,6 +112,36 @@ const StudentDetailDialog = ({
   const [isSaving, setIsSaving] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   /*
+   * Excusing a stretch of days, from the record itself.
+   *
+   * One session could already be excused here — the dropdown on each row
+   * offers it. A week of them could not: that meant leaving the record,
+   * opening the Excused Absence dialog on the attendance tab, and searching
+   * for the student you already had open. Somebody who has just read why a
+   * student was away is exactly the person about to excuse them, so the
+   * button belongs where they already are.
+   *
+   * Null when closed; opening it snapshots a range rather than acting at once,
+   * because this writes to every session in between and is not undoable in one
+   * step.
+   */
+  const [excuse, setExcuse] = useState<{
+    from: string;
+    to: string;
+    reason: string;
+  } | null>(null);
+  const [isExcusing, setIsExcusing] = useState(false);
+  /*
+   * Writing on one day (062).
+   *
+   * Editing happens in the row itself rather than a dialog: a note is one
+   * line, and the day it belongs to is the thing you are looking at. Which row
+   * is open is held by session id, so opening a second closes the first — two
+   * open editors with one Save each is how the wrong day gets annotated.
+   */
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  /*
    * One date out of a term.
    *
    * A student's record runs to every session their cohort has held, which by
@@ -125,6 +166,9 @@ const StudentDetailDialog = ({
     setOnDate("");
     setView("calendar");
     setForm(null);
+    // A half-typed range left on the last student must not be one click from
+    // excusing this one, for the same reason the edit form is cleared.
+    setExcuse(null);
   });
 
   /*
@@ -203,7 +247,7 @@ const StudentDetailDialog = ({
     const stateOn = new Map(
       (log.byStudent.get(student.student_id) ?? []).map((m) => [
         m.session_id,
-        m.state,
+        m,
       ]),
     );
     const sessions: StudentSession[] = log.sessions
@@ -217,7 +261,8 @@ const StudentDetailDialog = ({
         date: s.session_date,
         className: "",
         status: s.status,
-        state: stateOn.get(s.session_id) ?? null,
+        state: stateOn.get(s.session_id)?.state ?? null,
+        note: stateOn.get(s.session_id)?.note ?? null,
       }));
     return studentCalendar(sessions, own?.daysOff ?? [], false);
   }, [student, log, cohorts, facts]);
@@ -249,6 +294,90 @@ const StudentDetailDialog = ({
       });
     } finally {
       setSavingId(null);
+    }
+  };
+
+  /*
+   * Opens on the day already in focus, when there is one.
+   *
+   * Clicking a day on the calendar and then pressing Excuse means "that day",
+   * and making somebody retype the date they just clicked is the kind of small
+   * insult that sends people back to the other dialog. With nothing in focus
+   * it opens on today, which is the other thing people mean.
+   */
+  const saveNote = async (sessionId: string) => {
+    if (!student) return;
+    setSavingId(sessionId);
+    try {
+      await setAttendanceNote(sessionId, student.student_id, noteText);
+      setNoteFor(null);
+      // The list behind this reads from the log, so it has to be re-read for
+      // the note to show. Nothing is said in a toast: the note appearing on
+      // the row is the confirmation, and a toast per line of typing is noise.
+      onChanged();
+    } catch (e) {
+      toast({
+        title: "Could not save the note",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const startExcusing = () => {
+    const day = onDate || new Date().toISOString().slice(0, 10);
+    setExcuse({ from: day, to: day, reason: "" });
+  };
+
+  const saveExcuse = async () => {
+    if (!student || !excuse) return;
+
+    if (excuse.to < excuse.from) {
+      toast({
+        title: "Check the dates",
+        description: "The last day cannot be before the first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExcusing(true);
+    try {
+      const cohortId = cohorts.find((c) => c.label === student.cohort)?.id;
+      const count = await excuseRange(classId, student.student_id, {
+        from: excuse.from,
+        to: excuse.to,
+        cohortId,
+        reason: excuse.reason,
+      });
+
+      if (count === 0) {
+        // Not an error: picking a week their cohort does not meet is an easy
+        // and harmless thing to do, and saying so is more use than "saved".
+        toast({
+          title: "Nothing to excuse",
+          description:
+            "This student's cohort held no session between those dates.",
+        });
+        return;
+      }
+
+      setExcuse(null);
+      toast({
+        title: "Excused",
+        description: `${count} session${count === 1 ? "" : "s"} marked excused. Excused sessions do not count against their rate.`,
+      });
+      onChanged();
+    } catch (e) {
+      toast({
+        title: "Could not excuse those sessions",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExcusing(false);
     }
   };
 
@@ -325,7 +454,7 @@ const StudentDetailDialog = ({
 
   return (
     <Dialog open={student !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         {student && (
           <>
             <DialogHeader>
@@ -349,6 +478,17 @@ const StudentDetailDialog = ({
                   >
                     <Pencil className="mr-1 h-3.5 w-3.5" />
                     Edit student
+                  </Button>
+                )}
+                {excuse === null && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-muted-foreground"
+                    onClick={startExcusing}
+                  >
+                    <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+                    Excuse absences
                   </Button>
                 )}
               </DialogTitle>
@@ -391,6 +531,112 @@ const StudentDetailDialog = ({
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {shortfall}
               </p>
+            )}
+
+            {excuse !== null && (
+              /*
+                A range, not a single day, because the reason somebody is
+                excused — illness, a funeral, a fixture — almost never lasts
+                exactly one session. Only the sessions their cohort actually
+                held in the range are touched; a fortnight that contains four
+                meetings excuses four, and says four.
+              */
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="excuse-from"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      First day away
+                    </label>
+                    <Input
+                      id="excuse-from"
+                      type="date"
+                      autoFocus
+                      className="h-9"
+                      value={excuse.from}
+                      onChange={(e) =>
+                        setExcuse({ ...excuse, from: e.target.value })
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="excuse-to"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      Last day away
+                    </label>
+                    <Input
+                      id="excuse-to"
+                      type="date"
+                      className="h-9"
+                      value={excuse.to}
+                      min={excuse.from}
+                      onChange={(e) =>
+                        setExcuse({ ...excuse, to: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="excuse-reason"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    Reason (optional)
+                  </label>
+                  <Input
+                    id="excuse-reason"
+                    className="h-9"
+                    placeholder="e.g. medical, family emergency"
+                    value={excuse.reason}
+                    onChange={(e) =>
+                      setExcuse({ ...excuse, reason: e.target.value })
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Kept on the record and in the correction log, so the
+                    question "why is this person excused for a fortnight in
+                    March" has an answer next term.
+                  </p>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Every session this student's cohort held between those dates,
+                  inclusive, becomes excused — which takes it out of their rate
+                  rather than counting it against them. Cancelled sessions are
+                  left alone, and it is all one change: either every day is
+                  excused or none is.
+                </p>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isExcusing}
+                    onClick={() => setExcuse(null)}
+                  >
+                    <X className="mr-1 h-4 w-4" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isExcusing}
+                    onClick={() => void saveExcuse()}
+                  >
+                    {isExcusing ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="mr-1 h-4 w-4" />
+                    )}
+                    Excuse these days
+                  </Button>
+                </div>
+              </div>
             )}
 
             {form !== null && (
@@ -579,6 +825,57 @@ const StudentDetailDialog = ({
                           ? `Marked ${format(new Date(m.marked_at), "h:mm a")}`
                           : "No check-in"}
                       </p>
+                      {/*
+                        What was written about this day (060, 062).
+
+                        Any state can carry one now: "arrived 9.40, bus",
+                        "left early with permission", "did the work on paper".
+                        An excused day with nothing written says so, because
+                        there the absence of a reason is itself worth seeing —
+                        excuses from before 060 have none and never will, and a
+                        stand-in written by a migration would be
+                        indistinguishable from one a TA typed.
+                      */}
+                      {noteFor === m.session_id ? (
+                        <div className="mt-1 flex items-center gap-1">
+                          <Input
+                            autoFocus
+                            className="h-8 text-xs"
+                            value={noteText}
+                            maxLength={500}
+                            placeholder="Arrived late, bus"
+                            onChange={(e) => setNoteText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void saveNote(m.session_id);
+                              if (e.key === "Escape") setNoteFor(null);
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-8 px-2"
+                            disabled={savingId === m.session_id}
+                            onClick={() => void saveNote(m.session_id)}
+                          >
+                            <Check className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            onClick={() => setNoteFor(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : m.note ? (
+                        <p className="text-xs italic text-muted-foreground">
+                          {m.note}
+                        </p>
+                      ) : m.state === "excused" ? (
+                        <p className="text-xs text-muted-foreground/70">
+                          No reason recorded
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
@@ -589,6 +886,27 @@ const StudentDetailDialog = ({
                       >
                         {stateLabel(m.state)}
                       </span>
+                      {/* 062. Writing on the day, from the day's own row. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2 text-muted-foreground"
+                        title={m.note ? "Change the note" : "Add a note"}
+                        aria-label={
+                          m.note
+                            ? `Change the note on ${m.session_date}`
+                            : `Add a note on ${m.session_date}`
+                        }
+                        onClick={() => {
+                          setNoteFor(m.session_id);
+                          setNoteText(m.note ?? "");
+                        }}
+                      >
+                        <StickyNote
+                          className={`h-4 w-4 ${m.note ? "text-primary" : ""}`}
+                        />
+                      </Button>
+
                       {savingId === m.session_id ? (
                         <Loader2 className="h-4 w-4 animate-spin opacity-60" />
                       ) : (

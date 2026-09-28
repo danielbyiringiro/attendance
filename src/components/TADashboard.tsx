@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import SessionWindowBadge, {
   SessionWindowNote,
@@ -102,6 +102,7 @@ import {
 } from "@/lib/api/enrolment";
 import {
   attendanceLog,
+  excuseRange,
   isAbsentState,
   isPresentState,
   setAttendanceState,
@@ -120,6 +121,7 @@ import {
 } from "@/lib/dates";
 import { requirementOf } from "@/lib/attendanceRule";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import AnnouncementNudge from "@/components/ta/AnnouncementNudge";
 import PausedBanner from "@/components/ta/PausedBanner";
 import PausedInterrupt from "@/components/ta/PausedInterrupt";
 import { useServiceState } from "@/lib/useServiceState";
@@ -910,14 +912,20 @@ const TADashboard = ({
         roster.find((r) => r.student_id === excusedStudent.student_id)?.cohort ??
           "",
       );
-      const log = await attendanceLog(activeClassId, {
-        from: toDateStr(excusedStartDate),
-        to: toDateStr(excusedEndDate),
-        cohortId,
-      });
+      const count = await excuseRange(
+        activeClassId,
+        excusedStudent.student_id,
+        {
+          from: toDateStr(excusedStartDate),
+          to: toDateStr(excusedEndDate),
+          cohortId,
+          // Typed into this dialog since it was built and thrown away every
+          // time until 060 gave it somewhere to go.
+          reason: excusedReason,
+        },
+      );
 
-      const sessions = log.sessions.filter((sn) => sn.status !== "cancelled");
-      if (sessions.length === 0) {
+      if (count === 0) {
         toast({
           title: "No Sessions",
           description:
@@ -927,17 +935,9 @@ const TADashboard = ({
         return;
       }
 
-      for (const sn of sessions) {
-        await setAttendanceState(
-          sn.session_id,
-          excusedStudent.student_id,
-          "excused",
-        );
-      }
-
       toast({
         title: "Excused Absence Saved",
-        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${sessions.length} session${sessions.length > 1 ? "s" : ""}.`,
+        description: `${excusedStudent.student_id}${excusedStudent.name ? ` (${excusedStudent.name})` : ""} excused for ${count} session${count > 1 ? "s" : ""}.`,
       });
 
       setShowExcusedDialog(false);
@@ -1257,8 +1257,8 @@ const TADashboard = ({
     SECTION_COPY[activeSection] ?? SECTION_COPY.attendance;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6 lg:p-10">
+      <div className="mx-auto max-w-6xl space-y-6 lg:space-y-8">
         {/* 055. Above the header: a TA who cannot open a session needs the
             reason before they try, not after it fails. */}
         <PausedBanner service={service} isAdmin={isAdmin} />
@@ -1270,6 +1270,15 @@ const TADashboard = ({
             onGoToAdmin={() => onNavigate("admin")}
           />
         )}
+
+        {/* 061. Announcements that were posted to insist. Held back while the
+            app is paused: that notice is the more urgent of the two, and two
+            stacked modals is how both get clicked away unread. */}
+        <AnnouncementNudge
+          enabled={!service.paused}
+          onRead={() => onHelpRead?.()}
+        />
+
         {/*
           Header.
 
@@ -1318,11 +1327,24 @@ const TADashboard = ({
           are portalled to the body, so anything already open stays usable.
         */}
         <div
-          className={
-            frozen
-              ? "pointer-events-none select-none opacity-50"
-              : undefined
-          }
+          className={cn(
+            /*
+              The stack spacing lives here as well as on the parent, and that
+              is not a duplicate.
+
+              This wrapper is ONE child of the page's space-y stack, so the
+              stack puts a gap between the header and this div and then has
+              nothing further to say: space-y only spaces its own direct
+              children. Everything on every screen below the header is inside
+              here, so from the day this wrapper was added for the pause
+              (055) the whole app rendered with no vertical rhythm at all —
+              buttons flush against cards, cards flush against each other.
+              Nothing looked broken enough to name, which is why it survived
+              this long.
+            */
+            "space-y-6 lg:space-y-8",
+            frozen && "pointer-events-none select-none opacity-50",
+          )}
           aria-hidden={frozen || undefined}
         >
 
@@ -1332,7 +1354,7 @@ const TADashboard = ({
         {!isClassesSection && !isClassSection &&
           !isAdminSection && !isHelpSection && !activeClass && (
           <Card className="border-2 border-dashed">
-            <CardContent className="pt-6 text-center">
+            <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
               <p className="font-medium">No class selected</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Choose one in the class switcher, or create one from All classes.
@@ -1921,7 +1943,7 @@ const TADashboard = ({
                                     void openStudentDetail(student.id, student.cohort),
                                   )
                                 }
-                                className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-success/20 bg-success/10 hover:bg-success/20"
+                                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-success/20 bg-success/10 px-3 py-2 transition-colors hover:bg-success/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               >
                                 {/* Name first, ID under it — the same way
                                     round as the roster on Analytics. Somebody
@@ -1991,7 +2013,7 @@ const TADashboard = ({
                                       void openStudentDetail(studentId, cohort),
                                     )
                                   }
-                                  className="flex cursor-pointer items-center justify-between rounded-lg p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring border border-destructive/20 bg-destructive/10 hover:bg-destructive/20"
+                                  className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 >
                                   <div className="flex min-w-0 flex-col">
                                     <span className="flex items-center gap-2">
@@ -2097,7 +2119,7 @@ const TADashboard = ({
 
       {/* Flagged Records Dialog */}
       <Dialog open={showFlaggedDialog} onOpenChange={setShowFlaggedDialog}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Flagged Attendance Records</DialogTitle>
             <DialogDescription>
@@ -2261,7 +2283,7 @@ const TADashboard = ({
         open={showRemoveStudentDialog}
         onOpenChange={setShowRemoveStudentDialog}
       >
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Remove Student</DialogTitle>
             <DialogDescription>
@@ -2329,7 +2351,7 @@ const TADashboard = ({
 
       {/* Excused Absence Dialog */}
       <Dialog open={showExcusedDialog} onOpenChange={setShowExcusedDialog}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Add Excused Absence</DialogTitle>
             <DialogDescription>
@@ -2466,7 +2488,7 @@ const TADashboard = ({
         open={showWeeklyAbsenceDialog}
         onOpenChange={setShowWeeklyAbsenceDialog}
       >
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>

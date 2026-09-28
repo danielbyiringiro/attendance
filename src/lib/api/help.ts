@@ -25,6 +25,12 @@ export interface Announcement {
   posted_at: string;
   /** For this account, on any device. Read ones stay listed. */
   read: boolean;
+  /**
+   * How long to leave somebody alone between putting this in front of them as
+   * a modal (061). Null — and every announcement posted before 061 — means it
+   * waits in Updates and interrupts nobody.
+   */
+  remind_every_hours: number | null;
 }
 
 export interface HelpContent {
@@ -89,14 +95,54 @@ export const adminDeleteHelpVideo = async (id: string): Promise<boolean> => {
   return Boolean(data);
 };
 
-/** Post a notice. Deliberately not an upsert — see 049. */
+/**
+ * What this account should be shown as a modal right now (061).
+ *
+ * Only announcements that were posted with a reminder period, that this person
+ * has not read, and that they have not already been shown inside that period.
+ * Empty is the normal answer.
+ */
+export const dueAnnouncements = async (): Promise<Announcement[]> => {
+  const { data, error } = await supabase.rpc("due_announcements");
+  if (error) fail("Could not check for announcements", error);
+  return (data ?? []) as Announcement[];
+};
+
+/**
+ * Record that these were put in front of this person, which starts their
+ * period running again (061).
+ *
+ * Called whether they acknowledge or dismiss: the period is about not asking
+ * again too soon, and being shown something is what starts that clock. It is
+ * deliberately NOT the same as marking them read — see 061 on why those are
+ * two tables.
+ */
+export const noteAnnouncementsShown = async (
+  ids: string[],
+): Promise<number> => {
+  if (ids.length === 0) return 0;
+  const { data, error } = await supabase.rpc("note_announcements_shown", {
+    p_ids: ids,
+  });
+  if (error) fail("Could not record that", error);
+  return (data as number) ?? 0;
+};
+
+/**
+ * Post a notice. Deliberately not an upsert — see 049.
+ *
+ * `remindEveryHours` makes it insist: it appears as a modal until acknowledged,
+ * and no more than once in that many hours. Left out, it waits in Updates.
+ */
 export const adminPostAnnouncement = async (
   title: string,
   body: string,
+  remindEveryHours?: number | null,
 ): Promise<Announcement> => {
   const { data, error } = await supabase.rpc("admin_post_announcement", {
     p_title: title,
     p_body: body,
+    p_remind_every_hours: remindEveryHours ?? null,
   });
   if (error) fail("Could not post the announcement", error);
   return data as Announcement;
@@ -110,12 +156,23 @@ export const adminPostAnnouncement = async (
  */
 export const adminEditAnnouncement = async (
   id: string,
-  changes: { title?: string; body?: string },
+  changes: {
+    title?: string;
+    body?: string;
+    /**
+     * Null turns the reminder off, which is why this needs the key's presence
+     * to mean "change it" rather than reading null as "leave alone" — otherwise
+     * an announcement that insists could never be made to stop.
+     */
+    remindEveryHours?: number | null;
+  },
 ): Promise<Announcement> => {
   const { data, error } = await supabase.rpc("admin_edit_announcement", {
     p_id: id,
     p_title: changes.title ?? null,
     p_body: changes.body ?? null,
+    p_remind_every_hours: changes.remindEveryHours ?? null,
+    p_change_reminder: "remindEveryHours" in changes,
   });
   if (error) fail("Could not change the announcement", error);
   return data as Announcement;

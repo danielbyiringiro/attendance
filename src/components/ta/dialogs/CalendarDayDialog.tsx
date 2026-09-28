@@ -338,20 +338,30 @@ const CalendarDayDialog = ({
               key={s.id}
               className="flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-sm font-medium tabular-nums">
-                  {timeOf(s.starts_at)}
-                </span>
-                <Badge variant="outline" className="text-xs">
-                  {label(s.cohort_id)}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {s.status}
-                </Badge>
-                {s.status === "open" && s.pin && (
-                  <span className="rounded bg-gradient-primary px-2 py-0.5 font-mono text-xs tracking-widest text-primary-foreground">
-                    {s.pin}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-sm font-medium tabular-nums">
+                    {timeOf(s.starts_at)}
                   </span>
+                  <Badge variant="outline" className="text-xs">
+                    {label(s.cohort_id)}
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs">
+                    {s.status}
+                  </Badge>
+                  {s.status === "open" && s.pin && (
+                    <span className="rounded bg-gradient-primary px-2 py-0.5 font-mono text-xs tracking-widest text-primary-foreground">
+                      {s.pin}
+                    </span>
+                  )}
+                </div>
+                {/* What happened on this day. Opening a date on the calendar
+                    is the most direct way somebody asks that question, so the
+                    answer belongs here and not only in the edit dialog. */}
+                {s.notes?.trim() && (
+                  <p className="mt-1 text-xs italic text-muted-foreground">
+                    {s.notes}
+                  </p>
                 )}
               </div>
 

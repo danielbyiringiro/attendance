@@ -140,6 +140,63 @@ export const setAttendanceState = async (
   return data as AttendanceRecordRow;
 };
 
+/**
+ * Write, change or clear the note on one student's session (062).
+ *
+ * Never changes their state: a note is not a judgement about whether they were
+ * there. On a session nobody has marked yet — including one that has not
+ * happened — the server writes a row in `pending` to hold it, and clearing the
+ * note takes that row away again.
+ *
+ * An empty string clears it, which is what a cleared input sends.
+ */
+export const setAttendanceNote = async (
+  sessionId: string,
+  studentId: string,
+  note: string,
+): Promise<void> => {
+  const { error } = await supabase.rpc("set_attendance_note", {
+    p_session_id: sessionId,
+    p_student_id: studentId,
+    p_note: note.trim() || null,
+  });
+  if (error) fail("Could not save the note", error);
+};
+
+/**
+ * Excuse one student from every session their cohort holds in a date range.
+ *
+ * One call, because the server does the whole range in one transaction (060).
+ * This used to read the sessions and then send an upsert each: excusing
+ * somebody for three weeks was thirty round trips and thirty transactions, so
+ * a dropped connection halfway left them excused for the first eleven days of
+ * a fortnight and absent for the rest, with nothing recording that it had gone
+ * wrong.
+ *
+ * The reason is stored now, on the record and in the audit trail. It used to
+ * be typed into a box on the Excused Absence dialog and thrown away.
+ *
+ * Returns how many sessions changed — cancelled ones are not among them, since
+ * nobody needs excusing from a class that did not happen. Say the number out
+ * loud: "excused for 3 sessions" can be checked, "saved" cannot.
+ */
+export const excuseRange = async (
+  classId: string,
+  studentId: string,
+  range: { from: string; to: string; cohortId?: string; reason?: string },
+): Promise<number> => {
+  const { data, error } = await supabase.rpc("excuse_sessions", {
+    p_class_id: classId,
+    p_student_id: studentId,
+    p_from: range.from,
+    p_to: range.to,
+    p_cohort_id: range.cohortId ?? null,
+    p_reason: range.reason?.trim() || null,
+  });
+  if (error) fail("Could not excuse those sessions", error);
+  return (data ?? 0) as number;
+};
+
 // ---------------------------------------------------------------------------
 // The attendance log — one read, replacing six derivations
 // ---------------------------------------------------------------------------
@@ -173,6 +230,8 @@ export interface LoggedMark {
   student_id: string;
   state: AttendanceState;
   marked_at: string | null;
+  /** Why staff set this state, when they said (060). Usually null. */
+  note: string | null;
 }
 
 export interface AttendanceLog {
@@ -223,6 +282,7 @@ interface RawMark {
   student_id: string;
   state: AttendanceState;
   marked_at: string | null;
+  note: string | null;
   session_id: string;
   class_sessions: {
     session_date: string;
@@ -302,7 +362,7 @@ export const attendanceLog = async (
     let q = supabase
       .from("attendance_records")
       .select(
-        "student_id, state, marked_at, session_id, class_sessions!inner(session_date, starts_at, status, cohort_id, cancellation_reason, cohorts(label))",
+        "student_id, state, marked_at, note, session_id, class_sessions!inner(session_date, starts_at, status, cohort_id, cancellation_reason, cohorts(label))",
       )
       .eq("class_id", classId)
       // No status filter here, deliberately. A record exists because somebody
@@ -334,6 +394,7 @@ export const attendanceLog = async (
       student_id: r.student_id,
       state: r.state,
       marked_at: r.marked_at,
+      note: r.note,
     }))
     .sort((a, b) => b.session_date.localeCompare(a.session_date));
 

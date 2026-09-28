@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -214,7 +215,7 @@ const ClassSettings = ({ onOpenAllClasses }: ClassSettingsProps) => {
 
       <div className="min-w-0 space-y-6">
         <Card id="class-settings-details" className="scroll-mt-6 border-2">
-          <CardContent className="space-y-4 pt-6">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-4")}>
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="flex items-center gap-2 text-sm font-medium">
@@ -243,7 +244,7 @@ const ClassSettings = ({ onOpenAllClasses }: ClassSettingsProps) => {
         </Card>
 
         <Card id="class-settings-cohorts" className="scroll-mt-6 border-2">
-          <CardContent className="space-y-4 pt-6">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-4")}>
             <div>
               <p className="flex items-center gap-2 text-sm font-medium">
                 <Layers className="h-4 w-4" />
@@ -315,31 +316,31 @@ const ClassSettings = ({ onOpenAllClasses }: ClassSettingsProps) => {
         </Card>
 
         <Card id="class-settings-timing" className="scroll-mt-6 border-2">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <SessionTimingSettings />
           </CardContent>
         </Card>
 
         <Card id="class-settings-report" className="scroll-mt-6 border-2">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <CohortReportSettings classId={activeClass.id} cohorts={cohorts} />
           </CardContent>
         </Card>
 
         <Card id="class-settings-people" className="scroll-mt-6 border-2">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <ClassMembers classId={activeClass.id} />
           </CardContent>
         </Card>
 
         <Card id="class-settings-screen" className="scroll-mt-6 border-2">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <DisplayLinkPanel classId={activeClass.id} />
           </CardContent>
         </Card>
 
         <Card id="class-settings-archive" className="scroll-mt-6 border-2">
-          <CardContent className="space-y-4 pt-6">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-4")}>
             <p className="text-sm font-medium">Archive or delete</p>
 
             <div className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">

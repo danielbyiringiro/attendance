@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   Check,
@@ -683,7 +684,7 @@ const Admin = ({ service }: { service?: ServiceState }) => {
       {/* Deleting somebody else's class asks for the same confirmation theirs does */}
       {deleting && (
         <Card className="border-2 border-destructive/40 bg-destructive/5">
-          <CardContent className="space-y-3 pt-6">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-3")}>
             <p className="text-sm font-medium">
               Delete {deleting.code} — {deleting.name}?
             </p>

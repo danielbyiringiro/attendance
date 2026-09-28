@@ -1322,6 +1322,36 @@ eq("with no sessions it opens on the fallback month", latestMonth([], new Date(2
     ).map((e) => `${e.date}:${e.tone}:${e.label ?? ""}`),
     ["2026-09-29:pending:", "2026-09-22:dayoff:Public holiday"],
   );
+
+  // 060. Why somebody was excused travels to the calendar, so the month view
+  // can say what a colour means without anybody switching to the list.
+  eq(
+    "an excuse carries its reason onto the calendar",
+    studentCalendar(
+      [{ date: "2026-09-16", className: "", status: "closed", state: "excused", note: "Hospital" }],
+      [],
+      false,
+    ).map((e) => e.note ?? null),
+    ["Hospital"],
+  );
+  eq(
+    "an excuse recorded before reasons existed carries none, and that is not an error",
+    studentCalendar(
+      [{ date: "2026-09-16", className: "", status: "closed", state: "excused", note: null }],
+      [],
+      false,
+    ).map((e) => e.note ?? null),
+    [null],
+  );
+  eq(
+    "a present day carries nothing either way",
+    studentCalendar(
+      [{ date: "2026-09-16", className: "", status: "closed", state: "present" }],
+      [],
+      false,
+    ).map((e) => e.note ?? null),
+    [null],
+  );
 }
 
 // ---------------------------------------------------------------------------

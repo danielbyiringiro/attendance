@@ -215,7 +215,7 @@ const AdminLog = () => {
 
   return (
     <Card className="border-2">
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-3 sm:pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base">
             <NotebookPen className="h-4 w-4" />

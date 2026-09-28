@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Clock, LogOut, MailX, ShieldX } from "lucide-react";
 import type { StaffIdentity } from "@/lib/api/staff";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -62,7 +63,7 @@ const AccountPending = ({ identity, onSignOut }: AccountPendingProps) => {
         </div>
 
         <Card className={`border-2 shadow-medium ${copy.ring}`}>
-          <CardContent className="space-y-4 pt-6 text-center">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-4 text-center")}>
             <Icon className={`mx-auto h-10 w-10 ${copy.tone}`} />
 
             <div className="space-y-1">

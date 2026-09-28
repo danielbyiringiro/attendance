@@ -7,7 +7,9 @@ import {
   CardHeader,
   CardTitle,
   CardDescription,
+  CARD_PADDING_NO_HEADER,
 } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -473,8 +475,8 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 md:p-8">
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4 sm:p-6 lg:p-10">
+      <div className="mx-auto max-w-4xl space-y-6 lg:space-y-8">
         <div className="mb-4 flex items-center justify-between">
           <Button variant="ghost" onClick={onBack}>
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -549,7 +551,7 @@ const StudentDashboard = ({ onBack }: StudentDashboardProps) => {
                           );
                         }}
                       >
-                        <CardContent className="space-y-3 p-4">
+                        <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-3")}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <p className="truncate font-semibold">

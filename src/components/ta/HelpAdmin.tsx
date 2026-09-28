@@ -7,15 +7,46 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Megaphone, Plus, PlayCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import ConfirmDelete from "@/components/ta/ConfirmDelete";
+import { Badge } from "@/components/ui/badge";
 import {
   adminDeleteAnnouncement,
   adminDeleteHelpVideo,
+  adminEditAnnouncement,
   adminPostAnnouncement,
   adminSetHelpVideo,
   getHelp,
   type Announcement,
   type HelpVideo,
 } from "@/lib/api/help";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/*
+ * How often an insisting announcement may interrupt one person (061).
+ *
+ * Hours rather than a free number: the question an admin is actually asking is
+ * "how pushy is this", and the honest answers are a handful. A box accepting
+ * 1..8760 invites somebody to type 2 and make the app unusable for a week.
+ */
+const REMIND_CHOICES = [
+  { value: "none", label: "No — leave it in Updates" },
+  { value: "8", label: "Every 8 hours" },
+  { value: "24", label: "Once a day" },
+  { value: "72", label: "Every three days" },
+  { value: "168", label: "Once a week" },
+] as const;
+
+const REMIND_LABEL: Record<string, string> = {
+  "8": "8 hours",
+  "24": "day",
+  "72": "three days",
+  "168": "week",
+};
 
 /**
  * What staff see on the Help screen: the videos, and the notices.
@@ -38,6 +69,8 @@ const HelpAdmin = () => {
 
   const [noteTitle, setNoteTitle] = useState("");
   const [noteBody, setNoteBody] = useState("");
+  /** 061. "none", or a number of hours as a string, because Select carries text. */
+  const [noteRemind, setNoteRemind] = useState("none");
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -86,16 +119,47 @@ const HelpAdmin = () => {
     }
   };
 
+  /*
+   * Turn one off without deleting it (061).
+   *
+   * The reason this exists: an announcement set to interrupt every 8 hours,
+   * posted on a Friday, is a thing somebody needs to be able to stop on
+   * Saturday without removing the notice itself — people who have not read it
+   * still should.
+   */
+  const stopInterrupting = async (a: Announcement) => {
+    setBusy(a.id);
+    try {
+      await adminEditAnnouncement(a.id, { remindEveryHours: null });
+      toast({
+        title: "It will not interrupt anybody now",
+        description: "Still listed under Updates, with a dot for anyone who has not read it.",
+      });
+      await load();
+    } catch (e) {
+      toast({
+        title: "Could not change it",
+        description: e instanceof Error ? e.message : "Unexpected error.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const post = async () => {
     setBusy("note");
     try {
-      await adminPostAnnouncement(noteTitle.trim(), noteBody.trim());
+      const hours = noteRemind === "none" ? null : Number(noteRemind);
+      await adminPostAnnouncement(noteTitle.trim(), noteBody.trim(), hours);
       setNoteTitle("");
       setNoteBody("");
+      setNoteRemind("none");
       toast({
         title: "Announced",
-        description:
-          "Everyone sees a dot on Help until they read it. It stays listed afterwards.",
+        description: hours
+          ? `Shown as a modal until each person marks it read, at most once every ${REMIND_LABEL[noteRemind] ?? `${hours} hours`}.`
+          : "Everyone sees a dot on Help until they read it. It stays listed afterwards.",
       });
       await load();
     } catch (e) {
@@ -262,11 +326,33 @@ const HelpAdmin = () => {
                     className="flex flex-wrap items-start justify-between gap-2 rounded-md border px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{a.title}</p>
+                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        {a.title}
+                        {/* 061. Visible, because an announcement that
+                            interrupts everybody is not a thing to discover by
+                            being interrupted. */}
+                        {a.remind_every_hours !== null && (
+                          <Badge variant="outline" className="text-xs">
+                            Interrupts ·{" "}
+                            {REMIND_LABEL[String(a.remind_every_hours)] ??
+                              `${a.remind_every_hours}h`}
+                          </Badge>
+                        )}
+                      </p>
                       <p className="line-clamp-2 text-xs text-muted-foreground">
                         {a.body}
                       </p>
                     </div>
+                    {a.remind_every_hours !== null && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy === a.id}
+                        onClick={() => void stopInterrupting(a)}
+                      >
+                        Stop interrupting
+                      </Button>
+                    )}
                     <ConfirmDelete
                       label="Remove"
                       confirmLabel="Yes, remove it"
@@ -300,6 +386,35 @@ const HelpAdmin = () => {
                     onChange={(e) => setNoteBody(e.target.value)}
                   />
                 </div>
+
+                {/*
+                  061. Whether this one insists.
+                  "Leave it in Updates" is the default on purpose: most notices
+                  are worth reading and not worth interrupting a register for,
+                  and a modal that appears for everything is one people learn to
+                  click away without reading.
+                */}
+                <div className="space-y-1">
+                  <Label htmlFor="note-remind">Interrupt people about it</Label>
+                  <Select value={noteRemind} onValueChange={setNoteRemind}>
+                    <SelectTrigger id="note-remind" className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REMIND_CHOICES.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {noteRemind === "none"
+                      ? "It waits under Updates with a dot, and interrupts nobody."
+                      : "Shown as a modal until each person marks it read, and no more often than this."}
+                  </p>
+                </div>
+
                 <Button
                   size="sm"
                   disabled={

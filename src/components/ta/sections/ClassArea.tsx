@@ -1,4 +1,5 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
@@ -37,7 +38,7 @@ const ClassArea = ({ tab, onTabChange, onOpenAllClasses }: ClassAreaProps) => {
   if (!activeClass) {
     return (
       <Card className="border-2 border-dashed">
-        <CardContent className="space-y-3 pt-6 text-center">
+        <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-3 text-center")}>
           <div>
             <p className="font-medium">No class selected</p>
             <p className="mt-1 text-sm text-muted-foreground">

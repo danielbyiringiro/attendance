@@ -24,6 +24,7 @@ import {
   MoreVertical,
   PencilLine,
   RefreshCw,
+  StickyNote,
   UserCheck,
 } from "lucide-react";
 import {
@@ -421,6 +422,21 @@ const SessionList = ({
                     sign-up
                     {s.cancellation_reason && ` · ${s.cancellation_reason}`}
                   </p>
+                  {/*
+                    What happened that day, on its own line rather than
+                    appended to the settings above: a note is a sentence
+                    somebody wrote, and truncating it into a list of minute
+                    counts is how it stops being read.
+                  */}
+                  {s.notes?.trim() && (
+                    <p className="flex items-start gap-1 text-xs italic text-muted-foreground">
+                      <StickyNote
+                        className="mt-0.5 h-3 w-3 shrink-0"
+                        aria-hidden
+                      />
+                      <span className="min-w-0">{s.notes}</span>
+                    </p>
+                  )}
                 </div>
               </div>
 

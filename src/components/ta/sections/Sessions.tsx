@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,7 +55,7 @@ const Sessions = () => {
   if (!activeClass) {
     return (
       <Card className="border-2 border-dashed">
-        <CardContent className="pt-6 text-center">
+        <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
           <p className="font-medium">No class selected</p>
           <p className="mt-1 text-sm text-muted-foreground">
             Choose one in the class switcher, or create one from All classes.
@@ -71,7 +72,7 @@ const Sessions = () => {
           waits behind a button. */}
       {view === "list" && (
         <Card className="border-2">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <NoClassDays classId={activeClass.id} cohorts={cohorts} />
           </CardContent>
         </Card>
@@ -92,7 +93,7 @@ const Sessions = () => {
       </div>
 
       <Card className="order-1 border-2 xl:order-2">
-        <CardContent className="space-y-4 pt-6">
+        <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-4")}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-1">
               <Button
@@ -169,7 +170,7 @@ const Sessions = () => {
           if (!open) setCalendarKey((k) => k + 1);
         }}
       >
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Days off</DialogTitle>
             <DialogDescription>

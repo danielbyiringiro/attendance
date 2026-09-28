@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -435,7 +436,7 @@ const Schedule = () => {
   if (!activeClass) {
     return (
       <Card className="border-2 border-dashed">
-        <CardContent className="pt-6 text-center">
+        <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
           <p className="font-medium">No class selected</p>
           <p className="mt-1 text-sm text-muted-foreground">
             Choose one in the class switcher, or create one from All classes.

@@ -293,7 +293,7 @@ const RosterUpload = ({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="flex max-h-[85vh] flex-col gap-0 sm:max-w-3xl">
+      <DialogContent className="flex flex-col gap-0 sm:max-w-3xl">
         <DialogHeader className="shrink-0 pb-4">
           <DialogTitle className="flex items-center gap-2">
             <FileUp className="h-5 w-5" />

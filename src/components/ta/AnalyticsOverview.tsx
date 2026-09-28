@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -314,7 +315,7 @@ const AnalyticsOverview = ({
       */}
       {stats && stats.held === 0 && (
         <Card className="border-2 border-dashed">
-          <CardContent className="py-4 text-center">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
             <p className="text-sm font-medium">
               {upcoming.length > 0
                 ? isDay
@@ -338,7 +339,7 @@ const AnalyticsOverview = ({
 
       {registerable.length > 0 && (
         <Card className="border-2">
-          <CardContent className="space-y-3 pt-6">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "space-y-3")}>
             <div>
               <p className="flex items-center gap-2 text-sm font-medium">
                 <ClipboardCheck className="h-4 w-4" />
@@ -390,7 +391,7 @@ const AnalyticsOverview = ({
       {hasSessions && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-2 border-success/30 bg-success/5 shadow-soft">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <div className="flex items-center space-x-2">
               <UserCheck className="h-5 w-5 text-success" />
               <div>
@@ -406,7 +407,7 @@ const AnalyticsOverview = ({
         </Card>
 
         <Card className="border-2 border-destructive/30 bg-destructive/5 shadow-soft">
-          <CardContent className="pt-6">
+          <CardContent className={CARD_PADDING_NO_HEADER}>
             <div className="flex items-center space-x-2">
               <UserX className="h-5 w-5 text-destructive" />
               <div>
@@ -429,7 +430,7 @@ const AnalyticsOverview = ({
         */}
         {!isDay && (
           <Card className="border-2 border-primary/25 bg-gradient-card shadow-soft">
-            <CardContent className="pt-6">
+            <CardContent className={CARD_PADDING_NO_HEADER}>
               <div className="flex items-center space-x-2">
                 <CalendarRange className="h-5 w-5 text-primary" />
                 <div>
@@ -453,7 +454,7 @@ const AnalyticsOverview = ({
               key={c.id}
               className="border-2 border-primary/25 bg-gradient-card shadow-soft"
             >
-              <CardContent className="pt-6">
+              <CardContent className={CARD_PADDING_NO_HEADER}>
                 <div className="flex items-center space-x-2">
                   <Users className="h-5 w-5 text-primary" />
                   <div className="min-w-0">

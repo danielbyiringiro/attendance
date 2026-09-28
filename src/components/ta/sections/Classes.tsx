@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import {
   Archive,
   ArchiveRestore,
@@ -87,7 +88,7 @@ const Classes = ({ onOpenClass }: ClassesProps) => {
 
   const renderCard = (c: ClassWithCohorts, isArchived: boolean) => (
     <Card key={c.id} className="border-2">
-      <CardContent className="pt-5">
+      <CardContent className={CARD_PADDING_NO_HEADER}>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -163,7 +164,7 @@ const Classes = ({ onOpenClass }: ClassesProps) => {
         </div>
       ) : classes.length === 0 ? (
         <Card className="border-2 border-dashed">
-          <CardContent className="pt-6 text-center">
+          <CardContent className={cn(CARD_PADDING_NO_HEADER, "text-center")}>
             <p className="font-medium">No classes yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Create one to set its cohorts, when they meet, and who is enrolled.
