@@ -105,6 +105,40 @@ tree:
 the same stored states. They agree today. A `v_student_class_attendance` view
 both read would make that structural rather than a coincidence.
 
+## The Sessions screen: two modes that hide different things
+
+`sections/Sessions.tsx` offers Calendar and List as two views of the same
+sessions. But each view is the only place some actions exist, so the toggle
+changes what you can *do*, not just what you see.
+
+- **Mark everyone in a session** is list-only. `markAllPresent` is imported
+  and called in `SessionList.tsx` and nowhere else, so the calendar's day
+  dialog cannot do it — and the day the register went round on paper is
+  exactly when somebody is looking at that date on the calendar.
+- **Days off** is calendar-only. The button is wrapped in
+  `{view === "month" && …}`, so list mode can neither see nor edit them, even
+  though a day off is what explains a gap in the list.
+
+Neither mode is the lesser one: each hides something the other has. Whichever
+way it is fixed, the test is that switching view changes how sessions are
+*displayed* and nothing else.
+
+### "Days off" and "Fill in sessions" are different kinds of button
+
+They sit side by side in one row and look alike, but they are not the same
+sort of thing:
+
+- **Days off** opens a collection and lets you edit it. A view onto stored
+  items — open-ended, nothing to complete.
+- **Fill in sessions** configures and runs an action, then reports what it
+  did. One shot, with a result to read.
+
+Putting "look at these things" and "do this thing" in the same row of buttons
+is why neither reads clearly. Worth settling the pattern once — items live
+with the content they describe, actions live in a toolbar, and a generated run
+gets its own review step — and then applying it to both, rather than shuffling
+buttons about.
+
 ## Smaller items
 
 All of the items that were here — the two disagreeing `SEMESTER_START`
