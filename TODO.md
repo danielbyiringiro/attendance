@@ -54,11 +54,33 @@ columns, their order, and how CAMU matches students, then add an entry to
 `FORMATS`. The Canvas entry in
 [src/lib/attendanceExport.ts](src/lib/attendanceExport.ts) is the model to copy.
 
-## Migration to run
+## Canvas mappings belong in a numbered migration
 
-`sql/add_canvas_mappings.sql` stores remembered Canvas row pairings. Until it
-is run in the Supabase SQL Editor, the export still works but forgets manual
-pairings and ignores between exports, and the match panel says so.
+`sql/add_canvas_mappings.sql` creates `canvas_row_mappings`, which remembers
+Canvas row pairings. **No numbered migration creates it**, so it is the last
+thing here that has to be pasted into the SQL Editor by hand — and
+[CanvasMatchPanel.tsx](src/components/CanvasMatchPanel.tsx) tells the TA to do
+exactly that, by filename.
+
+Three things follow from it sitting outside the chain:
+
+- the export works without it, but forgets manual pairings and ignores between
+  runs
+- `npm run test:sql` never creates the table, so `055` silently skips it in its
+  pause list and nothing about the feature is covered
+- whether a given project has it is discoverable only at runtime, which is why
+  the export dialog carries a "null until first checked" probe
+
+Folding it into a migration removes all three, and the probe and its null
+branches can go with it. Note its header still says to run it after
+`sql/secure_database.sql`, which belongs to the schema `026` retired.
+
+## Three dead scripts under `sql/`
+
+`add_excused_absences.sql`, `add_report_settings.sql` and `secure_database.sql`
+are referenced by nothing and describe tables `015` and `026` retired. 314 lines
+that look runnable; `secure_database.sql` would actively undo current
+protection. Delete them, or move them somewhere that says what they are.
 
 ## Deferred by the class data model branch
 

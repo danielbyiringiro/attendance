@@ -54,17 +54,30 @@ npm run dev
 
 ### Supabase
 
-Create `.env.local`:
+Copy `.env.example` to `.env.local` and fill in both values:
 
 ```
 VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<your anon key>
+VITE_SUPABASE_ANON_KEY=<your publishable or anon key>
 ```
 
-Both are in the Supabase dashboard under **Project Settings → API**. The anon
-key is meant to be public — it ships inside the client bundle — so every rule
-that matters is enforced by Row Level Security and by `SECURITY DEFINER`
-functions, never by the browser.
+Both are **required**. `vite.config.ts` refuses to build without them and
+`src/lib/supabase.ts` throws at startup without them, naming whichever is
+missing: a build that cannot reach the database should fail rather than deploy a
+white screen to every student. On a host, set the same two names as environment
+variables — Vite inlines them at build time, so changing one in a dashboard
+takes a fresh deploy to have any effect.
+
+Find them under **Project Settings → API Keys**. Either the newer
+`sb_publishable_…` key or the legacy `anon` key works, and the publishable one is
+preferred: the legacy `anon` and `service_role` keys are a pair signed by one
+secret, so they can only be disabled together. Never the `service_role` key — it
+bypasses Row Level Security completely, and everything in that file ships to the
+browser.
+
+The key that belongs here is meant to be public: it ships inside the client
+bundle, so every rule that matters is enforced by Row Level Security and by
+`SECURITY DEFINER` functions, never by the browser.
 
 Then, in **Authentication**:
 
@@ -110,14 +123,63 @@ twice.
 | `022` | refusing a disallowed email domain at signup |
 | `023` | previewing a roster upload with the code that performs it |
 | `024` | correcting a student's name, cohort or ID |
+| `025` | tell the student which class they just marked |
+| `026` | make the legacy tables' protection explicit, and fix the signup hint |
+| `027` | a newly approved colleague can be found |
+| `028` | open check-in before class without spending the window on it |
+| `029` | how early check-in opens, set per meeting |
+| `030` | let the dashboard see a check-in arrive |
+| `031` | sessions open and close without anyone pressing a button |
+| `032` | cancelling a class removes the attendance, all of it |
+| `033` | a session may open itself at any point during the class |
+| `034` | a schedule edit leaves any session that has attendance against it |
+| `035` | add one session on one date, outside the weekly pattern |
+| `036` | a day the class does not meet |
+| `037` | declaring a holiday removes the sessions that never ran |
+| `038` | a day off cannot name a cohort from another class |
+| `039` | add one date, or the same weekday over a range |
+| `040` | set the check-in timing for a cohort, or the whole class, in one place |
+| `041` | show a class's check-in on another screen, with a link and a code |
+| `042` | staff can mark a student on a session from before they were added |
+| `043` | how many absences in a week put a student on the weekly report |
+| `044` | a check-in says who made it, and the display can count check-ins |
+| `045` | a student's history shows the days their class did not meet, and why |
+| `046` | a class requires a percentage, or allows a number of absences |
+| `047` | clearing a roster: remove everybody, keeping or erasing their record |
+| `048` | check-in that shuts when the class starts, with a grace window |
+| `049` | help videos, and announcements people can actually be told about |
+| `050` | an admin can remove an account |
+| `051` | staff can say what is wrong, where the work happens |
+| `052` | a day off says what it is, in a colour that was chosen |
+| `053` | see what filling would do, before it does it |
+| `054` | move a session to another day, or move the run it belongs to |
+| `055` | pause the app |
+| `056` | schedule a pause, and warn before it starts |
+| `057` | a log only admins can read |
+| `058` | a pause reaches open screens at once |
+| `059` | a report says which kind of report it is |
+| `060` | an excuse says why, and happens in one go |
+| `061` | an announcement that asks to be read |
+| `062` | a note on one student's day |
 
 **`020` needs editing before it is run.** It bootstraps the first admin from an
 address near the top of the file, which ships as a placeholder that matches
 nobody. Set it to an account that has signed in at least once.
 
-Anything under `sql/` that is not in `sql/migrations` predates this model and is
-kept only as a record of how the database got here. Do not run those files
-against a database that has the migrations applied.
+Most of what is under `sql/` but not in `sql/migrations` predates this model and
+is kept only as a record of how the database got here. Do not run those files
+against a database that has the migrations applied; `sql/secure_database.sql` in
+particular rebuilds protection for tables that `015` and `026` retired.
+
+**One exception, and it is load-bearing.** `sql/add_canvas_mappings.sql` creates
+`canvas_row_mappings`, and no numbered migration does — the match panel tells
+you to run it by name. Until it is folded into a migration, three things follow:
+the export works without it but forgets manual Canvas pairings between runs,
+`npm run test:sql` never creates the table so nothing about that feature is
+covered, and whether a given project has it is discoverable only at runtime.
+
+`sql/diagnostics` is read-only queries for answering "what happened to this
+session", not schema.
 
 ### The shape of it
 
