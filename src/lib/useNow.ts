@@ -11,15 +11,25 @@ import { useEffect, useState } from "react";
  * `enabled` turns it off when nothing on screen is counting, so a dashboard
  * left open overnight on another tab is not re-rendering every second until
  * morning.
+ *
+ * `host` is the window whose timer drives it. A tab hidden behind slides gets
+ * its timers slowed by the browser, to once a minute after a while, which
+ * would make a countdown in a picture-in-picture window jump in minutes. The
+ * picture-in-picture window is on screen, so its own timer is not slowed.
  */
-export const useNow = (enabled: boolean, everyMs = 1000): Date => {
+export const useNow = (
+  enabled: boolean,
+  everyMs = 1000,
+  host: Window | null = null,
+): Date => {
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     if (!enabled) return;
-    const id = setInterval(() => setNow(new Date()), everyMs);
-    return () => clearInterval(id);
-  }, [enabled, everyMs]);
+    const w = host ?? window;
+    const id = w.setInterval(() => setNow(new Date()), everyMs);
+    return () => w.clearInterval(id);
+  }, [enabled, everyMs, host]);
 
   return now;
 };

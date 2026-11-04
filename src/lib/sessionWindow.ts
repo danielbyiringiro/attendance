@@ -55,6 +55,11 @@ export interface SessionWindowInput {
   grace_minutes?: number;
   /** Whether a mark inside that grace window is recorded late. */
   grace_counts_late?: boolean;
+  /**
+   * 063: minutes added while check-in was open, on top of whichever closing
+   * rule applies. Optional for the same reason as the 048 fields.
+   */
+  extra_minutes?: number;
 }
 
 const minutes = (n: number) => n * 60_000;
@@ -234,11 +239,14 @@ export const sessionWindow = (
    */
   const shutsAtStart = s.closes_at_start === true;
   const inGrace = shutsAtStart && opened > starts;
-  const closesAt = !shutsAtStart
-    ? anchor + minutes(s.auto_close_minutes)
-    : inGrace
-      ? opened + minutes(s.grace_minutes ?? 5)
-      : starts;
+  // 063: added on top of whichever rule set the base, as session_closes_at does.
+  const extra = minutes(s.extra_minutes ?? 0);
+  const closesAt =
+    (!shutsAtStart
+      ? anchor + minutes(s.auto_close_minutes)
+      : inGrace
+        ? opened + minutes(s.grace_minutes ?? 5)
+        : starts) + extra;
 
   /*
    * Inside a grace window the class decides lateness outright, so there is no
@@ -247,16 +255,19 @@ export const sessionWindow = (
    * — grace that counts as late is 'live_late' from the moment it opens, and
    * grace that does not never reaches it.
    *
-   * With the setting on and the session opened early, late_window_minutes can
-   * never be reached: the window shuts at the start, before lateness begins.
-   * Pinning lateFrom to the close says that rather than implying a threshold
-   * nobody will ever cross.
+   * With the setting on and the session opened early, late_window_minutes is
+   * normally never reached: the window shuts at the start, before lateness
+   * begins, and lateFrom is pinned to the close. Time added past the start
+   * (063) can reach it, and session_mark_state then applies 028's late rule,
+   * so this takes whichever comes first.
    */
   const lateFrom = !shutsAtStart
     ? anchor + minutes(s.late_window_minutes)
-    : inGrace && s.grace_counts_late === true
-      ? opensAt
-      : closesAt;
+    : inGrace
+      ? s.grace_counts_late === true
+        ? opensAt
+        : closesAt
+      : Math.min(anchor + minutes(s.late_window_minutes), closesAt);
 
   const shape = {
     opensAt: new Date(opensAt),

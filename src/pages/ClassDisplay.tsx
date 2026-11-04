@@ -337,6 +337,7 @@ const ClassDisplay = () => {
               className={data.class_name}
               cohortLabel={pick.sessions[0].cohort_label}
               size="full"
+              timeZone={data.timezone}
             />
           )}
 
@@ -350,6 +351,7 @@ const ClassDisplay = () => {
                   session={s}
                   className={data.class_name}
                   cohortLabel={s.cohort_label}
+              timeZone={data.timezone}
                 />
               ))}
             </div>
@@ -361,6 +363,7 @@ const ClassDisplay = () => {
               className={data.class_name}
               cohortLabel={pick.session.cohort_label}
               size="full"
+              timeZone={data.timezone}
             />
           )}
 

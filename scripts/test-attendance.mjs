@@ -540,6 +540,50 @@ eq(
   "2026-09-11T09:15:00.000Z",
 );
 
+// ---------------------------------------------------------------------------
+// 063: time added while check-in is open, on top of whichever rule applies.
+// The same examples as 063's assert file.
+// ---------------------------------------------------------------------------
+
+eq(
+  "063: ten minutes added to the ordinary rule — 09:15 becomes 09:25",
+  sessionWindow({ ...early, extra_minutes: 10 }, at("08:50")).closesAt.toISOString(),
+  "2026-09-11T09:25:00.000Z",
+);
+eq(
+  "063: and 09:20 is still taking marks (late, past the 10 minute window)",
+  sessionWindow({ ...early, extra_minutes: 10 }, at("09:20")).phase,
+  "live_late",
+);
+eq(
+  "063: ten minutes added to a class that shuts at the start — 09:10",
+  sessionWindow({ ...shutsEarly, extra_minutes: 10 }, at("08:50")).closesAt.toISOString(),
+  "2026-09-11T09:10:00.000Z",
+);
+eq(
+  "063: with no time added it still shuts on time at 09:00 — lateFrom pinned to the close",
+  sessionWindow(shutsEarly, at("08:50")).lateFrom.toISOString(),
+  "2026-09-11T09:00:00.000Z",
+);
+eq(
+  "063: added past the start, it follows the late window as the server does",
+  sessionWindow({ ...shutsEarly, extra_minutes: 15 }, at("09:12")).phase,
+  "live_late",
+);
+eq(
+  "063: but inside the late window it is on time",
+  sessionWindow({ ...shutsEarly, extra_minutes: 15 }, at("09:05")).phase,
+  "live",
+);
+eq(
+  "063: ten minutes added to a grace window — on top of the grace",
+  sessionWindow(
+    { ...shuts, opened_at: "2026-09-11T09:07:00Z", extra_minutes: 10 },
+    at("09:08"),
+  ).closesAt.toISOString(),
+  "2026-09-11T09:22:00.000Z",
+);
+
 // The bug this was written for: status says open long after the window passed.
 const stale = sessionWindow(early, at("11:00"));
 eq("a window that has passed reads as expired", stale.phase, "expired");

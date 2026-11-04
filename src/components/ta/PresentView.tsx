@@ -29,6 +29,22 @@ import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
  * rotating it, which is planned; when it lands, this encodes whichever code is
  * current and nothing else changes.
  *
+ * THE WIDGET
+ *
+ * size="widget" is the floating picture-in-picture window from the presenter
+ * tab (see usePictureInPicture): a strip for a corner of the screen while the
+ * slides carry on, so it drops everything but the code, the time and the QR.
+ * The QR stays because it is how most students get in; at 120px it still
+ * scans from the front rows, and the code beside it serves the back.
+ *
+ * WHEN THE CLASS STARTS
+ *
+ * Under the countdown, the time the class itself begins: "Class starts 10:00",
+ * then "Class started 10:00" once it has. The countdown is to check-in opening
+ * or closing, which is not the same moment, and a room glancing up wants to
+ * know both. It is given in the class's timezone where the caller knows it —
+ * a room PC set to the wrong zone must not move the lecture.
+ *
  * ALWAYS BLACK ON WHITE
  *
  * The QR sits on its own white square whatever the theme. Scanners expect dark
@@ -42,6 +58,23 @@ import { checkinUrl, isUnreachableFromPhone } from "@/lib/checkinLink";
  * slimmer shape get_class_display hands a signed-out screen.
  */
 export type PresentSessionInput = SessionWindowInput & { pin: string | null };
+
+/** "10:00", in the class's timezone when known, this device's otherwise. */
+const clockTime = (iso: string, timeZone?: string): string => {
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+  } catch {
+    // An unknown zone name: this device's time is better than nothing.
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+};
 
 /** The sentence that goes under the code, per phase of the window. */
 const timerFor = (session: PresentSessionInput, now: Date) => {
@@ -94,15 +127,25 @@ const PresentView = ({
   className,
   cohortLabel,
   size = "dialog",
+  now: givenNow,
+  timeZone,
 }: {
   session: PresentSessionInput;
   className: string;
   cohortLabel: string;
-  /** "full" is the standalone tab, sized to be read from the back of a room. */
-  size?: "dialog" | "full";
+  /**
+   * "full" is the standalone tab, sized to be read from the back of a room.
+   * "widget" is the floating window over the slides.
+   */
+  size?: "dialog" | "full" | "widget";
+  /** A clock from the caller, when this one's timer could be slowed. */
+  now?: Date;
+  /** The class's IANA timezone, for the start time. */
+  timeZone?: string;
 }) => {
   // Ticks every second: the figure is shown to the second.
-  const now = useNow(true, 1000);
+  const ownNow = useNow(givenNow === undefined, 1000);
+  const now = givenNow ?? ownNow;
   const t = timerFor(session, now);
   const full = size === "full";
 
@@ -122,6 +165,51 @@ const PresentView = ({
   // spelled out a second time in a line of small type.
   const siteText = checkinUrl(window.location.origin);
   const phoneCannotReach = isUnreachableFromPhone(window.location.hostname);
+  const started = now.getTime() >= new Date(session.starts_at).getTime();
+  const startLine = `Class ${started ? "started" : "starts"} ${clockTime(
+    session.starts_at,
+    timeZone,
+  )}`;
+
+  if (size === "widget") {
+    return (
+      <div className="flex h-full items-center justify-center gap-4 p-3 text-center">
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="truncate text-sm font-semibold">
+            {className}
+            <span className="text-muted-foreground"> · {cohortLabel}</span>
+          </p>
+          {showPin ? (
+            <p className="rounded-lg bg-gradient-primary px-2 py-2 font-mono text-4xl font-bold tracking-[0.2em] text-primary-foreground">
+              {session.pin}
+            </p>
+          ) : (
+            <p className="rounded-lg border-2 border-dashed px-2 py-3 text-base text-muted-foreground">
+              {session.status === "scheduled" ? "No code yet" : "No code to show"}
+            </p>
+          )}
+          <div className={TONE[t.tone]}>
+            <p className="flex items-center justify-center gap-1.5 text-2xl font-bold tabular-nums">
+              <Clock className="h-5 w-5" />
+              {t.big}
+            </p>
+            <p className="text-xs">{t.small}</p>
+          </div>
+          <p className="text-xs text-muted-foreground">{startLine}</p>
+        </div>
+        <div className="shrink-0 rounded-lg bg-white p-2">
+          <QRCodeSVG
+            value={url}
+            size={120}
+            level="M"
+            bgColor="#ffffff"
+            fgColor="#000000"
+            marginSize={0}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -166,6 +254,11 @@ const PresentView = ({
           </p>
           <p className={full ? "text-xl" : "text-sm"}>{t.small}</p>
         </div>
+        <p
+          className={`${full ? "text-xl sm:text-2xl" : "text-sm"} font-medium text-muted-foreground`}
+        >
+          {startLine}
+        </p>
       </div>
 
       <div className="flex shrink-0 flex-col items-center gap-2">
