@@ -130,6 +130,8 @@ export interface SessionRow {
   grace_minutes: number;
   /** Whether a mark inside that grace window is recorded late. */
   grace_counts_late: boolean;
+  /** 063: minutes added while check-in was open. 0-240. */
+  extra_minutes: number;
   opened_at: string | null;
   closed_at: string | null;
   cancelled_at: string | null;

@@ -521,6 +521,26 @@ export const updateSession = async (
 };
 
 /**
+ * Add time to check-in while it is open (063), keeping the PIN.
+ *
+ * 1-60 minutes at a time, four hours in all. If the window has already run out
+ * but the sweep has not closed it yet, the time is measured from now, so five
+ * minutes is always five minutes from the click. A closed session is refused:
+ * reopening it is a different thing.
+ */
+export const extendCheckIn = async (
+  sessionId: string,
+  minutes: number,
+): Promise<SessionRow> => {
+  const { data, error } = await supabase.rpc("extend_check_in", {
+    p_session_id: sessionId,
+    p_minutes: minutes,
+  });
+  if (error) fail("Could not add time", error);
+  return data as SessionRow;
+};
+
+/**
  * How far an edit reaches — the question a calendar app asks about a
  * repeating event.
  */

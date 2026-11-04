@@ -11,6 +11,8 @@ export interface PresentableSession {
   session: SessionRow;
   className: string;
   cohortLabel: string;
+  /** The class's timezone, so times are shown where the class is. */
+  timeZone: string | undefined;
 }
 
 /**
@@ -28,7 +30,7 @@ export const getSessionForPresenting = async (
 ): Promise<PresentableSession | null> => {
   const { data, error } = await supabase
     .from("class_sessions")
-    .select("*, classes(name), cohorts(label)")
+    .select("*, classes(name, timezone), cohorts(label)")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -36,7 +38,7 @@ export const getSessionForPresenting = async (
   if (!data) return null;
 
   const row = data as SessionRow & {
-    classes: { name: string } | null;
+    classes: { name: string; timezone: string | null } | null;
     cohorts: { label: string } | null;
   };
   const { classes, cohorts, ...session } = row;
@@ -45,5 +47,6 @@ export const getSessionForPresenting = async (
     session: session as SessionRow,
     className: classes?.name ?? "",
     cohortLabel: cohorts?.label ?? "?",
+    timeZone: classes?.timezone ?? undefined,
   };
 };

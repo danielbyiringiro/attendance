@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CARD_PADDING_NO_HEADER } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import SessionWindowBadge, {
@@ -69,6 +70,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import AttendanceExportDialog from "@/components/AttendanceExportDialog";
 import AbsenceHistoryDialog from "@/components/ta/AbsenceHistoryDialog";
+import AddCheckInTime from "@/components/ta/AddCheckInTime";
 import Classes from "@/components/ta/sections/Classes";
 import ClassArea from "@/components/ta/sections/ClassArea";
 import type { ClassTab, TATab } from "@/lib/taNavigation";
@@ -510,8 +512,27 @@ const TADashboard = ({
     if (!showWeeklyAbsenceDialog) setPreviewWeeklyThreshold(null);
   }, [showWeeklyAbsenceDialog]);
 
-  // Weekly report (week-by-week, copy-paste rows for the spreadsheet)
-  const [weeklyReport, setWeeklyReport] = useState<WeekReport[]>([]);
+  // Weekly report (week-by-week, copy-paste rows for the spreadsheet). The
+  // log is kept and the weeks derived from it, so changing the date range
+  // below regroups what is already loaded instead of fetching again.
+  const [weeklyLog, setWeeklyLog] = useState<AttendanceLog | null>(null);
+  /*
+   * Names for the report, dropped students included. The dashboard's roster
+   * leaves out anyone dropped from the class, but their absences from before
+   * they were dropped are still in the term — and someone who stopped coming
+   * tends to have the most, so they led the list as a bare ID.
+   */
+  const [reportNames, setReportNames] = useState<Map<string, string>>(
+    new Map(),
+  );
+  /*
+   * The dates the report covers. Both empty is the whole term, which is what
+   * the report always showed; either end can be set on its own. Not saved:
+   * a range is a question asked once, not a setting of the class.
+   */
+  const [absenceRange, setAbsenceRange] = useState({ from: "", to: "" });
+  /** Typed threshold for the range total; empty follows the weekly one. */
+  const [rangeThresholdInput, setRangeThresholdInput] = useState("");
   const [isBuildingReport, setIsBuildingReport] = useState(false);
   // Lecturer (instructor) + FI are configured per cohort.
   const [reportPairs, setReportPairs] = useState<
@@ -1009,9 +1030,8 @@ const TADashboard = ({
           (a) => a.cohort === weeklyAbsenceCohortFilter,
         );
 
-  // Build the full week-by-week report from the semester start through today.
-  // One fetch, computed client-side per week (excludes cancelled + excused days).
-  // The week-by-week report, grouped off the sessions that actually ran.
+  // The week-by-week report, grouped off the sessions that actually ran: one
+  // fetch from the semester start through today, grouped in the memo below.
   //
   // The previous version stepped through the term a day at a time applying a
   // fixed Tue/Wed/Thu rule, and treated a cancellation as cancelling that day
@@ -1021,71 +1041,131 @@ const TADashboard = ({
   const buildWeeklyReport = async () => {
     if (!activeClassId) return;
     setIsBuildingReport(true);
-    setWeeklyReport([]);
+    setWeeklyLog(null);
     try {
-      const log = await attendanceLog(activeClassId, { to: todayStr() });
-
-      // Which weeks ran at all, so a week with sessions but no absences still
-      // appears — an empty week is a result, not a gap.
-      const weeks = new Map<string, Set<string>>();
-      log.sessions
-        .filter((sn) => sn.status !== "cancelled")
-        .forEach((sn) => {
-          const key = weekKeyOf(sn.session_date);
-          const days = weeks.get(key);
-          if (days) days.add(sn.session_date);
-          else weeks.set(key, new Set([sn.session_date]));
-        });
-
-      const absencesByWeek = new Map<string, Map<string, WeeklyAbsence>>();
-      log.marks.filter((m) => isAbsentState(m.state)).forEach((m) => {
-        const key = weekKeyOf(m.session_date);
-        let forWeek = absencesByWeek.get(key);
-        if (!forWeek) {
-          forWeek = new Map();
-          absencesByWeek.set(key, forWeek);
-        }
-        const entry = forWeek.get(m.student_id);
-        if (entry) {
-          entry.absentDays.push(m.session_date);
-          entry.frequency += 1;
-          return;
-        }
-        forWeek.set(m.student_id, {
-          student_id: m.student_id,
-          cohort: m.cohort_label,
-          name: roster.find((r) => r.student_id === m.student_id)?.name,
-          absentDays: [m.session_date],
-          frequency: 1,
-        });
-      });
-
-      const report: WeekReport[] = [...weeks.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([weekStart, dayStrings], index) => {
-          const days = [...dayStrings].sort();
-          const first = fromDateStr(days[0]);
-          const last = fromDateStr(days[days.length - 1]);
-          return {
-            weekNumber: index + 1,
-            startStr: weekStart,
-            rangeLabel:
-              days.length === 1
-                ? format(first, "MMM dd")
-                : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`,
-            absences: [...(absencesByWeek.get(weekStart)?.values() ?? [])].sort(
-              (a, b) => b.frequency - a.frequency,
-            ),
-          };
-        });
-
-      setWeeklyReport(report);
+      const [log, enrolled] = await Promise.all([
+        attendanceLog(activeClassId, { to: todayStr() }),
+        listEnrolments(activeClassId, { includeDropped: true }),
+      ]);
+      setReportNames(
+        new Map(
+          enrolled
+            .filter((e) => e.name)
+            .map((e) => [e.student_id, e.name as string]),
+        ),
+      );
+      setWeeklyLog(log);
     } catch (error) {
       console.error("Error building weekly report:", error);
     } finally {
       setIsBuildingReport(false);
     }
   };
+
+  // "From" after "To" matches nothing. Rather than an empty report that looks
+  // like nobody was absent, the range is ignored and the dialog says so.
+  const absenceRangeInvalid = Boolean(
+    absenceRange.from && absenceRange.to && absenceRange.from > absenceRange.to,
+  );
+  const absenceRangeActive =
+    !absenceRangeInvalid && Boolean(absenceRange.from || absenceRange.to);
+
+  const { weeklyReport, rangeAbsences, rangeLabel } = useMemo(() => {
+    const empty = {
+      weeklyReport: [] as WeekReport[],
+      rangeAbsences: [] as WeeklyAbsence[],
+      rangeLabel: "",
+    };
+    if (!weeklyLog) return empty;
+    const log = weeklyLog;
+    const from = absenceRangeActive ? absenceRange.from : "";
+    const to = absenceRangeActive ? absenceRange.to : "";
+    const inRange = (d: string) => (!from || d >= from) && (!to || d <= to);
+
+    const tally = (marks: AttendanceLog["marks"]): Map<string, WeeklyAbsence> => {
+      const byStudent = new Map<string, WeeklyAbsence>();
+      marks.forEach((m) => {
+        const entry = byStudent.get(m.student_id);
+        if (entry) {
+          entry.absentDays.push(m.session_date);
+          entry.frequency += 1;
+          return;
+        }
+        byStudent.set(m.student_id, {
+          student_id: m.student_id,
+          cohort: m.cohort_label,
+          name:
+            reportNames.get(m.student_id) ??
+            roster.find((r) => r.student_id === m.student_id)?.name,
+          absentDays: [m.session_date],
+          frequency: 1,
+        });
+      });
+      return byStudent;
+    };
+    const sorted = (m: Map<string, WeeklyAbsence> | undefined) =>
+      [...(m?.values() ?? [])].sort((a, b) => b.frequency - a.frequency);
+    const span = (days: string[]) => {
+      const first = fromDateStr(days[0]);
+      const last = fromDateStr(days[days.length - 1]);
+      return days.length === 1
+        ? format(first, "MMM dd")
+        : `${format(first, "MMM dd")} – ${format(last, "MMM dd")}`;
+    };
+
+    const ran = log.sessions.filter((sn) => sn.status !== "cancelled");
+
+    // Numbered across the whole term, so a week keeps its number whatever
+    // range is chosen — Week 6 in the report is Week 6 on the spreadsheet.
+    const weekNumbers = new Map<string, number>();
+    [...new Set(ran.map((sn) => weekKeyOf(sn.session_date)))]
+      .sort()
+      .forEach((key, i) => weekNumbers.set(key, i + 1));
+
+    const absentMarks = log.marks.filter(
+      (m) => isAbsentState(m.state) && inRange(m.session_date),
+    );
+    // Which weeks ran at all, so a week with sessions but no absences still
+    // appears — an empty week is a result, not a gap. A week the range cuts
+    // through shows only its days inside the range.
+    const weeks = new Map<string, Set<string>>();
+    ran
+      .filter((sn) => inRange(sn.session_date))
+      .forEach((sn) => {
+        const key = weekKeyOf(sn.session_date);
+        const days = weeks.get(key);
+        if (days) days.add(sn.session_date);
+        else weeks.set(key, new Set([sn.session_date]));
+      });
+
+    const marksByWeek = new Map<string, AttendanceLog["marks"]>();
+    absentMarks.forEach((m) => {
+      const key = weekKeyOf(m.session_date);
+      const list = marksByWeek.get(key);
+      if (list) list.push(m);
+      else marksByWeek.set(key, [m]);
+    });
+
+    const report: WeekReport[] = [...weeks.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([weekStart, dayStrings]) => ({
+        weekNumber: weekNumbers.get(weekStart) ?? 0,
+        startStr: weekStart,
+        rangeLabel: span([...dayStrings].sort()),
+        absences: sorted(tally(marksByWeek.get(weekStart) ?? [])),
+      }));
+
+    const rangeDays = [
+      ...new Set(ran.filter((sn) => inRange(sn.session_date)).map((sn) => sn.session_date)),
+    ].sort();
+
+    return {
+      weeklyReport: report,
+      rangeAbsences: sorted(tally(absentMarks)),
+      rangeLabel: rangeDays.length ? span(rangeDays) : "",
+    };
+  }, [weeklyLog, reportNames, roster, absenceRange, absenceRangeActive]);
+
 
   // Last 4 characters of the student ID = year group.
   const yearGroupOf = (studentId: string) => studentId.slice(-4);
@@ -1097,12 +1177,26 @@ const TADashboard = ({
     activeClass?.weekly_absence_threshold ?? DEFAULT_WEEKLY_ABSENCE_THRESHOLD;
   const weeklyThreshold = previewWeeklyThreshold ?? storedWeeklyThreshold;
 
-  // Build the tab-separated block for a week (pastes into Excel columns
-  // Student's Name → Feedback). Respects the cohort filter and the threshold.
-  const buildWeekTSV = (week: WeekReport) => {
+  // The range total has its own threshold: "twice a week" means nothing over
+  // a month. It starts at the weekly number and is never saved.
+  const rangeThresholdTyped = Number(rangeThresholdInput);
+  const rangeThresholdValid =
+    rangeThresholdInput.trim() === "" ||
+    (Number.isInteger(rangeThresholdTyped) &&
+      rangeThresholdTyped >= 1 &&
+      rangeThresholdTyped <= 99);
+  const rangeThreshold =
+    rangeThresholdInput.trim() !== "" && rangeThresholdValid
+      ? rangeThresholdTyped
+      : weeklyThreshold;
+
+  // Build the tab-separated block for some absences (pastes into Excel
+  // columns Student's Name → Feedback). Respects the cohort filter and the
+  // threshold given.
+  const buildAbsenceTSV = (absences: WeeklyAbsence[], threshold: number) => {
     const rows = reportableAbsences(
-      week.absences,
-      weeklyThreshold,
+      absences,
+      threshold,
       weeklyAbsenceCohortFilter,
     );
     return rows
@@ -1125,12 +1219,15 @@ const TADashboard = ({
       .join("\n");
   };
 
-  const handleCopyWeek = async (week: WeekReport) => {
-    const tsv = buildWeekTSV(week);
+  const buildWeekTSV = (week: WeekReport) =>
+    buildAbsenceTSV(week.absences, weeklyThreshold);
+
+  /** `what` names the block in the toast: "Week 6", "The range". */
+  const handleCopyRows = async (tsv: string, what: string) => {
     if (!tsv) {
       toast({
         title: "Nothing to copy",
-        description: `No absences for Week ${week.weekNumber}.`,
+        description: `No absences for ${what}.`,
       });
       return;
     }
@@ -1138,7 +1235,7 @@ const TADashboard = ({
       await navigator.clipboard.writeText(tsv);
       toast({
         title: "Copied",
-        description: `Week ${week.weekNumber} rows copied — paste into the Student's Name column.`,
+        description: `${what} rows copied — paste into the Student's Name column.`,
       });
     } catch {
       toast({
@@ -1424,6 +1521,8 @@ const TADashboard = ({
                   onClick={() => {
                     setShowWeeklyAbsenceDialog(true);
                     setWeeklyAbsenceCohortFilter("all");
+                    setAbsenceRange({ from: "", to: "" });
+                    setRangeThresholdInput("");
                     buildWeeklyReport();
                   }}
                   variant="outline"
@@ -1801,6 +1900,10 @@ const TADashboard = ({
                               Mark manually
                             </Button>
                           )}
+
+                          {/* 063: more time without a new code. Only
+                              while open; it renders nothing otherwise. */}
+                          <AddCheckInTime session={sn} onChanged={loadToday} />
 
                           <SessionActions
                             session={sn}
@@ -2492,7 +2595,8 @@ const TADashboard = ({
           <DialogHeader>
             <DialogTitle>Weekly Absences</DialogTitle>
             <DialogDescription>
-              Each week from the semester start. Copy a week's block and paste
+              Each week from the semester start, or only the dates you choose,
+              with a total for the whole range. Copy a block and paste
               it into the spreadsheet under the Student's Name column — it fills
               Student's Name, Year Group, Cohort, Instructor, FI and Feedback
               (days absent).
@@ -2536,13 +2640,147 @@ const TADashboard = ({
               </p>
             </div>
 
+            {/* A range narrows the weeks below and adds one total for it.
+                Week numbers stay the term's, so they still match the
+                spreadsheet. */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="absence-range-from" className="text-xs">
+                  From
+                </Label>
+                <Input
+                  id="absence-range-from"
+                  type="date"
+                  value={absenceRange.from}
+                  onChange={(e) =>
+                    setAbsenceRange((r) => ({ ...r, from: e.target.value }))
+                  }
+                  className="h-9 w-[160px]"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="absence-range-to" className="text-xs">
+                  To
+                </Label>
+                <Input
+                  id="absence-range-to"
+                  type="date"
+                  value={absenceRange.to}
+                  onChange={(e) =>
+                    setAbsenceRange((r) => ({ ...r, to: e.target.value }))
+                  }
+                  className="h-9 w-[160px]"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setAbsenceRange({
+                    from: toDateStr(addDays(mondayOf(new Date()), -21)),
+                    to: todayStr(),
+                  })
+                }
+              >
+                Last 4 weeks
+              </Button>
+              {(absenceRange.from || absenceRange.to) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAbsenceRange({ from: "", to: "" })}
+                >
+                  Whole term
+                </Button>
+              )}
+            </div>
+            {absenceRangeInvalid && (
+              <p className="text-xs text-destructive">
+                &ldquo;From&rdquo; is after &ldquo;To&rdquo;, so the whole term
+                is shown.
+              </p>
+            )}
+
+            {absenceRangeActive && !isBuildingReport && weeklyLog && (() => {
+              const tsv = buildAbsenceTSV(rangeAbsences, rangeThreshold);
+              const count = tsv ? tsv.split("\n").length : 0;
+              return (
+                <div className="space-y-2 rounded-lg border-2 border-primary/30 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm">
+                      <span className="font-semibold">Whole range</span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        {rangeLabel || "no sessions in these dates"} · {count}{" "}
+                        absentee{count !== 1 ? "s" : ""}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Label
+                        htmlFor="absence-range-threshold"
+                        className="whitespace-nowrap"
+                      >
+                        Listed from
+                      </Label>
+                      <Input
+                        id="absence-range-threshold"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={99}
+                        step={1}
+                        placeholder={String(weeklyThreshold)}
+                        value={rangeThresholdInput}
+                        onChange={(e) => setRangeThresholdInput(e.target.value)}
+                        className="h-9 w-16"
+                      />
+                      <span className="whitespace-nowrap text-muted-foreground">
+                        {rangeThreshold === 1 ? "absence" : "absences"} in the
+                        range
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={count === 0}
+                        onClick={() => void handleCopyRows(tsv, "The range")}
+                        className="flex items-center gap-2"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy
+                      </Button>
+                    </div>
+                  </div>
+                  {!rangeThresholdValid && (
+                    <p className="text-xs text-destructive">
+                      Enter a whole number from 1 to 99.
+                    </p>
+                  )}
+                  {count === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Nobody absent {thresholdPhrase(rangeThreshold)} in these
+                      dates.
+                    </p>
+                  ) : (
+                    <textarea
+                      readOnly
+                      value={tsv}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-full h-28 font-mono text-xs p-2 rounded-md border bg-background resize-y whitespace-pre"
+                    />
+                  )}
+                </div>
+              );
+            })()}
+
             {isBuildingReport ? (
               <p className="text-center text-muted-foreground py-8">
                 Building report…
               </p>
             ) : weeklyReport.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">
-                No class weeks found yet.
+                {absenceRangeActive
+                  ? "No class weeks in these dates."
+                  : "No class weeks found yet."}
               </p>
             ) : (
               <div className="space-y-3">
@@ -2598,7 +2836,12 @@ const TADashboard = ({
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleCopyWeek(week)}
+                                  onClick={() =>
+                                    void handleCopyRows(
+                                      tsv,
+                                      `Week ${week.weekNumber}`,
+                                    )
+                                  }
                                   className="flex items-center gap-2"
                                 >
                                   <Copy className="h-3.5 w-3.5" />

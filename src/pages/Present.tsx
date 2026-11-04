@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Loader2, Maximize } from "lucide-react";
+import { Loader2, Maximize, PictureInPicture2 } from "lucide-react";
 import PresentView from "@/components/ta/PresentView";
+import AddCheckInTime from "@/components/ta/AddCheckInTime";
 import SoundToggle from "@/components/SoundToggle";
 import { supabase } from "@/lib/supabase";
 import { ensureStaff } from "@/lib/api/staff";
@@ -13,6 +15,9 @@ import {
 import { useLiveClass } from "@/lib/useLiveClass";
 import { useSoundPreference } from "@/lib/useSoundPreference";
 import { playCheckInBeep } from "@/lib/checkInSound";
+import { usePictureInPicture } from "@/lib/usePictureInPicture";
+import { useNow } from "@/lib/useNow";
+import { sessionWindow } from "@/lib/sessionWindow";
 
 /**
  * The presenter tab: /present/:sessionId.
@@ -35,6 +40,18 @@ import { playCheckInBeep } from "@/lib/checkInSound";
  * — but a signed-out visitor should be told to sign in rather than shown a page
  * that silently never loads. Same-origin tabs share the Supabase session, so a
  * TA who opened this from the dashboard is already signed in here.
+ *
+ * "Float over slides" moves the view into a small always-on-top window (see
+ * usePictureInPicture), so a lecturer projecting slides can keep the code in a
+ * corner and carry on teaching. This tab keeps doing the loading, polling and
+ * beeping; the window is only where it is drawn. It closes itself a short while
+ * after check-in ends, once it has been seen live, so it does not sit over the
+ * rest of the lecture saying "Closed". Chrome and Edge only; elsewhere the
+ * button is not shown.
+ *
+ * "Add time" (063) sits in the bottom corner while check-in is open, out of
+ * the way of what the room reads. The code stays the same, so only the clock
+ * moves — in this tab and in the floating window alike.
  */
 
 type State =
@@ -46,11 +63,20 @@ type State =
   | { kind: "ready"; data: PresentableSession };
 
 const REFRESH_MS = 15_000;
+/** How long "Closed" stays up in the floating window before it goes. */
+const PIP_LINGER_MS = 30_000;
+const PIP_SIZE = { width: 440, height: 230 };
 
 const Present = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [sound, setSound] = useSoundPreference("attendance.sound.presenter");
+  const pip = usePictureInPicture();
+  // With the window up, this tab is probably hidden behind the slides, where
+  // the browser slows its timers. The window's own timers are not slowed, so
+  // the clock and the poll run on those while it is open.
+  const pipNow = useNow(pip.pipWindow !== null, 1000, pip.pipWindow);
+  const timerHost = pip.pipWindow ?? window;
 
   const load = useCallback(
     async (first: boolean) => {
@@ -96,17 +122,40 @@ const Present = () => {
   useEffect(() => {
     if (state.kind !== "ready") return;
 
-    const id = setInterval(() => void load(false), REFRESH_MS);
+    const id = timerHost.setInterval(() => void load(false), REFRESH_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void load(false);
     };
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      clearInterval(id);
+      timerHost.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [state.kind, load]);
+  }, [state.kind, load, timerHost]);
+
+  // Close the floating window once check-in is over — but only after it has
+  // shown a live code, so opening it on a finished session does not make it
+  // vanish before anyone has read why there is nothing to show.
+  const pipPhase =
+    state.kind === "ready" && pip.pipWindow
+      ? sessionWindow(state.data.session, pipNow).phase
+      : null;
+  const pipSawLive = useRef(false);
+  useEffect(() => {
+    if (pipPhase === null) {
+      pipSawLive.current = false;
+      return;
+    }
+    if (pipPhase === "live" || pipPhase === "live_late") {
+      pipSawLive.current = true;
+      return;
+    }
+    if (!pipSawLive.current) return;
+    if (pipPhase !== "expired" && pipPhase !== "done") return;
+    const id = window.setTimeout(pip.close, PIP_LINGER_MS);
+    return () => window.clearTimeout(id);
+  }, [pipPhase, pip.close]);
 
   // Subscribed once the class is known. Polling stays with the effect above,
   // so `active` is left off here: this adds only the realtime half.
@@ -123,6 +172,12 @@ const Present = () => {
   const goFullscreen = () => {
     // Not every browser allows it, and a refusal is not worth an error.
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  };
+
+  const floatOverSlides = (title: string) => {
+    // Refused without a click behind it, or if the user dismisses it. Neither
+    // needs an error: the button is still there to try again.
+    void pip.open({ ...PIP_SIZE, title }).catch(() => undefined);
   };
 
   const message = (title: string, body: string) => (
@@ -170,6 +225,21 @@ const Present = () => {
               onChange={setSound}
               className="text-muted-foreground"
             />
+            {pip.supported && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() =>
+                  pip.pipWindow
+                    ? pip.close()
+                    : floatOverSlides(`Check-in · ${state.data.className}`)
+                }
+              >
+                <PictureInPicture2 className="mr-1 h-4 w-4" />
+                {pip.pipWindow ? "Back to this tab" : "Float over slides"}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -180,12 +250,43 @@ const Present = () => {
               Full screen
             </Button>
           </div>
-          <PresentView
+          {pip.pipWindow ? (
+            <div className="max-w-md space-y-3 text-center">
+              <p className="text-xl font-semibold">Showing in a floating window</p>
+              <p className="text-muted-foreground">
+                It stays on top of your slides. Drag it anywhere, or close it to
+                bring the code back here. It closes itself 30 seconds after
+                check-in ends.
+              </p>
+            </div>
+          ) : (
+            <PresentView
+              session={state.data.session}
+              className={state.data.className}
+              cohortLabel={state.data.cohortLabel}
+              size="full"
+              timeZone={state.data.timeZone}
+            />
+          )}
+          <AddCheckInTime
             session={state.data.session}
-            className={state.data.className}
-            cohortLabel={state.data.cohortLabel}
-            size="full"
+            onChanged={() => load(false)}
+            className="absolute bottom-3 right-3 w-64"
           />
+          {pip.pipWindow &&
+            createPortal(
+              <div className="h-screen">
+                <PresentView
+                  session={state.data.session}
+                  className={state.data.className}
+                  cohortLabel={state.data.cohortLabel}
+                  size="widget"
+                  now={pipNow}
+                  timeZone={state.data.timeZone}
+                />
+              </div>,
+              pip.pipWindow.document.body,
+            )}
         </div>
       );
   }
