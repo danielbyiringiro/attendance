@@ -2,6 +2,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Loader2, TimerReset } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { extendCheckIn } from "@/lib/api/sessions";
@@ -17,6 +25,11 @@ import type { SessionRow } from "@/lib/api/types";
  * whoever always gives "two more minutes" does not retype it every class. Not
  * a class setting — it is a habit of the person at the desk, not a rule of the
  * class, and two TAs on one class may well differ.
+ *
+ * A button that opens a small dialog, rather than a box always on the card:
+ * it is used a few times a term, and a number field sitting under every open
+ * session was clutter the rest of the time. Quick amounts cover the usual
+ * case in one tap; the box takes anything else.
  *
  * Shown only while the session is open. The server refuses anything else, and
  * offering a button that can only fail is worse than not offering it.
@@ -48,17 +61,25 @@ const isValid = (raw: string): boolean => {
   );
 };
 
+/** One tap for the amounts people actually give. The box takes anything else. */
+const QUICK = [2, 5, 10] as const;
+
 const AddCheckInTime = ({
   session,
   onChanged,
   className = "",
+  buttonClassName = "w-full",
 }: {
   session: SessionRow;
   /** Re-read, so the countdown picks up the new closing time. */
   onChanged: () => void | Promise<void>;
+  /** On the wrapper, for placing it. */
   className?: string;
+  /** On the button that opens the dialog. */
+  buttonClassName?: string;
 }) => {
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
   const [value, setValue] = useState(readStored);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -66,10 +87,10 @@ const AddCheckInTime = ({
 
   const valid = isValid(value);
   const inputId = `add-time-${session.id}`;
+  const extra = session.extra_minutes ?? 0;
 
-  const handleAdd = async () => {
-    if (!valid) return;
-    const minutes = Number(value);
+  const handleAdd = async (minutes: number) => {
+    if (!isValid(String(minutes))) return;
     setIsBusy(true);
     try {
       await extendCheckIn(session.id, minutes);
@@ -78,10 +99,12 @@ const AddCheckInTime = ({
       } catch {
         // Not remembering it is not a reason to fail the add.
       }
+      setValue(String(minutes));
       toast({
         title: `Added ${minutes} minute${minutes === 1 ? "" : "s"}`,
         description: "Check-in stays open longer. The code has not changed.",
       });
+      setOpen(false);
       await onChanged();
     } catch (e) {
       toast({
@@ -96,51 +119,96 @@ const AddCheckInTime = ({
 
   return (
     <div className={className}>
-      <div className="flex items-center gap-2">
-        <Label htmlFor={inputId} className="sr-only">
-          Minutes to add
-        </Label>
-        <Input
-          id={inputId}
-          type="number"
-          inputMode="numeric"
-          min={MIN_MINUTES}
-          max={MAX_MINUTES}
-          step={1}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void handleAdd();
-          }}
-          className="h-9 w-16"
-        />
-        <span className="text-sm text-muted-foreground">min</span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="flex-1"
-          disabled={!valid || isBusy}
-          onClick={() => void handleAdd()}
-        >
-          {isBusy ? (
-            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-          ) : (
-            <TimerReset className="mr-1 h-4 w-4" />
-          )}
-          Add time
-        </Button>
-      </div>
-      {!valid && (
-        <p className="mt-1 text-xs text-destructive">
-          A whole number of minutes, {MIN_MINUTES} to {MAX_MINUTES}.
-        </p>
-      )}
-      {session.extra_minutes > 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          {session.extra_minutes} minute{session.extra_minutes === 1 ? "" : "s"}{" "}
-          added so far.
-        </p>
-      )}
+      <Button
+        size="sm"
+        variant="outline"
+        className={buttonClassName}
+        onClick={() => setOpen(true)}
+      >
+        <TimerReset className="mr-1 h-4 w-4" />
+        Add time
+        {extra > 0 && (
+          <span className="ml-1 text-muted-foreground">(+{extra} so far)</span>
+        )}
+      </Button>
+
+      <Dialog open={open} onOpenChange={(o) => !isBusy && setOpen(o)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add time to check-in</DialogTitle>
+            <DialogDescription>
+              Keeps check-in open longer with the same code, so nothing on the
+              screen changes except the clock.
+              {extra > 0 &&
+                ` ${extra} minute${extra === 1 ? " has" : "s have"} been added so far.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              {QUICK.map((m) => (
+                <Button
+                  key={m}
+                  variant="outline"
+                  className="flex-1"
+                  disabled={isBusy}
+                  onClick={() => void handleAdd(m)}
+                >
+                  +{m} min
+                </Button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Label htmlFor={inputId} className="whitespace-nowrap text-sm">
+                Or add
+              </Label>
+              <Input
+                id={inputId}
+                type="number"
+                inputMode="numeric"
+                min={MIN_MINUTES}
+                max={MAX_MINUTES}
+                step={1}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && valid) void handleAdd(Number(value));
+                }}
+                className="h-9 w-20"
+                autoFocus
+              />
+              <span className="text-sm text-muted-foreground">minutes</span>
+            </div>
+            {!valid && (
+              <p className="text-xs text-destructive">
+                A whole number of minutes, {MIN_MINUTES} to {MAX_MINUTES}.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!valid || isBusy}
+              onClick={() => void handleAdd(Number(value))}
+            >
+              {isBusy ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <TimerReset className="mr-1 h-4 w-4" />
+              )}
+              Add {valid ? `${value} min` : "time"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

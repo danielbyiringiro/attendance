@@ -536,6 +536,14 @@ export const extendCheckIn = async (
     p_session_id: sessionId,
     p_minutes: minutes,
   });
+  // PGRST202: the database has no such function — migration 063 has not been
+  // run there. Said plainly, because "could not find the function in the
+  // schema cache" reads like the click went wrong.
+  if (error?.code === "PGRST202") {
+    throw new Error(
+      "Adding time is not switched on for this site yet: the database is missing migration 063. Ask whoever runs the database to apply it.",
+    );
+  }
   if (error) fail("Could not add time", error);
   return data as SessionRow;
 };
