@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Loader2, Maximize, PictureInPicture2 } from "lucide-react";
+import { Loader2, Maximize, PictureInPicture2, X } from "lucide-react";
 import PresentView from "@/components/ta/PresentView";
 import AddCheckInTime from "@/components/ta/AddCheckInTime";
 import SoundToggle from "@/components/SoundToggle";
@@ -65,7 +65,7 @@ type State =
 const REFRESH_MS = 15_000;
 /** How long "Closed" stays up in the floating window before it goes. */
 const PIP_LINGER_MS = 30_000;
-const PIP_SIZE = { width: 440, height: 230 };
+const PIP_SIZE = { width: 440, height: 250 };
 
 const Present = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -271,11 +271,26 @@ const Present = () => {
           <AddCheckInTime
             session={state.data.session}
             onChanged={() => load(false)}
-            className="absolute bottom-3 right-3 w-64"
+            className="absolute bottom-3 right-3"
+            buttonClassName=""
           />
           {pip.pipWindow &&
             createPortal(
-              <div className="h-screen">
+              <div className="relative h-screen">
+                {/* The browser's own "back to tab" control is turned off (it
+                    would pull this tab over the slides), so the way out is
+                    here. Small and in the corner: it is for the lecturer,
+                    not the room. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1 z-10 h-7 px-2 text-xs text-muted-foreground"
+                  onClick={pip.close}
+                  title="Close the floating window and show the code in the tab again"
+                >
+                  <X className="mr-1 h-3.5 w-3.5" />
+                  Exit
+                </Button>
                 <PresentView
                   session={state.data.session}
                   className={state.data.className}

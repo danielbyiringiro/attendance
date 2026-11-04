@@ -1842,6 +1842,14 @@ const TADashboard = ({
                                 <Presentation className="mr-1 h-4 w-4" />
                                 Show on screen
                               </Button>
+                              {/* 063: more time, same code. Under the
+                                  screen button because that is where the
+                                  lecturer is looking when the room is
+                                  still queuing. */}
+                              <AddCheckInTime
+                                session={sn}
+                                onChanged={loadToday}
+                              />
                               <SessionWindowNote
                                 session={sn}
                                 now={now}
@@ -1900,10 +1908,6 @@ const TADashboard = ({
                               Mark manually
                             </Button>
                           )}
-
-                          {/* 063: more time without a new code. Only
-                              while open; it renders nothing otherwise. */}
-                          <AddCheckInTime session={sn} onChanged={loadToday} />
 
                           <SessionActions
                             session={sn}
