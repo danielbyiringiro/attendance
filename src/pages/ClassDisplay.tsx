@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Lock, Maximize, Monitor } from "lucide-react";
+import {
+  Loader2,
+  Lock,
+  Maximize,
+  Monitor,
+  PictureInPicture2,
+  X,
+} from "lucide-react";
 import PresentView from "@/components/ta/PresentView";
 import SoundToggle from "@/components/SoundToggle";
 import { getClassDisplay, type ClassDisplayResult } from "@/lib/api/display";
@@ -20,6 +28,7 @@ import {
 } from "@/lib/checkInSound";
 import { useNow } from "@/lib/useNow";
 import { useSoundPreference } from "@/lib/useSoundPreference";
+import { usePictureInPicture } from "@/lib/usePictureInPicture";
 
 /**
  * The class display: /display/:token.
@@ -45,6 +54,13 @@ import { useSoundPreference } from "@/lib/useSoundPreference";
  * TA issues a new code or turns the link off, the next refresh is refused, the
  * remembered code is dropped, and the screen goes back to asking — so the live
  * PIN is off the screen within about 15 seconds.
+ *
+ * "Float over slides" works as it does on the presenter tab (see Present and
+ * usePictureInPicture): the view moves into a small always-on-top window while
+ * this tab keeps polling and beeping. The window shows whatever this screen
+ * would — every running session stacked, otherwise the next one or "no
+ * check-in" — and closes itself a short while after check-in ends, once it has
+ * shown one live. Locking the screen closes it too. Chrome and Edge only.
  */
 
 type Ready = Extract<ClassDisplayResult, { ok: true }>;
@@ -61,6 +77,11 @@ type Source = "typed" | "stored" | "poll";
 const REFRESH_MS = 15_000;
 /** While check-in is running, so a beep follows a scan closely. */
 const LIVE_REFRESH_MS = 5_000;
+/** How long the floating window stays up after check-in ends. */
+const PIP_LINGER_MS = 30_000;
+/** One session's strip; two cohorts at once get one each, stacked. */
+const PIP_WIDTH = 440;
+const PIP_ROW_HEIGHT = 250;
 
 const storageKey = (token: string) => `class-display-code:${token}`;
 
@@ -104,8 +125,13 @@ const ClassDisplay = () => {
     stored ? { kind: "checking" } : { kind: "code", message: null },
   );
   const [sound, setSound] = useSoundPreference("attendance.sound.presenter");
+  const pip = usePictureInPicture();
+  // With the window up this tab is probably behind the slides, where the
+  // browser slows its timers; the window's own are not slowed, so the clock
+  // and the poll run on those while it is open.
+  const timerHost = pip.pipWindow ?? window;
   // Re-evaluates which session to show as the clock moves between refreshes.
-  const now = useNow(state.kind === "ready", 1000);
+  const now = useNow(state.kind === "ready", 1000, pip.pipWindow);
 
   // Read inside `check`, which is memoised on the token alone: the beep has to
   // follow the toggle without rebuilding the polling loop.
@@ -173,7 +199,7 @@ const ClassDisplay = () => {
   useEffect(() => {
     if (state.kind !== "ready" || !code) return;
 
-    const id = setInterval(
+    const id = timerHost.setInterval(
       () => void check(code, "poll"),
       checkingInNow ? LIVE_REFRESH_MS : REFRESH_MS,
     );
@@ -183,10 +209,36 @@ const ClassDisplay = () => {
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      clearInterval(id);
+      timerHost.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [state.kind, code, check, checkingInNow]);
+  }, [state.kind, code, check, checkingInNow, timerHost]);
+
+  // Nothing to float once the screen stops showing a class (locked, or signed
+  // out by a new code): the PIN must not outlive the page's own view of it.
+  const { close: closePip } = pip;
+  useEffect(() => {
+    if (state.kind !== "ready") closePip();
+  }, [state.kind, closePip]);
+
+  // Close the floating window once check-in is over — but only after it has
+  // shown a live code, so floating it between classes does not make it vanish.
+  const pipActive =
+    state.kind === "ready" && pip.pipWindow ? checkingInNow : null;
+  const pipSawLive = useRef(false);
+  useEffect(() => {
+    if (pipActive === null) {
+      pipSawLive.current = false;
+      return;
+    }
+    if (pipActive) {
+      pipSawLive.current = true;
+      return;
+    }
+    if (!pipSawLive.current) return;
+    const id = window.setTimeout(closePip, PIP_LINGER_MS);
+    return () => window.clearTimeout(id);
+  }, [pipActive, closePip]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,6 +275,14 @@ const ClassDisplay = () => {
   const goFullscreen = () => {
     // Not every browser allows it, and a refusal is not worth an error.
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  };
+
+  const floatOverSlides = (title: string, rows: number) => {
+    // Refused without a click behind it, or if the user dismisses it. Neither
+    // needs an error: the button is still there to try again.
+    void pip
+      .open({ width: PIP_WIDTH, height: PIP_ROW_HEIGHT * rows, title })
+      .catch(() => undefined);
   };
 
   switch (state.kind) {
@@ -311,6 +371,24 @@ const ClassDisplay = () => {
               onChange={setSound}
               className="text-muted-foreground"
             />
+            {pip.supported && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() =>
+                  pip.pipWindow
+                    ? pip.close()
+                    : floatOverSlides(
+                        `Check-in · ${data.class_name}`,
+                        pick.kind === "active" ? pick.sessions.length : 1,
+                      )
+                }
+              >
+                <PictureInPicture2 className="mr-1 h-4 w-4" />
+                {pip.pipWindow ? "Back to this tab" : "Float over slides"}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -331,7 +409,18 @@ const ClassDisplay = () => {
             </Button>
           </div>
 
-          {pick.kind === "active" && pick.sessions.length === 1 && (
+          {pip.pipWindow && (
+            <div className="max-w-md space-y-3 text-center">
+              <p className="text-xl font-semibold">Showing in a floating window</p>
+              <p className="text-muted-foreground">
+                It stays on top of your slides. Drag it anywhere, or close it to
+                bring the code back here. It closes itself 30 seconds after
+                check-in ends.
+              </p>
+            </div>
+          )}
+
+          {!pip.pipWindow && pick.kind === "active" && pick.sessions.length === 1 && (
             <PresentView
               session={pick.sessions[0]}
               className={data.class_name}
@@ -343,7 +432,7 @@ const ClassDisplay = () => {
 
           {/* Two cohorts checking in at once: both codes, side by side where
               there is room. Hiding one would strand that room. */}
-          {pick.kind === "active" && pick.sessions.length > 1 && (
+          {!pip.pipWindow && pick.kind === "active" && pick.sessions.length > 1 && (
             <div className="grid w-full gap-10 lg:grid-cols-2">
               {pick.sessions.map((s) => (
                 <PresentView
@@ -351,13 +440,13 @@ const ClassDisplay = () => {
                   session={s}
                   className={data.class_name}
                   cohortLabel={s.cohort_label}
-              timeZone={data.timezone}
+                  timeZone={data.timezone}
                 />
               ))}
             </div>
           )}
 
-          {pick.kind === "upcoming" && (
+          {!pip.pipWindow && pick.kind === "upcoming" && (
             <PresentView
               session={pick.session}
               className={data.class_name}
@@ -367,7 +456,7 @@ const ClassDisplay = () => {
             />
           )}
 
-          {pick.kind === "idle" && (
+          {!pip.pipWindow && pick.kind === "idle" && (
             <div className="max-w-xl space-y-3 text-center">
               <p className="text-2xl font-semibold sm:text-3xl">
                 {data.class_name}
@@ -382,6 +471,55 @@ const ClassDisplay = () => {
               </p>
             </div>
           )}
+
+          {pip.pipWindow &&
+            createPortal(
+              <div className="relative flex h-screen flex-col divide-y">
+                {/* The browser's own "back to tab" control is turned off, so
+                    the way out is here, small and in the corner. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1 z-10 h-7 px-2 text-xs text-muted-foreground"
+                  onClick={pip.close}
+                  title="Close the floating window and show the code in the tab again"
+                >
+                  <X className="mr-1 h-3.5 w-3.5" />
+                  Exit
+                </Button>
+                {(pick.kind === "active"
+                  ? pick.sessions
+                  : pick.kind === "upcoming"
+                    ? [pick.session]
+                    : []
+                ).map((s) => (
+                  <div key={s.id} className="min-h-0 flex-1">
+                    <PresentView
+                      session={s}
+                      className={data.class_name}
+                      cohortLabel={s.cohort_label}
+                      size="widget"
+                      now={now}
+                      timeZone={data.timezone}
+                    />
+                  </div>
+                ))}
+                {pick.kind === "idle" && (
+                  <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
+                    <p className="text-sm font-semibold">{data.class_name}</p>
+                    <p className="text-2xl font-bold text-muted-foreground">
+                      No check-in right now
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {data.next
+                        ? `Next: Cohort ${data.next.cohort_label}, ${whenIn(data.next.starts_at, data.timezone)}`
+                        : "Nothing else is scheduled."}
+                    </p>
+                  </div>
+                )}
+              </div>,
+              pip.pipWindow.document.body,
+            )}
         </div>
       );
     }
